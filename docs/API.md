@@ -168,8 +168,9 @@ Não envie simultaneamente pelos dois canais, pois isso pode duplicar mensagens.
 ### Transferência pontual
 
 A solicitação e o aceite continuam usando Socket.IO. O envio passa por revisão de conteúdo:
-`obter_previa_pacote_social({ instanceId })` lista arquivos, tamanhos e hashes; o usuário seleciona
-os arquivos e as pastas da instância antes de aceitar. `export_launcher_social_sync_package` recebe
+`obter_previa_pacote_social({ instanceId })` lista arquivos, tamanhos e hashes; o proprietário seleciona
+os arquivos e as pastas da instância, e somente a confirmação do modal aceita o pedido.
+`export_launcher_social_sync_package` recebe
 `instanceId`, a seleção em `arquivosConfiguracao` por compatibilidade e `arquivosReferencia`.
 `config`, `mods` e `resourcepacks` começam marcadas; mundos, opções pessoais e outros conteúdos só
 acompanham o pacote quando selecionados. O `instance.json` original nunca é incluído.
@@ -192,7 +193,10 @@ Arquivos exclusivamente CurseForge ou locais continuam no pacote.
 `gerenciar_transferencias_sociais({ apiBaseUrl, accessToken, acao, pedidoId? })` expõe
 `listar`, `cancelar` e `confirmar`. Recusa, cancelamento e expiração encerram o estado de espera.
 Acks do socket têm limite de 15 segundos. Ao reconectar, o cliente recupera os pedidos pela API;
-envios interrompidos exigem nova revisão, e recebimentos prontos ficam disponíveis para retomar.
+solicitações pendentes voltam à lista do proprietário, envios interrompidos exigem nova revisão e
+recebimentos prontos são baixados e instalados automaticamente pelo destinatário.
+Depois do aceite, o destinatário pode navegar normalmente pelo launcher: um card global informa a preparação,
+o percentual do download quando o tamanho é conhecido e a instalação, e a biblioteca é atualizada ao concluir.
 Tokens não são persistidos no armazenamento web.
 
 O limite do ZIP é **2 GiB** nos dois projetos. A extração admite até 8 GiB de conteúdo e 50 mil

@@ -49,12 +49,15 @@ export function removeCreatingInstance(id: string) {
   notify();
 }
 
-export function completeCreatingInstance(id: string) {
+export function completeCreatingInstance(
+  id: string,
+  message = "Instância criada com sucesso!",
+) {
   updateCreatingInstance(id, {
     status: "complete",
     progress: 100,
     progressoIndeterminado: false,
-    message: "Instância criada com sucesso!",
+    message,
   });
   // Remover após alguns segundos
   setTimeout(() => {

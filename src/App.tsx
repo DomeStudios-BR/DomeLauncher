@@ -882,6 +882,13 @@ export default function App() {
     navegarParaAba("project-detail");
   }, [navegarParaAba]);
 
+  const abrirGerenciadorInstancia = useCallback((instancia: Instance) => {
+    setProjetoDetalhe(null);
+    setAtividadeSocialDetalhe(null);
+    setManagedInstanceId(instancia.id);
+    navegarParaAba("instance-manager");
+  }, [navegarParaAba]);
+
   const abrirAtividadeAmigo = useCallback(async (amigo: AmigoSocial) => {
     const atividade = amigo.atividadeAtual;
     if (!atividade || atividade.tipo === "launcher") return;
@@ -1258,9 +1265,7 @@ export default function App() {
                   instanciaAtivaId={instanciaAtiva?.id ?? null}
                   onSelectInstance={(instance) => {
                     setSelectedInstance(instance);
-                    setProjetoDetalhe(null);
-                    setManagedInstanceId(instance.id);
-                    navegarParaAba("instance-manager");
+                    abrirGerenciadorInstancia(instance);
                   }}
                   onLaunch={(id) => {
                     if (!user) {
@@ -1300,9 +1305,7 @@ export default function App() {
                     setSelectedInstance(null);
                   }}
                   onAbrirGerenciadorInstancia={(instance) => {
-                    setProjetoDetalhe(null);
-                    setManagedInstanceId(instance.id);
-                    navegarParaAba("instance-manager");
+                    abrirGerenciadorInstancia(instance);
                   }}
                   onLaunch={(id) => iniciarInstancia(id)}
                   onDelete={(id) => remove(id)}

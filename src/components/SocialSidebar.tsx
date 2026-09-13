@@ -19,6 +19,13 @@ import { PainelChatSocial } from './social/PainelChatSocial';
 import { PerfilSocialPainel } from './social/PerfilSocialPainel';
 import { IndicadorStatusSocial } from './social/IndicadorStatusSocial';
 import type { PedidoTransferenciaInstancia } from './social/tiposSocial';
+import {
+  addCreatingInstance,
+  completeCreatingInstance,
+  errorCreatingInstance,
+  getCreatingInstances,
+  updateCreatingInstance,
+} from '../stores/creatingInstances';
 
 interface ContaMinecraft {
   uuid: string;
@@ -165,6 +172,13 @@ interface ResultadoExportacaoSyncSocial {
   previa: PreviaPacoteSocial;
 }
 
+interface ResultadoDownloadImportacaoSyncSocial {
+  pedidoId: string;
+  caminhoArquivo: string;
+  instanciaId?: string | null;
+  mensagem: string;
+}
+
 interface EventoSocketSyncPedido {
   pedidoId?: string;
   solicitantePerfilId?: string;
@@ -183,6 +197,13 @@ interface EventoSocketSyncStatus {
   // Propagados pela API para evitar busca no estado local
   instanciaId?: string | null;
   instanciaNome?: string | null;
+}
+
+interface DetalhesRecebimentoSocial {
+  nome?: string | null;
+  versao?: string | null;
+  loader?: string | null;
+  icone?: string | null;
 }
 
 interface AtividadeLocalLauncher {
@@ -229,6 +250,7 @@ const DISCORD_REDIRECT_URI = CONFIGURACAO_SOCIAL.discordRedirectUri;
 const DISCORD_SCOPES = CONFIGURACAO_SOCIAL.discordScopes;
 const INTERVALO_HEARTBEAT_MS = 20_000;
 const JANELA_MINIMA_CARREGAMENTO_AMIGOS_MS = 1_500;
+const PREFIXO_RECEBIMENTO_SOCIAL = 'recebimento-social:';
 
 type OpcoesCarregamentoAmigos = {
   forcar?: boolean;
@@ -255,6 +277,42 @@ function mensagemErro(erro: unknown, padrao: string): string {
   if (typeof erro === "string" && erro.trim()) return erro;
   if (erro instanceof Error && erro.message.trim()) return erro.message;
   return padrao;
+}
+
+function idCardRecebimentoSocial(pedidoId: string): string {
+  return `${PREFIXO_RECEBIMENTO_SOCIAL}${pedidoId}`;
+}
+
+function garantirCardRecebimentoSocial(
+  pedidoId: string,
+  detalhes: DetalhesRecebimentoSocial = {},
+): string {
+  const id = idCardRecebimentoSocial(pedidoId);
+  const existente = getCreatingInstances().find((instancia) => instancia.id === id);
+  const nome = detalhes.nome?.trim() || existente?.name || 'Instância compartilhada';
+
+  if (existente) {
+    updateCreatingInstance(id, {
+      name: nome,
+      version: detalhes.versao?.trim() || existente.version,
+      type: detalhes.loader?.trim() || existente.type,
+      icon: detalhes.icone?.trim() || existente.icon,
+    });
+    return id;
+  }
+
+  addCreatingInstance({
+    id,
+    name: nome,
+    version: detalhes.versao?.trim() || '',
+    type: detalhes.loader?.trim() || 'social',
+    status: 'installing',
+    progress: 0,
+    progressoIndeterminado: true,
+    message: 'O amigo está preparando o pacote...',
+    icon: detalhes.icone?.trim() || '/dome.png',
+  });
+  return id;
 }
 
 function mensagemErroAmigos(erro: unknown): string {
@@ -424,6 +482,7 @@ export default function SocialSidebar({
   const arquivosEnvioRef = useRef(new Map<string, string[]>());
   const canceladasRef = useRef(new Set<string>());
   const operacoesAtivasRef = useRef(new Set<string>());
+  const detalhesRecebimentosRef = useRef(new Map<string, DetalhesRecebimentoSocial>());
   const atualizarOperacao = useCallback((pedido: Partial<TransferenciaSocial> & { pedidoId: string }) => {
     setOperacoesSociais((anteriores) => {
       const existente = anteriores.find((a) => a.pedidoId === pedido.pedidoId);
@@ -439,6 +498,21 @@ export default function SocialSidebar({
         const total = payload.total ? ` / ${(payload.total / 1024 / 1024).toFixed(1)} MiB` : ' MiB';
         atualizarOperacao({ pedidoId: payload.pedidoId, status: 'processando',
           mensagem: `${payload.etapa === 'enviando' ? 'Enviando' : 'Recebendo'} ${recebidos}${total} · ${(payload.bytesPorSegundo / 1024 / 1024).toFixed(1)} MiB/s` });
+
+        if (payload.etapa !== 'recebendo') return;
+        const idCard = garantirCardRecebimentoSocial(
+          payload.pedidoId,
+          detalhesRecebimentosRef.current.get(payload.pedidoId),
+        );
+        const downloadConcluido = payload.total != null && payload.bytes >= payload.total;
+        updateCreatingInstance(idCard, {
+          status: downloadConcluido ? 'installing' : 'downloading',
+          progress: payload.total ? Math.min(100, (payload.bytes / payload.total) * 100) : 0,
+          progressoIndeterminado: downloadConcluido || !payload.total,
+          message: downloadConcluido
+            ? 'Instalando na biblioteca...'
+            : `Recebendo ${recebidos}${total} · ${(payload.bytesPorSegundo / 1024 / 1024).toFixed(1)} MiB/s`,
+        });
       });
     return () => { void escuta.then((remover) => remover()); };
   }, [atualizarOperacao]);
@@ -832,6 +906,99 @@ export default function SocialSidebar({
     } finally { operacoesAtivasRef.current.delete(pedidoId); }
   }, [obterTokenValido, atualizarOperacao]);
 
+  const fluxoDownloadSync = useCallback(async (evento: EventoSocketSyncStatus) => {
+    const pedidoId = evento.pedidoId?.trim();
+    const tokenDownload = evento.tokenDownload?.trim();
+    if (!pedidoId || !tokenDownload || canceladasRef.current.has(pedidoId)) return;
+    if (operacoesAtivasRef.current.has(pedidoId)) return;
+    operacoesAtivasRef.current.add(pedidoId);
+
+    const friendProfileId = evento.friendProfileId?.trim()
+      ?? pedidosSyncEnviadosRef.current.get(pedidoId);
+    const detalhes = {
+      ...detalhesRecebimentosRef.current.get(pedidoId),
+      nome: evento.instanciaNome ?? detalhesRecebimentosRef.current.get(pedidoId)?.nome,
+    };
+    detalhesRecebimentosRef.current.set(pedidoId, detalhes);
+    const idCard = garantirCardRecebimentoSocial(pedidoId, detalhes);
+    const token = await obterTokenValido();
+    if (!token) {
+      atualizarOperacao({ pedidoId, status: 'erro', mensagem: 'Entre novamente para receber a instância.' });
+      errorCreatingInstance(idCard, 'Entre novamente para receber a instância.');
+      operacoesAtivasRef.current.delete(pedidoId);
+      return;
+    }
+
+    try {
+      setMensagemSync('Recebendo e instalando a instância...');
+      atualizarOperacao({ ...evento, pedidoId, status: 'processando', direcao: 'recebimento' });
+      updateCreatingInstance(idCard, {
+        status: 'downloading',
+        progress: 0,
+        progressoIndeterminado: true,
+        message: 'Conectando para receber a instância...',
+      });
+      if (friendProfileId) {
+        publicarProgressoTransferenciaSocial({
+          estado: 'importando',
+          mensagem: 'Recebendo e instalando a instância...',
+          friendProfileId,
+          pedidoId,
+          instanciaId: evento.instanciaId,
+        });
+      }
+
+      const resultado = await invoke<ResultadoDownloadImportacaoSyncSocial>(
+        'download_import_launcher_social_sync_package',
+        {
+          apiBaseUrl: API_DOME_LAUNCHER_URL,
+          pedidoId,
+          tokenDownload,
+        }
+      );
+      await invoke('gerenciar_transferencias_sociais', {
+        apiBaseUrl: API_DOME_LAUNCHER_URL,
+        accessToken: token,
+        acao: 'confirmar',
+        pedidoId,
+      });
+
+      setMensagemSync('Instância recebida e instalada na biblioteca.');
+      completeCreatingInstance(idCard, 'Instância disponível na biblioteca.');
+      atualizarOperacao({
+        ...evento,
+        pedidoId,
+        status: 'concluido',
+        instanciaId: resultado.instanciaId,
+        mensagem: 'Instância instalada na biblioteca.',
+      });
+      if (friendProfileId) {
+        publicarProgressoTransferenciaSocial({
+          estado: 'concluido',
+          mensagem: 'Instância instalada na biblioteca.',
+          friendProfileId,
+          pedidoId,
+          instanciaId: resultado.instanciaId,
+        });
+      }
+      pedidosSyncEnviadosRef.current.delete(pedidoId);
+      detalhesRecebimentosRef.current.delete(pedidoId);
+      window.dispatchEvent(new CustomEvent(EVENTO_INSTANCIAS_ATUALIZADAS, {
+        detail: { instanciaId: resultado.instanciaId },
+      }));
+    } catch (erro) {
+      const mensagem = mensagemErro(erro, 'Falha ao receber e instalar a instância.');
+      setMensagemSync(mensagem);
+      errorCreatingInstance(idCard, mensagem);
+      atualizarOperacao({ ...evento, pedidoId, status: 'erro', mensagem });
+      if (friendProfileId) {
+        publicarProgressoTransferenciaSocial({ estado: 'erro', mensagem, friendProfileId, pedidoId });
+      }
+    } finally {
+      operacoesAtivasRef.current.delete(pedidoId);
+    }
+  }, [atualizarOperacao, obterTokenValido]);
+
   const conectarSocketRealtime = useCallback(async () => {
     const token = await obterTokenValido();
     if (!token) return;
@@ -853,11 +1020,36 @@ export default function SocialSidebar({
         apiBaseUrl: API_DOME_LAUNCHER_URL, accessToken: token, acao: 'listar',
       }).then(({ pedidos }) => {
         for (const pedido of pedidos) {
-          if (pedido.direcao === 'recebimento' && pedido.friendProfileId)
+          if (pedido.direcao === 'recebimento' && pedido.friendProfileId) {
             pedidosSyncEnviadosRef.current.set(pedido.pedidoId, pedido.friendProfileId);
+            detalhesRecebimentosRef.current.set(pedido.pedidoId, { nome: pedido.instanciaNome });
+            if (pedido.status === 'aguardando_upload') {
+              garantirCardRecebimentoSocial(pedido.pedidoId, { nome: pedido.instanciaNome });
+            }
+          }
+          if (pedido.direcao === 'envio' && pedido.status === 'pendente') {
+            pedidosSyncRecebidosRef.current.set(pedido.pedidoId, {
+              pedidoId: pedido.pedidoId,
+              solicitantePerfilId: pedido.friendProfileId,
+              instanciaId: pedido.instanciaId,
+              instanciaNome: pedido.instanciaNome,
+              expiraEm: pedido.expiraEm,
+            });
+            setPedidosTransferencia((anteriores) => anteriores.some((item) => item.id === pedido.pedidoId)
+              ? anteriores
+              : [{
+                  id: pedido.pedidoId,
+                  solicitantePerfilId: pedido.friendProfileId ?? '',
+                  instanciaId: pedido.instanciaId,
+                  instanciaNome: pedido.instanciaNome,
+                  expiraEm: pedido.expiraEm,
+                }, ...anteriores]);
+          }
           atualizarOperacao(pedido);
           if (pedido.status === 'aguardando_upload' && pedido.tokenUpload)
             atualizarOperacao({ ...pedido, status: 'erro', mensagem: 'Envio interrompido. Revise e tente novamente.' });
+          if (pedido.status === 'pronto_download' && pedido.tokenDownload)
+            void fluxoDownloadSync(pedido);
         }
       }).catch((erro) => setMensagemTransferencia(mensagemErro(erro, 'Falha ao recuperar transferências.')));
 
@@ -924,8 +1116,13 @@ export default function SocialSidebar({
         void invoke('cancelar_transferencia_social_local', { pedidoId: id });
         const friendProfileId = evento.friendProfileId ?? pedidosSyncEnviadosRef.current.get(id);
         const mensagem = `Transferência ${evento.status === 'recusado' ? 'recusada' : evento.status === 'cancelado' ? 'cancelada' : 'expirada'}.`;
+        const idCard = idCardRecebimentoSocial(id);
+        if (getCreatingInstances().some((instancia) => instancia.id === idCard)) {
+          errorCreatingInstance(idCard, mensagem);
+        }
         if (friendProfileId) publicarProgressoTransferenciaSocial({ estado: 'erro', mensagem, friendProfileId, pedidoId: id });
         pedidosSyncEnviadosRef.current.delete(id);
+        detalhesRecebimentosRef.current.delete(id);
         setPedidosTransferencia((anteriores) => anteriores.filter((a) => a.id !== id));
         return;
       }
@@ -939,6 +1136,14 @@ export default function SocialSidebar({
         const pedidoId = evento.pedidoId?.trim();
         const friendProfileId = pedidoId ? pedidosSyncEnviadosRef.current.get(pedidoId) : null;
         if (pedidoId && friendProfileId) {
+          const detalhes = detalhesRecebimentosRef.current.get(pedidoId);
+          const idCard = garantirCardRecebimentoSocial(pedidoId, detalhes);
+          updateCreatingInstance(idCard, {
+            status: 'installing',
+            progress: 0,
+            progressoIndeterminado: true,
+            message: 'O amigo está preparando o pacote...',
+          });
           setMensagemSync('Solicitação aceita. O pacote está sendo preparado...');
           publicarProgressoTransferenciaSocial({
             estado: 'preparando',
@@ -950,7 +1155,11 @@ export default function SocialSidebar({
         return;
       }
       if (evento.status === 'pronto_download' && evento.tokenDownload) {
-        setMensagemSync('Pacote pronto. Receba pela lista de transferências.');
+        await fluxoDownloadSync({
+          ...evento,
+          pedidoId: id,
+          friendProfileId: evento.friendProfileId ?? pedidosSyncEnviadosRef.current.get(id),
+        });
       }
     });
 
@@ -962,12 +1171,16 @@ export default function SocialSidebar({
 
       const mensagem = evento.mensagem?.trim() || 'Falha ao transferir instância.';
       setMensagemSync(mensagem);
+      const idCard = idCardRecebimentoSocial(pedidoId);
+      if (getCreatingInstances().some((instancia) => instancia.id === idCard)) {
+        errorCreatingInstance(idCard, mensagem);
+      }
       publicarProgressoTransferenciaSocial({ estado: 'erro', mensagem, friendProfileId, pedidoId });
       pedidosSyncEnviadosRef.current.delete(pedidoId);
     });
 
     socketRef.current = socket;
-  }, [carregarAmigos, fluxoUploadSync, obterTokenValido, atualizarOperacao]);
+  }, [carregarAmigos, fluxoDownloadSync, fluxoUploadSync, obterTokenValido, atualizarOperacao]);
 
   const abrirChatComAmigo = useCallback((friendProfileId: string) => {
     setAmigoSelecionadoPerfilId(friendProfileId);
@@ -1417,10 +1630,16 @@ export default function SocialSidebar({
     const pedido = pedidosSyncRecebidosRef.current.get(pedidoId)
       ?? operacoesSociais.find((p) => p.pedidoId === pedidoId);
     if (!pedido?.instanciaId) { setMensagemTransferencia('Instância solicitada indisponível.'); return; }
+    setTransferenciaProcessandoId(pedidoId);
+    setMensagemTransferencia(null);
     try {
       const previa = await invoke<PreviaPacoteSocial>('obter_previa_pacote_social', { instanceId: pedido.instanciaId });
       setRevisaoEnvio({ pedidoId, previa });
-    } catch (erro) { setMensagemTransferencia(mensagemErro(erro, 'Falha ao revisar pacote.')); }
+    } catch (erro) {
+      setMensagemTransferencia(mensagemErro(erro, 'Falha ao revisar pacote.'));
+    } finally {
+      setTransferenciaProcessandoId(null);
+    }
   };
   const removerAmigo = async (friendProfileId: string) => {
     const token = await obterTokenValido();
@@ -1471,7 +1690,22 @@ export default function SocialSidebar({
             publicarProgressoTransferenciaSocial({ estado: 'erro', mensagem, friendProfileId });
           } else {
             const pedidoId = resposta.pedidoId?.trim();
-            if (pedidoId) { pedidosSyncEnviadosRef.current.set(pedidoId, friendProfileId); atualizarOperacao({ pedidoId, friendProfileId, status: "pendente", direcao: "recebimento", instanciaNome: atividade?.instanciaNome }); }
+            if (pedidoId) {
+              pedidosSyncEnviadosRef.current.set(pedidoId, friendProfileId);
+              detalhesRecebimentosRef.current.set(pedidoId, {
+                nome: atividade?.instanciaNome,
+                versao: atividade?.versaoMinecraft,
+                loader: atividade?.loader,
+                icone: atividade?.iconeUrl,
+              });
+              atualizarOperacao({
+                pedidoId,
+                friendProfileId,
+                status: 'pendente',
+                direcao: 'recebimento',
+                instanciaNome: atividade?.instanciaNome,
+              });
+            }
             const mensagem = 'Aguardando o amigo aceitar a transferência...';
             setMensagemSync(mensagem);
             publicarProgressoTransferenciaSocial({

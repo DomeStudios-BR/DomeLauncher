@@ -1,7 +1,9 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { CompartilhamentosSociais } from '../../src/components/social/CompartilhamentosSociais';
+import CreatingInstancesOverlay from '../../src/components/CreatingInstancesOverlay';
 import { TransferenciasSociais } from '../../src/components/social/TransferenciasSociais';
+import { addCreatingInstance } from '../../src/stores/creatingInstances';
 import '../../src/index.css';
 
 const arquivo = { caminho: 'mods/exemplo.jar', tamanhoBytes: 1048576, configuracao: false,
@@ -26,7 +28,9 @@ Object.assign(window, {
         unregisterCallback: () => undefined,
         invoke: async (comando: string, argumentos: Record<string, unknown> = {}) => {
             chamadas.push({ comando, argumentos });
-            if (comando === 'plugin:deep-link|get_current') return null;
+            if (comando === 'plugin:deep-link|get_current') {
+                return [`domelauncher://convite/${'1'.repeat(24)}.${'a'.repeat(48)}`];
+            }
             if (comando === 'plugin:event|listen') return 1;
             if (comando === 'get_instances') return [{ id: 'local', name: previa.nome }];
             if (comando === 'obter_previa_pacote_social') return previa;
@@ -57,11 +61,23 @@ Object.assign(window, {
     },
 });
 
+addCreatingInstance({
+    id: 'recebimento-social:exemplo',
+    name: 'Vanilla',
+    version: '1.21.1',
+    type: 'fabric',
+    status: 'downloading',
+    progress: 62,
+    message: 'Recebendo 31.0 / 50.0 MiB · 8.4 MiB/s',
+    icon: '/dome.png',
+});
+
 createRoot(document.getElementById('root')!).render(<React.StrictMode>
     <main className="min-h-screen bg-[#101010] p-5 text-white">
         <CompartilhamentosSociais apiBaseUrl="https://api.example.com" perfilId={publicador ? 'dono' : 'amigo'}
             obterToken={async () => 'sessao-teste'} amigos={[{ friendProfileId: 'amigo', nome: 'Alex' }]} />
         <div className="w-80"><TransferenciasSociais pedidos={[{ pedidoId: 'exemplo', instanciaNome: previa.nome,
             status: 'pronto_download', tokenDownload: 'teste' }]} onCancelar={() => undefined} onRetomar={() => undefined} /></div>
+        <CreatingInstancesOverlay />
     </main>
 </React.StrictMode>);

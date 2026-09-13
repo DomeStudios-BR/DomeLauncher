@@ -42,7 +42,9 @@ try {
             const erros: string[] = [];
             pagina.on('pageerror', (erro) => erros.push(erro.message));
             await pagina.goto(`http://127.0.0.1:${endereco.port}/`);
-            await pagina.getByRole('button', { name: 'Instâncias compartilhadas' }).click();
+            await pagina.getByRole('heading', { name: 'Instâncias compartilhadas' }).waitFor();
+            await pagina.getByText('Vanilla', { exact: true }).waitFor();
+            await pagina.getByText('62%', { exact: true }).waitFor();
             await pagina.getByRole('button', { name: 'Revisar instalação / atualização' }).click();
             const atualizar = pagina.getByRole('button', { name: 'Atualizar instância', exact: true });
             assert(await atualizar.isDisabled(), 'Conflito precisa de aceite explícito.');
@@ -55,7 +57,7 @@ try {
                 .find((c) => c.comando === 'download_import_launcher_social_sync_package'));
             assert.equal(resultado?.argumentos.vinculo.substituirAlteracoesLocais, true);
             await pagina.goto(`http://127.0.0.1:${endereco.port}/?dono`);
-            await pagina.getByRole('button', { name: 'Instâncias compartilhadas' }).click();
+            await pagina.getByRole('heading', { name: 'Instâncias compartilhadas' }).waitFor();
             await pagina.getByRole('button', { name: 'Revisar e publicar' }).click();
             const pastaConfig = pagina.getByRole('checkbox', { name: 'Incluir pasta config', exact: true });
             assert(await pastaConfig.isChecked(), 'Republicação mantém a seleção anterior da pasta.');

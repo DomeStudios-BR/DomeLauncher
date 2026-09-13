@@ -530,7 +530,7 @@ export function ListaAmigosAgrupada({
                                         disabled={processando}
                                         className="flex items-center justify-center gap-1 border border-emerald-400/20 bg-emerald-400/[0.06] py-1.5 text-[8px] uppercase tracking-wider text-emerald-200 disabled:opacity-30"
                                     >
-                                        <Check size={9} /> Aceitar
+                                        <Check size={9} /> Revisar e aceitar
                                     </button>
                                 </div>
                             </article>

@@ -214,7 +214,7 @@ export function RevisaoPacoteSocial({ previa, onConfirmar, onFechar, arquivosAnt
                     onClick={onFechar}>Voltar</button>
                 <button disabled={!selecionados.size || tamanho > 2 * 1024 ** 3}
                     className="rounded bg-emerald-500 px-4 py-2 text-sm text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => onConfirmar([...selecionados])}>{publicando ? 'Publicar versão' : 'Confirmar envio'}</button>
+                    onClick={() => onConfirmar([...selecionados])}>{publicando ? 'Publicar versão' : 'Aceitar e enviar'}</button>
             </div>
         </section>
     </ModalSocial>;
