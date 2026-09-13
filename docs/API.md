@@ -136,7 +136,7 @@ Na integração existente, reutilize `obterTokenValido` antes de enviar requisi�
 | Pedido enviado | `id`, `paraPerfilId`, `paraHandle?`, `paraNome`, `criadoEm` |
 | Perfil de busca | `perfilId`, `nome`, `handle`, `avatarUrl?`, `online`, `status?` |
 | Mensagem | `id`, `dePerfilId`, `paraPerfilId`, `conteudo`, `criadoEm` |
-| Atividade | `tipo`, `instanciaId?`, `instanciaNome?`, `servidor?`, `source?`, `projectId?`, `versionId?`, `fileId?`, `modpackNome?`, `iconeUrl?`, `versaoMinecraft?`, `loader?`, `atualizadoEm` |
+| Atividade | `tipo`, `instanciaId?`, `instanciaNome?`, `servidor?`, `source?`, `projectId?`, `versionId?`, `fileId?`, `modpackNome?`, `iconeUrl?`, `versaoMinecraft?`, `loader?`, `compartilhamentoId?`, `publicaAmigos?`, `atualizadoEm` |
 
 Datas são strings interpretadas como datas pelo cliente. Campos opcionais podem admitir `null`; consulte
 os tipos Rust/TypeScript antes de mudar serialização. Atividade usa `launcher`, `modpack_exato` ou
@@ -163,32 +163,118 @@ quando a atividade muda e a cada 20 segundos.
 O cliente envia chat por HTTP, embora a API local também implemente `social:chat:enviar`.
 Não envie simultaneamente pelos dois canais, pois isso pode duplicar mensagens.
 
-## Transferência de instâncias
+## Transferências e instâncias compartilhadas
 
-1. O solicitante emite `social:sync:solicitar` para obter uma instância do amigo alvo.
-2. O alvo recebe o pedido e aceita ou recusa com `social:sync:responder`.
-3. Em `aguardando_upload`, o alvo recebe `tokenUpload`; o solicitante aguarda a preparação.
-4. `export_launcher_social_sync_package({ instanceId })` exporta `.dome` sem saves e retorna
-   `{ caminhoArquivo, tamanhoBytes }`. A exportação pesada usa `spawn_blocking`.
-5. `upload_launcher_social_sync_package` envia streaming por `POST /social/sync/upload/:pedidoId`,
-   com Bearer social, `x-social-sync-token` e `Content-Type: application/octet-stream`.
-   Não use multipart nem JSON para o arquivo.
-6. A API sinaliza `pronto_download` ao solicitante com `tokenDownload`. O cliente monta a URL pela base
-   configurada, mesmo quando o evento também inclui `downloadUrl`.
-7. `download_import_launcher_social_sync_package` faz `GET /social/sync/download/:pedidoId?token=...`,
-   sem Bearer, grava em `%TEMP%/dome-social-sync/incoming`, importa e remove o temporário após sucesso.
-   Retorna `{ pedidoId, caminhoArquivo, instanciaId, mensagem }`; o caminho retornado pode já estar removido.
+### Transferência pontual
 
-IPC de upload: `{ apiBaseUrl, accessToken, payload: { pedidoId, tokenUpload, caminhoArquivo } }`.
-IPC de download: `{ apiBaseUrl, pedidoId, tokenDownload }`, sem envelope `payload`.
-Upload HTTP retorna JSON; a API local responde 201 com `{ sucesso, pedidoId, status, tamanhoBytes }`.
-Download HTTP retorna o arquivo binário.
+A solicitação e o aceite continuam usando Socket.IO. O envio passa por revisão de conteúdo:
+`obter_previa_pacote_social({ instanceId })` lista arquivos, tamanhos e hashes; o usuário seleciona
+os arquivos e as pastas da instância antes de aceitar. `export_launcher_social_sync_package` recebe
+`instanceId`, a seleção em `arquivosConfiguracao` por compatibilidade e `arquivosReferencia`.
+`config`, `mods` e `resourcepacks` começam marcadas; mundos, opções pessoais e outros conteúdos só
+acompanham o pacote quando selecionados. O `instance.json` original nunca é incluído.
 
-O launcher limita upload/download a `512 * 1024 * 1024` bytes (512 MiB), inclusive durante recebimento.
-A API local permite 2 GiB; o limite efetivo desse cliente continua sendo 512 MiB.
-Ack de aceite não significa upload concluído; `pronto_download` não significa instância importada.
-Não exponha tokens de transferência ou URLs autenticadas em logs. A limpeza em todos os tipos de falha
-não é garantida pelo cliente atual; confira rede, arquivo vazio, limite excedido e falha de importação.
+O manifesto contém SHA-256 de cada arquivo. A prévia identifica conteúdo Modrinth por SHA-512;
+para abrir o seletor sem bloquear na leitura e na rede, hashes e referências são resolvidos somente
+depois da confirmação. A identificação consulta até quatro lotes Modrinth em paralelo, com timeout por lote.
+Somente arquivos selecionados são lidos para hash e compactação. Quando disponível, o pacote referencia a
+versão/URL oficial em vez de reenviar o binário.
+Se a identificação estiver indisponível, o arquivo segue no ZIP. URLs de referências são restritas
+a HTTPS em `cdn.modrinth.com`, sem redirecionamentos. O recebimento confere tamanho e hash.
+Arquivos exclusivamente CurseForge ou locais continuam no pacote.
+
+- Upload: `POST /social/sync/upload/:pedidoId`, Bearer social, `x-social-sync-token`, corpo binário.
+- Download: `GET /social/sync/download/:pedidoId?token=...`, token próprio, sem Bearer.
+- Recuperação: `GET /social/sync`, autenticado, até 100 pedidos recentes do participante.
+- Cancelamento: `POST /social/sync/:pedidoId/cancelar`, autenticado para um participante.
+- Confirmação: `POST /social/sync/:pedidoId/confirmar`, autenticado somente para o destinatário.
+
+`gerenciar_transferencias_sociais({ apiBaseUrl, accessToken, acao, pedidoId? })` expõe
+`listar`, `cancelar` e `confirmar`. Recusa, cancelamento e expiração encerram o estado de espera.
+Acks do socket têm limite de 15 segundos. Ao reconectar, o cliente recupera os pedidos pela API;
+envios interrompidos exigem nova revisão, e recebimentos prontos ficam disponíveis para retomar.
+Tokens não são persistidos no armazenamento web.
+
+O limite do ZIP é **2 GiB** nos dois projetos. A extração admite até 8 GiB de conteúdo e 50 mil
+entradas; rejeita caminhos inseguros/duplicados, links e divergências do manifesto. ZIPs novos
+não podem carregar arquivos extras não declarados. Temporários usam UUID e limpeza por escopo.
+O evento nativo `social-transferencia-bytes` informa `pedidoId`, `etapa`, `bytes`, `total` e
+`bytesPorSegundo`. Preparação sem total mensurável permanece indeterminada.
+`cancelar_transferencia_social_local({ pedidoId })` interrompe a operação nativa em andamento.
+
+O prazo inicial é de dez minutos; depois do aceite vale o prazo de transferência de duas horas.
+O servidor mantém o pacote após o download HTTP e só marca conclusão quando o destinatário
+confirma a importação. A confirmação é idempotente. A limpeza remove pacotes pontuais após o
+prazo, preservando o estado final de operações concluídas/canceladas.
+
+A instalação social acontece em `.social-preparacao`, dentro da raiz de instâncias. A pasta só
+é disponibilizada após a preparação completa. Recibos locais em `.social-recebimentos` evitam
+reimportar o mesmo pedido se a confirmação remota falhar. O cache `.social-cache` reutiliza
+conteúdo referenciado por hash com cópias independentes.
+
+### Publicações, participantes e atualizações
+
+`gerenciar_compartilhamentos_sociais({ apiBaseUrl, accessToken, acao, dados })` chama
+`POST /social/compartilhamentos/:acao`. Todas as ações exigem sessão social.
+
+| Ação | Dados principais | Comportamento |
+| --- | --- | --- |
+| `listar` | `{}` | Publicações próprias, recebidas e convites pendentes |
+| `criar` | `instanciaId`, `nome` | Cria/reutiliza publicação do proprietário |
+| `publicar` | `id`, `previa` | Reserva envio; a versão torna-se disponível após upload |
+| `convidar_amigo` | `id`, `membro` | Exige amizade aceita; destinatário precisa aceitar |
+| `aceitar_amigo` | `id` | Aceita convite direto pendente |
+| `convidar` | `id`, `validadeHoras?`, `limiteUsos?` | Gera link; padrão 24h e dez usos |
+| `aceitar` | `convite` | Aceita código/link válido |
+| `revogar` | `id`, `convite` (identificador retornado na lista) | Revoga link |
+| `remover` | `id`, `membro` | Remove participante ou convite pendente |
+| `receber` | `id` | Emite pedido de recebimento da última versão |
+| `receber_publica` | `id` | Emite recebimento direto somente para amizade aceita com o proprietário |
+| `definir_publica` | `id`, `publicaAmigos` | Proprietário libera ou remove o download direto para amigos |
+| `sair` | `id` | Remove participação/convite do usuário |
+| `encerrar` | `id` | Encerra publicação; limpeza periódica remove seus objetos |
+
+Limites atuais: 20 publicações por proprietário, 100 versões por publicação, 100 participantes/
+convites diretos e dez links ativos. Os links têm no máximo 168 horas e 100 usos. Somente o hash
+do segredo do convite fica no servidor. Remover acesso impede novos downloads, inclusive de
+pedidos já emitidos. Cópias que o jogador já instalou permanecem locais.
+
+Links `domelauncher://convite/<id>.<segredo>` usam os plugins Tauri deep-link/single-instance e
+abrem a revisão no launcher, sem aceitar nem instalar automaticamente. A associação do protocolo
+é feita pelo instalador; execução apenas pelo Vite não testa esse comportamento.
+
+Uma instância marcada como pública continua restrita às amizades aceitas que recebem a atividade social.
+O launcher anuncia `compartilhamentoId` na presença e oferece download direto, mas a API verifica a amizade
+ao criar o recebimento e novamente ao servir o arquivo. Tornar a instância privada bloqueia downloads públicos
+pendentes. Usuários que não são amigos continuam dependendo da solicitação e do aceite explícito do proprietário.
+
+`revisar_atualizacao_compartilhada` compara versão anterior, conteúdo local e versão publicada.
+`download_import_launcher_social_sync_package` recebe opcionalmente `vinculo` com
+`apiBaseUrl`, `compartilhamentoId`, `versao`, `arquivos` e `substituirAlteracoesLocais`.
+O conteúdo baixado é conferido contra a revisão. Atualizações preservam ID/nome local e conteúdo não
+gerenciado; pastas como `saves` passam a fazer parte da versão quando o publicador as seleciona.
+Conflitos exigem aceite explícito, também validado no Rust.
+A atualização exige o jogo fechado e mantém a pasta anterior em `.social-backups`.
+`desvincular_instancia_compartilhada` remove o vínculo local, preservando os arquivos da instância.
+Backups e cache não têm expiração automática: devem ser incluídos no planejamento de espaço em disco.
+
+O evento `social:compartilhamentos:atualizar` sinaliza convites e versões novas. Alterações concorrentes
+no servidor usam advisory locks PostgreSQL, mantendo as consultas na conexão protegida.
+Os dados ficam nas coleções `social_sync_instancias` e `instancias_compartilhadas` do armazenamento
+JSONB existente; não é necessário criar tabelas específicas.
+
+### Compatibilidade e validação
+
+Implante a DomeAPI atualizada antes de distribuir este launcher. Clientes antigos continuam
+transferindo pacotes, mas não confirmam importação; seus objetos pontuais expiram normalmente.
+O launcher novo precisa das rotas adicionais para recuperação, confirmação e compartilhamento.
+Não há retomada por faixa de bytes: uma tentativa de ZIP interrompida reinicia o download; o cache
+reaproveita arquivos Modrinth concluídos.
+
+`bun run verificar:social` testa os componentes compilados, revisão/conflitos, publicação e janela
+mínima no Edge, com IPC simulado. Testes Rust cobrem pacotes e atualização local; `bun test tests`
+na DomeAPI exercita HTTP com banco/armazenamento isolados. Esses testes não comprovam OAuth,
+S3/PostgreSQL de produção, protocolo registrado pelo instalador nem transferência entre duas contas reais.
 
 ## Erros e diagnóstico
 
@@ -202,14 +288,22 @@ mantém o status. A API local responde erros como `{ erro: { codigo, mensagem } 
 - **429:** confira recarregamentos em cascata e limitador do servidor; evite retries imediatos.
 - **Conexão:** separe base do build, CSP da WebView, proxy Socket.IO e rede do Rust.
 
-Rejeições de `invoke` podem ser strings. O helper atual `mensagemErro` só extrai texto de `Error`, então
-alguns detalhes nativos aparecem como mensagem genérica. Não presuma que o usuário viu o status HTTP.
+Rejeições de `invoke` podem ser strings. O helper `mensagemErro` preserva strings de rejeição nativa e mensagens de `Error`. Não presuma que o usuário viu o status HTTP.
 Não existe uma camada global de retry para essas chamadas.
 
 ## Outros serviços e validação
 
 Microsoft/Xbox/Minecraft, skins, manifests Mojang, loaders e conteúdo Modrinth/CurseForge têm integrações
 próprias, fora da DomeAPI. Consulte `auth*.rs`, `skin.rs` e módulos de `aplicacao/`.
+Versões exatas de arquivos CurseForge são resolvidas pelo comando
+`obter_versao_projeto_curseforge`; isso permite selecionar inclusive uma versão social que já saiu da primeira
+página da listagem. Instâncias de modpacks públicos são identificadas pelo `modpack.json`, com fonte, projeto,
+versão e uma assinatura dos arquivos gerenciados. Alterações posteriores em mods, configurações, resource packs,
+shaders ou scripts fazem a presença tratá-la como instância personalizada; instalações legadas sem assinatura
+continuam usando os metadados exatos até a próxima instalação ou troca de versão. A ausência do `modpack.json`
+mantém a instância como personalizada, sem inferência pelo nome.
+Ao trocar a versão de um modpack público, o launcher limita as opções à mesma versão do Minecraft e ao mesmo loader,
+substitui o conteúdo gerenciado do pacote e preserva dados da instância como mundos e opções do jogador.
 Discord Rich Presence em `comandos/presenca_discord.rs` também é distinto do social da DomeAPI.
 O updater usa GitHub, conforme `tauri.conf.json`, e não `/api/launcher`.
 

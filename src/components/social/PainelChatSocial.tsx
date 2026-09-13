@@ -63,6 +63,9 @@ export function PainelChatSocial({
   const [menuAberto, setMenuAberto] = useState(false);
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const atividadePersonalizada = amigoSelecionado?.atividadeAtual?.tipo === 'instancia_personalizada';
+  const atividadePublica = atividadePersonalizada && Boolean(
+    amigoSelecionado?.atividadeAtual?.publicaAmigos && amigoSelecionado.atividadeAtual.compartilhamentoId
+  );
 
   useEffect(() => {
     if (!aberto) {
@@ -208,7 +211,7 @@ export function PainelChatSocial({
               </div>
               <button
                 onClick={() =>
-                  void (atividadePersonalizada ? onSolicitarSync : onInstalarAtividade)(
+                  void (atividadePersonalizada && !atividadePublica ? onSolicitarSync : onInstalarAtividade)(
                       amigoSelecionado.friendProfileId,
                       amigoSelecionado.atividadeAtual
                     )
@@ -219,7 +222,7 @@ export function PainelChatSocial({
                   'hover:bg-emerald-400/8 hover:text-emerald-200 disabled:opacity-30'
                 )}
               >
-                {atividadePersonalizada ? 'Transferir' : 'Instalar'}
+                {atividadePublica ? 'Baixar' : atividadePersonalizada ? 'Solicitar' : 'Instalar'}
               </button>
             </div>
           )}

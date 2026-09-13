@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Trash2, Upload, X } from "../iconesPixelados";
+import { ReactSkinview3d } from "react-skinview3d";
+import { Check, Download, Loader2, Pencil, Trash2, Upload, X } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
 import { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
@@ -8,6 +9,12 @@ import { SkinPreviewRenderer } from "./SkinPreviewRenderer";
 import { MiniaturaSkinMinecraft } from "./MiniaturaSkinMinecraft";
 import { MiniaturaCapaMinecraft } from "./MiniaturaCapaMinecraft";
 import { SKINS_PADRAO, type SkinPadrao } from "../assets/skinsPadrao";
+import {
+  CabecalhoMenuContextual,
+  ItemMenuContextual,
+  MenuContextual,
+  SeparadorMenuContextual,
+} from "./context-menu/MenuContextual";
 
 interface SkinManagerProps {
   user: MinecraftAccount | null;
@@ -44,19 +51,23 @@ const CHAVE_SKINS_SALVAS = "dome-skins-salvas";
 function carregarSkinsSalvas(): SkinSalva[] {
   try {
     const valor = localStorage.getItem(CHAVE_SKINS_SALVAS);
-    return valor ? (JSON.parse(valor) as SkinSalva[]) : [];
+    const skins = valor ? (JSON.parse(valor) as SkinSalva[]) : [];
+    return skins.map((skin) => ({
+      ...skin,
+      id: identificarSkin(skin.bytes, skin.variant),
+    }));
   } catch {
     return [];
   }
 }
 
-function identificarBytes(bytes: number[]): string {
+function identificarSkin(bytes: number[], variante: "classic" | "slim"): string {
   let hash = 2166136261;
   bytes.forEach((byte) => {
     hash ^= byte;
     hash = Math.imul(hash, 16777619);
   });
-  return (hash >>> 0).toString(16);
+  return `${(hash >>> 0).toString(16)}:${variante}`;
 }
 
 function bytesParaDataUrl(bytes: number[]): string {
@@ -72,7 +83,6 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [modoEditor, setModoEditor] = useState<"skin" | "capa">("skin");
   const inputRef = useRef<HTMLInputElement>(null);
-  const cliqueSkinSalvaTimeoutRef = useRef<number | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">(
@@ -85,45 +95,73 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [erroStatus, setErroStatus] = useState<string | null>(null);
   const [cachePreview, setCachePreview] = useState(() => Date.now());
   const [skinAtualUrl, setSkinAtualUrl] = useState<string | null>(null);
+  const [skinAtualDataUrl, setSkinAtualDataUrl] = useState<string | null>(null);
+  const [previewArquivoUrl, setPreviewArquivoUrl] = useState<string | null>(null);
   const [capas, setCapas] = useState<CapaMinecraft[]>([]);
   const [capaSelecionadaId, setCapaSelecionadaId] = useState<string | null>(null);
   const [capaOriginalId, setCapaOriginalId] = useState<string | null>(null);
   const [skinsSalvas, setSkinsSalvas] = useState<SkinSalva[]>(carregarSkinsSalvas);
   const [nomeNovaSkin, setNomeNovaSkin] = useState("Minha skin");
   const [skinEditandoId, setSkinEditandoId] = useState<string | null>(null);
+  const [skinAtualId, setSkinAtualId] = useState<string | null>(null);
+  const [menuSkin, setMenuSkin] = useState<{ skin: SkinSalva; x: number; y: number } | null>(null);
 
   const previewSkinUrl = useMemo(() => {
     if (!user) return "";
-    return skinAtualUrl || `https://visage.surgeplay.com/skin/${user.uuid}?t=${cachePreview}`;
-  }, [cachePreview, skinAtualUrl, user]);
+    return skinAtualDataUrl || skinAtualUrl || `https://visage.surgeplay.com/skin/${user.uuid}?t=${cachePreview}`;
+  }, [cachePreview, skinAtualDataUrl, skinAtualUrl, user]);
   const previewEditorUrl = useMemo(
-    () => (selectedFile ? URL.createObjectURL(selectedFile) : previewSkinUrl),
-    [previewSkinUrl, selectedFile]
+    () => previewArquivoUrl || previewSkinUrl,
+    [previewArquivoUrl, previewSkinUrl]
   );
 
   useEffect(() => {
-    return () => {
-      if (previewEditorUrl.startsWith("blob:")) URL.revokeObjectURL(previewEditorUrl);
+    if (!selectedFile) {
+      setPreviewArquivoUrl(null);
+      return;
+    }
+    let cancelado = false;
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      if (!cancelado && typeof leitor.result === "string") setPreviewArquivoUrl(leitor.result);
     };
-  }, [previewEditorUrl]);
-
-  useEffect(() => {
+    leitor.readAsDataURL(selectedFile);
     return () => {
-      if (cliqueSkinSalvaTimeoutRef.current !== null) {
-        window.clearTimeout(cliqueSkinSalvaTimeoutRef.current);
-      }
+      cancelado = true;
+      leitor.abort();
     };
-  }, []);
+  }, [selectedFile]);
 
   const carregarCosmeticos = useCallback(async () => {
     if (!user) return;
     try {
-      const cosmeticos = await invoke<CosmeticosSkin>("obter_cosmeticos_skin", {
-        accessToken: user.access_token,
-      });
+      const [cosmeticos, skinAtual] = await Promise.all([
+        invoke<CosmeticosSkin>("obter_cosmeticos_skin", {
+          accessToken: user.access_token,
+        }),
+        invoke<SkinAtualBaixada>("baixar_skin_atual", {
+          accessToken: user.access_token,
+        }),
+      ]);
       setVariant(cosmeticos.variant);
       setVariantOriginal(cosmeticos.variant);
       setSkinAtualUrl(cosmeticos.skinUrl || null);
+      setSkinAtualDataUrl(bytesParaDataUrl(skinAtual.bytes));
+      const idAtual = identificarSkin(skinAtual.bytes, skinAtual.variant);
+      setSkinAtualId(idAtual);
+      setSkinsSalvas((atuais) => {
+        const existente = atuais.find((skin) => skin.id === idAtual);
+        const atualizada: SkinSalva = existente || {
+          id: idAtual,
+          nome: `Skin de ${user.name}`,
+          variant: skinAtual.variant,
+          bytes: skinAtual.bytes,
+          salvaEm: Date.now(),
+        };
+        const lista = [atualizada, ...atuais.filter((skin) => skin.id !== idAtual)].slice(0, 12);
+        localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(lista));
+        return lista;
+      });
       setCapas(cosmeticos.capes || []);
       const capaAtiva = cosmeticos.capes.find((capa) => capa.state.toLowerCase() === "active");
       setCapaSelecionadaId(capaAtiva?.id || null);
@@ -242,7 +280,7 @@ export function SkinManager({ user }: SkinManagerProps) {
     nome: string,
     idAnterior?: string | null,
   ) => {
-    const id = identificarBytes(bytes);
+    const id = identificarSkin(bytes, varianteSkin);
     persistirSkinsSalvas((atuais) => [
       {
         id,
@@ -251,7 +289,9 @@ export function SkinManager({ user }: SkinManagerProps) {
         bytes,
         salvaEm: Date.now(),
       },
-      ...atuais.filter((skin) => skin.id !== id && skin.id !== idAnterior),
+      ...atuais.filter(
+        (skin) => skin.id !== id && (skin.id !== idAnterior || skin.id === skinAtualId)
+      ),
     ]);
   };
 
@@ -274,11 +314,8 @@ export function SkinManager({ user }: SkinManagerProps) {
   const excluirSkinSalva = (skin: SkinSalva) => {
     if (!window.confirm(`Excluir "${skin.nome}" das skins salvas?`)) return;
 
-    if (cliqueSkinSalvaTimeoutRef.current !== null) {
-      window.clearTimeout(cliqueSkinSalvaTimeoutRef.current);
-      cliqueSkinSalvaTimeoutRef.current = null;
-    }
     persistirSkinsSalvas((atuais) => atuais.filter((item) => item.id !== skin.id));
+    if (skin.id === skinAtualId) setSkinAtualId(null);
   };
 
   const preservarSkinAtual = async () => {
@@ -287,7 +324,7 @@ export function SkinManager({ user }: SkinManagerProps) {
       const atual = await invoke<SkinAtualBaixada>("baixar_skin_atual", {
         accessToken: user.access_token,
       });
-      const id = identificarBytes(atual.bytes);
+      const id = identificarSkin(atual.bytes, atual.variant);
       persistirSkinsSalvas((atuais) => {
         if (atuais.some((skin) => skin.id === id)) return atuais;
         return [
@@ -357,26 +394,14 @@ export function SkinManager({ user }: SkinManagerProps) {
     }
   };
 
-  const aplicarSkinSalvaComClique = (skin: SkinSalva) => {
-    if (cliqueSkinSalvaTimeoutRef.current !== null) {
-      window.clearTimeout(cliqueSkinSalvaTimeoutRef.current);
-    }
-    cliqueSkinSalvaTimeoutRef.current = window.setTimeout(() => {
-      cliqueSkinSalvaTimeoutRef.current = null;
-      void aplicarSkinSalva(skin);
-    }, 220);
-  };
-
-  const editarSkinSalvaComDuploClique = (
-    evento: React.MouseEvent<HTMLButtonElement>,
-    skin: SkinSalva
-  ) => {
-    evento.preventDefault();
-    if (cliqueSkinSalvaTimeoutRef.current !== null) {
-      window.clearTimeout(cliqueSkinSalvaTimeoutRef.current);
-      cliqueSkinSalvaTimeoutRef.current = null;
-    }
-    abrirEditorSkinSalva(skin);
+  const baixarSkinSalva = (skin: SkinSalva) => {
+    const blob = new Blob([new Uint8Array(skin.bytes)], { type: "image/png" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${skin.nome.trim() || "skin"}.png`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const salvarEditorAtual = async () => {
@@ -419,7 +444,7 @@ export function SkinManager({ user }: SkinManagerProps) {
   const capaAtualUrl = capas.find((capa) => capa.id === capaSelecionadaId)?.url;
 
   return (
-    <div className="relative grid flex-1 grid-cols-1 gap-8 overflow-hidden p-8 lg:grid-cols-[1fr_2.5fr]">
+    <div className="relative mx-auto grid w-full max-w-[900px] grid-cols-1 gap-8 overflow-hidden p-8 lg:grid-cols-[1fr_2.5fr]">
       <div className="flex h-full flex-col items-center justify-center">
         <div className="group relative z-10 flex w-full cursor-grab flex-col items-center active:cursor-grabbing">
           <span className="mb-4 rounded border border-white/5 bg-black/40 px-3 py-1 text-xs text-white/70">
@@ -465,7 +490,7 @@ export function SkinManager({ user }: SkinManagerProps) {
 
         <section>
           <h2 className="mb-4 text-lg font-bold text-white/90">Skins salvas</h2>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-[repeat(auto-fill,84px)] justify-start gap-4">
             <input
               ref={inputRef}
               type="file"
@@ -498,37 +523,49 @@ export function SkinManager({ user }: SkinManagerProps) {
               </div>
             </button>
 
-            <div className="relative aspect-[0.85] overflow-hidden rounded-xl border-2 border-emerald-500/50 bg-[#121214]">
-              <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.08)_0,_transparent_60%)] p-4">
-                <img
-                  src={`https://mc-heads.net/body/${user.uuid}/right?t=${cachePreview}`}
-                  className="h-full object-contain drop-shadow-lg"
-                  alt={`Skin atual de ${user.name}`}
-                />
-              </div>
-            </div>
-
             {skinsSalvas.map((skin) => {
               const carregando = aplicandoSkinPadrao === skin.id;
+              const ativa = skin.id === skinAtualId;
               return (
                 <div
                   key={skin.id}
                   title={skin.nome}
-                  className="group relative aspect-[0.85] overflow-hidden rounded-xl border border-white/8 bg-[#121214] transition-colors hover:border-white/20"
+                  className={cn(
+                    "group relative aspect-[0.85] overflow-hidden rounded-xl border-2 bg-[#121214] transition-colors",
+                    ativa
+                      ? "border-emerald-500/70 bg-emerald-500/[0.04]"
+                      : "border-white/8 hover:border-white/20"
+                  )}
                 >
                   <button
                     type="button"
-                    onClick={() => aplicarSkinSalvaComClique(skin)}
-                    onDoubleClick={(evento) => editarSkinSalvaComDuploClique(evento, skin)}
+                    onClick={(evento) => setMenuSkin({ skin, x: evento.clientX, y: evento.clientY })}
+                    onContextMenu={(evento) => {
+                      evento.preventDefault();
+                      setMenuSkin({ skin, x: evento.clientX, y: evento.clientY });
+                    }}
                     disabled={Boolean(aplicandoSkinPadrao)}
-                    aria-label={`Aplicar ${skin.nome}`}
-                    title={`${skin.nome} — clique duas vezes para editar`}
-                    className="absolute inset-0 flex items-center justify-center px-4 pb-9 pt-3 disabled:opacity-50"
+                    aria-label={`Abrir ações de ${skin.nome}`}
+                    className="absolute inset-0 flex items-center justify-center p-3 disabled:opacity-50"
                   >
-                    <MiniaturaSkinMinecraft
+                    <ReactSkinview3d
                       skinUrl={bytesParaDataUrl(skin.bytes)}
-                      modelo={skin.variant}
-                      className="h-full w-auto [image-rendering:pixelated] transition-transform group-hover:scale-105"
+                      width={88}
+                      height={122}
+                      className="pointer-events-none h-[82%] w-[78%] transition-transform group-hover:scale-105"
+                      options={{
+                        model: skin.variant === "slim" ? "slim" : "default",
+                        zoom: 0.68,
+                      }}
+                      onReady={({ viewer }) => {
+                        const distancia = viewer.camera.position.length();
+                        viewer.camera.position.set(distancia * 0.52, 0, distancia * 0.85);
+                        viewer.camera.lookAt(0, 0, 0);
+                        viewer.controls.enableRotate = false;
+                        viewer.controls.enableZoom = false;
+                        viewer.controls.enablePan = false;
+                        viewer.controls.update();
+                      }}
                     />
                   </button>
                   {carregando && (
@@ -536,29 +573,6 @@ export function SkinManager({ user }: SkinManagerProps) {
                       <Loader2 size={20} className="animate-spin text-emerald-400" />
                     </div>
                   )}
-                  <div className="absolute inset-x-2 bottom-2 z-30 flex min-w-0 items-center gap-1 bg-black/80 p-1">
-                    <span className="min-w-0 flex-1 truncate px-1 text-center text-[9px] font-bold text-white/75">
-                      {skin.nome}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(evento) => {
-                        evento.stopPropagation();
-                        excluirSkinSalva(skin);
-                      }}
-                      disabled={carregando}
-                      aria-label={`Excluir ${skin.nome}`}
-                      title={`Excluir ${skin.nome}`}
-                      className={cn(
-                        "grid h-6 w-6 shrink-0 place-items-center rounded text-white/35",
-                        "transition-colors hover:bg-red-500/15 hover:text-red-300",
-                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-300/70",
-                        "disabled:pointer-events-none disabled:opacity-30"
-                      )}
-                    >
-                      <Trash2 size={10} />
-                    </button>
-                  </div>
                 </div>
               );
             })}
@@ -567,7 +581,7 @@ export function SkinManager({ user }: SkinManagerProps) {
 
         <section>
           <h2 className="mb-4 text-lg font-bold text-white/90">Skins padrão</h2>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
+          <div className="grid grid-cols-[repeat(auto-fill,68px)] justify-start gap-4">
             {SKINS_PADRAO.map((skin) => {
               const carregando = aplicandoSkinPadrao === skin.textureUrl;
               return (
@@ -598,6 +612,58 @@ export function SkinManager({ user }: SkinManagerProps) {
           </div>
         </section>
       </div>
+
+      <MenuContextual
+        aberto={menuSkin !== null}
+        x={menuSkin?.x ?? 0}
+        y={menuSkin?.y ?? 0}
+        onFechar={() => setMenuSkin(null)}
+        rotulo="Ações da skin salva"
+      >
+        {menuSkin && (
+          <>
+            <CabecalhoMenuContextual
+              titulo={menuSkin.skin.nome}
+              subtitulo={menuSkin.skin.variant === "slim" ? "Modelo slim" : "Modelo padrão"}
+            />
+            <ItemMenuContextual
+              icone={<Check size={13} />}
+              destaque
+              disabled={menuSkin.skin.id === skinAtualId || Boolean(aplicandoSkinPadrao)}
+              sufixo={menuSkin.skin.id === skinAtualId ? "Atual" : undefined}
+              onClick={() => {
+                const skin = menuSkin.skin;
+                setMenuSkin(null);
+                void aplicarSkinSalva(skin);
+              }}
+            >
+              Aplicar
+            </ItemMenuContextual>
+            <ItemMenuContextual icone={<Download size={13} />} onClick={() => {
+              baixarSkinSalva(menuSkin.skin);
+              setMenuSkin(null);
+            }}>
+              Baixar PNG
+            </ItemMenuContextual>
+            <ItemMenuContextual icone={<Pencil size={13} />} onClick={() => {
+              abrirEditorSkinSalva(menuSkin.skin);
+              setMenuSkin(null);
+            }}>
+              Editar
+            </ItemMenuContextual>
+            <SeparadorMenuContextual />
+            <ItemMenuContextual icone={<Trash2 size={13} />} perigo onClick={() => {
+              const skin = menuSkin.skin;
+              setMenuSkin(null);
+              excluirSkinSalva(skin);
+            }} disabled={menuSkin.skin.id === skinAtualId} sufixo={
+              menuSkin.skin.id === skinAtualId ? "Em uso" : undefined
+            }>
+              Excluir da lista
+            </ItemMenuContextual>
+          </>
+        )}
+      </MenuContextual>
 
       <AnimatePresence>
         {isUploadModalOpen && (

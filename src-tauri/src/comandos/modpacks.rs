@@ -1,5 +1,7 @@
 use crate::launcher::LauncherState;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -14,13 +16,69 @@ pub struct ModpackInfo {
     slug: String,
     source: String,
     installed_version: String,
+    #[serde(default)]
+    assinatura_conteudo: Option<String>,
+    #[serde(default, skip_deserializing)]
+    modificado: bool,
+}
+
+const PASTAS_CONTEUDO_MODPACK: [&str; 7] = [
+    "mods",
+    "resourcepacks",
+    "shaderpacks",
+    "config",
+    "defaultconfigs",
+    "kubejs",
+    "scripts",
+];
+
+fn listar_arquivos_assinatura(raiz: &Path, atual: &Path, arquivos: &mut Vec<PathBuf>) {
+    let Ok(entradas) = std::fs::read_dir(atual) else {
+        return;
+    };
+    for entrada in entradas.flatten() {
+        let caminho = entrada.path();
+        let Ok(tipo) = entrada.file_type() else {
+            continue;
+        };
+        if tipo.is_dir() {
+            listar_arquivos_assinatura(raiz, &caminho, arquivos);
+        } else if tipo.is_file() && caminho.strip_prefix(raiz).is_ok() {
+            arquivos.push(caminho);
+        }
+    }
+}
+
+fn assinar_conteudo_modpack(raiz: &Path) -> String {
+    let mut arquivos = Vec::new();
+    for pasta in PASTAS_CONTEUDO_MODPACK {
+        listar_arquivos_assinatura(raiz, &raiz.join(pasta), &mut arquivos);
+    }
+    arquivos.sort();
+
+    let mut hash = Sha256::new();
+    for caminho in arquivos {
+        let Ok(relativo) = caminho.strip_prefix(raiz) else {
+            continue;
+        };
+        hash.update(relativo.to_string_lossy().replace('\\', "/").as_bytes());
+        if let Ok(metadados) = std::fs::metadata(&caminho) {
+            hash.update(metadados.len().to_le_bytes());
+            if let Ok(modificado) = metadados.modified() {
+                if let Ok(duracao) = modificado.duration_since(std::time::UNIX_EPOCH) {
+                    hash.update(duracao.as_nanos().to_le_bytes());
+                }
+            }
+        }
+    }
+    format!("{:x}", hash.finalize())
 }
 
 #[tauri::command]
 pub async fn save_modpack_info(
     state: State<'_, LauncherState>,
     instance_id: String,
-    modpack_info: ModpackInfo,
+    mut modpack_info: ModpackInfo,
 ) -> Result<(), String> {
     let instance_path =
         crate::comandos::instancia_sistema::caminho_instancia_por_id(&state, &instance_id)?;
@@ -32,6 +90,8 @@ pub async fn save_modpack_info(
             .map_err(|e| format!("Erro ao criar diretório: {}", e))?;
     }
 
+    modpack_info.assinatura_conteudo = Some(assinar_conteudo_modpack(&instance_path));
+    modpack_info.modificado = false;
     let content = serde_json::to_string_pretty(&modpack_info)
         .map_err(|e| format!("Erro ao serializar modpack.json: {}", e))?;
 
@@ -73,6 +133,7 @@ pub async fn install_modpack_files(
     instance_id: String,
     download_url: String,
     file_name: String,
+    substituir_conteudo: Option<bool>,
 ) -> Result<(), String> {
     let instance_path =
         crate::comandos::instancia_sistema::caminho_instancia_por_id(&state, &instance_id)?;
@@ -352,6 +413,24 @@ pub async fn install_modpack_files(
         return Err("O arquivo não contém modrinth.index.json nem manifest.json.".to_string());
     }
 
+    if substituir_conteudo.unwrap_or(false) {
+        for pasta in [
+            "mods",
+            "resourcepacks",
+            "shaderpacks",
+            "config",
+            "defaultconfigs",
+        ] {
+            let caminho = instance_path.join(pasta);
+            if caminho.exists() {
+                std::fs::remove_dir_all(&caminho)
+                    .map_err(|e| format!("Erro ao preparar atualização do modpack: {}", e))?;
+            }
+        }
+        std::fs::create_dir_all(&mods_path)
+            .map_err(|e| format!("Erro ao recriar pasta de mods: {}", e))?;
+    }
+
     let prefixo_overrides = format!("{}/", pasta_overrides.trim_matches('/'));
     for i in 0..archive.len() {
         let mut file = archive
@@ -503,9 +582,9 @@ pub async fn get_modpack_info(
     state: State<'_, LauncherState>,
     instance_id: String,
 ) -> Result<Option<ModpackInfo>, String> {
-    let modpack_path =
-        crate::comandos::instancia_sistema::caminho_instancia_por_id(&state, &instance_id)?
-            .join("modpack.json");
+    let instance_path =
+        crate::comandos::instancia_sistema::caminho_instancia_por_id(&state, &instance_id)?;
+    let modpack_path = instance_path.join("modpack.json");
 
     if !modpack_path.exists() {
         return Ok(None);
@@ -514,8 +593,13 @@ pub async fn get_modpack_info(
     let content = std::fs::read_to_string(&modpack_path)
         .map_err(|e| format!("Erro ao ler modpack.json: {}", e))?;
 
-    let info: ModpackInfo = serde_json::from_str(&content)
+    let mut info: ModpackInfo = serde_json::from_str(&content)
         .map_err(|e| format!("Erro ao parsear modpack.json: {}", e))?;
+
+    info.modificado = info
+        .assinatura_conteudo
+        .as_ref()
+        .is_some_and(|assinatura| assinatura != &assinar_conteudo_modpack(&instance_path));
 
     Ok(Some(info))
 }

@@ -1391,26 +1391,6 @@ fn exportar_instancia_interno(
     })
 }
 
-pub(crate) fn exportar_instancia_social_sem_saves(
-    state: &LauncherState,
-    instance_id: &str,
-) -> Result<ResultadoExportacao, String> {
-    let pasta_temp = std::env::temp_dir()
-        .join("dome-social-sync")
-        .join("outgoing");
-    if !pasta_temp.exists() {
-        std::fs::create_dir_all(&pasta_temp)
-            .map_err(|e| format!("Erro ao criar pasta temporaria de sync social: {}", e))?;
-    }
-
-    exportar_instancia_interno(
-        state,
-        instance_id,
-        Some(pasta_temp.to_string_lossy().as_ref()),
-        false,
-    )
-}
-
 #[tauri::command]
 pub(crate) async fn exportar_instancia(
     instance_id: String,
@@ -1425,6 +1405,13 @@ pub(crate) async fn importar_instancia_arquivo(
     caminho_arquivo: String,
     state: State<'_, LauncherState>,
 ) -> Result<ResultadoImportacaoArquivo, String> {
+    importar_instancia_em_estado(caminho_arquivo, &state).await
+}
+
+pub(crate) async fn importar_instancia_em_estado(
+    caminho_arquivo: String,
+    state: &LauncherState,
+) -> Result<ResultadoImportacaoArquivo, String> {
     let caminho = std::path::PathBuf::from(caminho_arquivo.trim());
     if !caminho.exists() {
         return Err("Arquivo não encontrado.".to_string());
@@ -1434,6 +1421,13 @@ pub(crate) async fn importar_instancia_arquivo(
         std::fs::File::open(&caminho).map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
     let mut zip =
         zip::ZipArchive::new(arquivo).map_err(|e| format!("Erro ao ler arquivo zip: {}", e))?;
+
+    let caminho_validacao = caminho.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::comandos::social_launcher::pacotes_sociais::validar_pacote(&caminho_validacao)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     // Tentar ler o manifesto do Dome Launcher
     let manifesto: Option<ManifestoExportacao> = {
@@ -1505,9 +1499,9 @@ pub(crate) async fn importar_instancia_arquivo(
     }
 
     // Criar instância base
-    let nome_unico = gerar_nome_instancia_unico(&state, &nome);
+    let nome_unico = gerar_nome_instancia_unico(state, &nome);
     let instancia_criada = criar_instancia_base_importada(
-        &state,
+        state,
         &nome_unico,
         &versao_mc,
         loader_type.as_deref(),
@@ -1516,45 +1510,52 @@ pub(crate) async fn importar_instancia_arquivo(
     )
     .await?;
 
-    // Extrair arquivos do zip para a pasta da instância
-    // Reabrir o zip para extrair (o ZipArchive anterior foi consumido parcialmente)
-    let arquivo =
-        std::fs::File::open(&caminho).map_err(|e| format!("Erro ao reabrir arquivo: {}", e))?;
-    let mut zip =
-        zip::ZipArchive::new(arquivo).map_err(|e| format!("Erro ao reler arquivo zip: {}", e))?;
+    let pasta_extracao = instancia_criada.path.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        // Extrair arquivos do zip para a pasta da instância
+        // Reabrir o zip para extrair (o ZipArchive anterior foi consumido parcialmente)
+        let arquivo =
+            std::fs::File::open(&caminho).map_err(|e| format!("Erro ao reabrir arquivo: {}", e))?;
+        let mut zip = zip::ZipArchive::new(arquivo)
+            .map_err(|e| format!("Erro ao reler arquivo zip: {}", e))?;
 
-    // Itens que devemos extrair (ignorando manifesto e instance.json pois já usamos)
-    for i in 0..zip.len() {
-        let mut entry = match zip.by_index(i) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        // Itens que devemos extrair (ignorando manifesto e instance.json pois já usamos)
+        for i in 0..zip.len() {
+            let mut entry = match zip.by_index(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
 
-        let nome_entrada = match entry.enclosed_name() {
-            Some(n) => n.to_path_buf(),
-            None => continue,
-        };
+            let nome_entrada = match entry.enclosed_name() {
+                Some(n) => n.to_path_buf(),
+                None => continue,
+            };
 
-        let nome_str = nome_entrada.to_string_lossy().to_string();
-        // Pular manifesto e instance.json (já processados)
-        if nome_str == "dome_manifest.json" || nome_str == "instance.json" {
-            continue;
-        }
-
-        let destino = instancia_criada.path.join(&nome_entrada);
-
-        if entry.is_dir() {
-            std::fs::create_dir_all(&destino).ok();
-        } else {
-            if let Some(pai) = destino.parent() {
-                std::fs::create_dir_all(pai).ok();
+            let nome_str = nome_entrada.to_string_lossy().to_string();
+            // Pular manifesto e instance.json (já processados)
+            if nome_str == "dome_manifest.json" || nome_str == "instance.json" {
+                continue;
             }
-            let mut arquivo_destino = std::fs::File::create(&destino)
-                .map_err(|e| format!("Erro ao criar arquivo {}: {}", nome_str, e))?;
-            std::io::copy(&mut entry, &mut arquivo_destino)
-                .map_err(|e| format!("Erro ao extrair {}: {}", nome_str, e))?;
+
+            let destino = pasta_extracao.join(&nome_entrada);
+
+            if entry.is_dir() {
+                std::fs::create_dir_all(&destino).ok();
+            } else {
+                if let Some(pai) = destino.parent() {
+                    std::fs::create_dir_all(pai).ok();
+                }
+                let mut arquivo_destino = std::fs::File::create(&destino)
+                    .map_err(|e| format!("Erro ao criar arquivo {}: {}", nome_str, e))?;
+                std::io::copy(&mut entry, &mut arquivo_destino)
+                    .map_err(|e| format!("Erro ao extrair {}: {}", nome_str, e))?;
+            }
         }
-    }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     Ok(ResultadoImportacaoArquivo {
         sucesso: true,

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Download, Loader2, Package } from "../iconesPixelados";
+import { Check, Download, Loader2, Package } from "../iconesPixelados";
 import {
     EVENTO_PROGRESSO_TRANSFERENCIA_SOCIAL,
+    EVENTO_INSTALAR_ATIVIDADE_SOCIAL,
     EVENTO_SOLICITAR_TRANSFERENCIA_SOCIAL,
     type EstadoTransferenciaSocial,
     type ProgressoTransferenciaSocial,
@@ -10,18 +11,17 @@ import type { AmigoSocial } from "./social/tiposSocial";
 
 interface VisualizacaoInstanciaSocialProps {
     amigo: AmigoSocial;
-    onVoltar: () => void;
     onAbrirBiblioteca: () => void;
 }
 
 export default function VisualizacaoInstanciaSocial({
     amigo,
-    onVoltar,
     onAbrirBiblioteca,
 }: VisualizacaoInstanciaSocialProps) {
     const [estado, setEstado] = useState<EstadoTransferenciaSocial | "ocioso">("ocioso");
     const [mensagem, setMensagem] = useState<string | null>(null);
     const atividade = amigo.atividadeAtual;
+    const publicaAmigos = Boolean(atividade?.publicaAmigos && atividade.compartilhamentoId);
     const nome = atividade?.modpackNome || atividade?.instanciaNome || "Instância personalizada";
 
     const processando = ["solicitando", "aguardando", "preparando", "importando"].includes(estado);
@@ -47,12 +47,15 @@ export default function VisualizacaoInstanciaSocial({
             return;
         }
 
-        window.dispatchEvent(new CustomEvent(EVENTO_SOLICITAR_TRANSFERENCIA_SOCIAL, {
-            detail: {
-                friendProfileId: amigo.friendProfileId,
-                atividade,
-            },
-        }));
+        window.dispatchEvent(new CustomEvent(
+            publicaAmigos ? EVENTO_INSTALAR_ATIVIDADE_SOCIAL : EVENTO_SOLICITAR_TRANSFERENCIA_SOCIAL,
+            {
+                detail: {
+                    friendProfileId: amigo.friendProfileId,
+                    atividade,
+                },
+            }
+        ));
     };
 
     const rotuloBotao = estado === "concluido"
@@ -61,38 +64,11 @@ export default function VisualizacaoInstanciaSocial({
             ? "Tentar novamente"
             : processando
                 ? "Transferindo"
-                : "Solicitar transferência";
+                : publicaAmigos ? "Baixar instância" : "Solicitar transferência";
 
     return (
         <div className="h-full overflow-y-auto bg-[#0d0d0e] px-6 py-6 scrollbar-hide">
             <div className="mx-auto max-w-5xl">
-                <div className="mb-6 flex items-center justify-between gap-4">
-                    <button
-                        type="button"
-                        onClick={onVoltar}
-                        className="flex items-center gap-2 border border-white/15 bg-[#151515] px-3 py-2 text-xs font-bold text-white/75 hover:border-white/25 hover:text-white"
-                    >
-                        <ArrowLeft size={13} />
-                        Voltar
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={solicitarTransferencia}
-                        disabled={!atividade || processando}
-                        className="flex min-w-44 items-center justify-center gap-2 border border-emerald-300/30 bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-wide text-[#07120a] transition-colors hover:bg-emerald-400 disabled:cursor-wait disabled:border-emerald-300/15 disabled:bg-emerald-500/10 disabled:text-emerald-200/65"
-                    >
-                        {processando ? (
-                            <Loader2 size={13} className="animate-spin" />
-                        ) : estado === "concluido" ? (
-                            <Check size={13} />
-                        ) : (
-                            <Download size={13} />
-                        )}
-                        {rotuloBotao}
-                    </button>
-                </div>
-
                 <section className="border border-white/10 bg-[#121214]">
                     <div className="flex items-start gap-5 border-b border-white/8 p-5">
                         <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden border border-white/10 bg-black/25">
@@ -125,6 +101,22 @@ export default function VisualizacaoInstanciaSocial({
                                 </span>
                             </div>
                         </div>
+
+                        <button
+                            type="button"
+                            onClick={solicitarTransferencia}
+                            disabled={!atividade || processando}
+                            className="flex min-w-44 shrink-0 items-center justify-center gap-2 border border-emerald-300/30 bg-emerald-500 px-4 py-2 text-xs font-black uppercase tracking-wide text-[#07120a] transition-colors hover:bg-emerald-400 active:translate-y-px disabled:cursor-wait disabled:border-emerald-300/15 disabled:bg-emerald-500/10 disabled:text-emerald-200/65"
+                        >
+                            {processando ? (
+                                <Loader2 size={13} className="animate-spin" />
+                            ) : estado === "concluido" ? (
+                                <Check size={13} />
+                            ) : (
+                                <Download size={13} />
+                            )}
+                            {rotuloBotao}
+                        </button>
                     </div>
 
                     <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -133,8 +125,8 @@ export default function VisualizacaoInstanciaSocial({
                                 Sobre esta instância
                             </h2>
                             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">
-                                Esta instância foi montada manualmente por {amigo.nome}. Mods, configurações e demais
-                                arquivos não pertencem a um projeto público do Modrinth ou CurseForge.
+                                Esta instância foi personalizada por {amigo.nome}. Você receberá somente as pastas que
+                                essa pessoa escolheu publicar.
                             </p>
                         </div>
 
@@ -143,7 +135,9 @@ export default function VisualizacaoInstanciaSocial({
                                 Transferência social
                             </p>
                             <p className="mt-2 text-xs leading-5 text-white/55">
-                                O dono precisa aceitar a solicitação e manter o launcher aberto enquanto prepara o pacote.
+                                {publicaAmigos
+                                    ? "Você pode baixar diretamente porque é amigo e consegue ver esta atividade."
+                                    : "O dono precisa aceitar a solicitação e escolher o conteúdo que será enviado."}
                             </p>
                             {mensagem && (
                                 <div

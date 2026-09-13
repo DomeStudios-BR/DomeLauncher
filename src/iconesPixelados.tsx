@@ -22,7 +22,7 @@ import arquivoTexto from "@iconify-icons/pixelarticons/file-alt";
 import pasta from "@iconify-icons/pixelarticons/folder";
 import pastaMais from "@iconify-icons/pixelarticons/folder-plus";
 import gamepad from "@iconify-icons/pixelarticons/gamepad";
-import globo from "@iconify-icons/pixelarticons/map";
+import globo from "@iconify-icons/pixelarticons/globe";
 import gripVertical from "@iconify-icons/pixelarticons/more-vertical";
 import coracao from "@iconify-icons/pixelarticons/heart";
 import casa from "@iconify-icons/pixelarticons/home";

@@ -1,6 +1,6 @@
 [package]
 name = "dome-launcher"
-version = "0.2.1"
+version = "0.2.2"
 description = "Launcher desktop da Dome Studios para Minecraft"
 authors = ["Dome Studios"]
 edition = "2021"
@@ -50,3 +50,5 @@ hickory-resolver = "0.24.4"
 discord-rich-presence = "0.2.5"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

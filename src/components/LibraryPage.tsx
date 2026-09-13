@@ -22,11 +22,13 @@ import {
   Loader2,
   Check,
   RefreshCw,
+  Globe,
 } from "../iconesPixelados";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Instance } from "../hooks/useLauncher";
+import type { ProjetoConteudo } from "./ProjetoDetalheModal";
 import { cn } from "../lib/utils";
 import {
   CabecalhoMenuContextual,
@@ -41,6 +43,11 @@ import {
   observarImportacoes,
   obterImportacoesEmAndamento,
 } from "../stores/importacoesInstancias";
+import {
+  EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS,
+  EVENTO_PUBLICAR_INSTANCIA_SOCIAL,
+  type PublicacaoInstanciaSocial,
+} from "../lib/eventosTransferenciaSocial";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -80,6 +87,18 @@ interface ResultadoImportacaoInstancia {
   sucesso: boolean;
   instanciaId?: string;
   mensagem: string;
+}
+
+interface ModpackInstalado {
+  projectId: string;
+  versionId: string;
+  fileId?: string | null;
+  name: string;
+  author: string;
+  icon?: string | null;
+  slug: string;
+  source: "modrinth" | "curseforge";
+  installedVersion: string;
 }
 
 type MenuContextoBiblioteca = {
@@ -177,11 +196,14 @@ interface LibraryPageProps {
   instances: Instance[];
   instanciaAtivaId: string | null;
   onSelectInstance: (instance: Instance) => void;
+  onDesselecionarInstancia: () => void;
   onAbrirGerenciadorInstancia: (instance: Instance) => void;
   onLaunch: (id: string) => void;
   onDelete: (id: string) => void;
   onCreateNew: () => void;
   onAtualizarInstancias: () => Promise<void>;
+  onTrocarVersaoModpack: (instancia: Instance, projeto: ProjetoConteudo) => void;
+  publicacoesSociais?: Record<string, string>;
   user: any;
   onLogin: () => void;
 }
@@ -190,11 +212,14 @@ export default function LibraryPage({
   instances,
   instanciaAtivaId,
   onSelectInstance,
+  onDesselecionarInstancia,
   onAbrirGerenciadorInstancia,
   onLaunch,
   onDelete,
   onCreateNew,
   onAtualizarInstancias,
+  onTrocarVersaoModpack,
+  publicacoesSociais = {},
   user,
   onLogin,
 }: LibraryPageProps) {
@@ -235,12 +260,29 @@ export default function LibraryPage({
   const [agoraSegundos, setAgoraSegundos] = useState(() =>
     Math.floor(Date.now() / 1000)
   );
+  const [modpacksPorInstancia, setModpacksPorInstancia] = useState<Record<string, ModpackInstalado>>({});
+  const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Salvar estado ao mudar
   useEffect(() => {
+    setPublicacoesPorInstancia(publicacoesSociais);
+  }, [publicacoesSociais]);
+
+  useEffect(() => {
     salvarEstado(state);
   }, [state]);
+
+  useEffect(() => {
+    const atualizarPublicacoes = (evento: Event) => {
+      const publicacoes = (evento as CustomEvent<PublicacaoInstanciaSocial[]>).detail ?? [];
+      setPublicacoesPorInstancia(Object.fromEntries(
+        publicacoes.map((publicacao) => [publicacao.instanciaId, publicacao.compartilhamentoId])
+      ));
+    };
+    window.addEventListener(EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS, atualizarPublicacoes);
+    return () => window.removeEventListener(EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS, atualizarPublicacoes);
+  }, []);
 
   useEffect(() => {
     const intervalo = window.setInterval(() => {
@@ -250,22 +292,35 @@ export default function LibraryPage({
   }, []);
 
   useEffect(() => {
-    if (instances.length === 0) {
+    let cancelado = false;
+    void Promise.all(instances.map(async (instancia) => {
+      try {
+        const modpack = await invoke<ModpackInstalado | null>("get_modpack_info", {
+          instanceId: instancia.id,
+        });
+        return modpack ? [instancia.id, modpack] as const : null;
+      } catch {
+        return null;
+      }
+    })).then((resultados) => {
+      if (cancelado) return;
+      setModpacksPorInstancia(Object.fromEntries(resultados.filter((item) => item !== null)));
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [instances]);
+
+  useEffect(() => {
+    if (instances.length === 0 || !instanciaSelecionadaId) {
       setInstanciaSelecionadaId(null);
       return;
     }
 
-    const existeSelecionada = instanciaSelecionadaId
-      ? instances.some((instancia) => instancia.id === instanciaSelecionadaId)
-      : false;
-
-    if (existeSelecionada) return;
-
-    const ativaExiste = instanciaAtivaId
-      ? instances.some((instancia) => instancia.id === instanciaAtivaId)
-      : false;
-    setInstanciaSelecionadaId(ativaExiste ? instanciaAtivaId : instances[0]?.id || null);
-  }, [instances, instanciaAtivaId, instanciaSelecionadaId]);
+    if (!instances.some((instancia) => instancia.id === instanciaSelecionadaId)) {
+      setInstanciaSelecionadaId(null);
+    }
+  }, [instances, instanciaSelecionadaId]);
 
   // Garantir que todas as instâncias estejam em algum grupo
   useEffect(() => {
@@ -831,6 +886,14 @@ export default function LibraryPage({
     onSelectInstance(instancia);
   };
 
+  const desselecionarInstancia = (evento: React.MouseEvent) => {
+    const alvo = evento.target as HTMLElement;
+    if (alvo.closest("button, input, [data-contexto-biblioteca-item]")) return;
+
+    setInstanciaSelecionadaId(null);
+    onDesselecionarInstancia();
+  };
+
   const iniciarSelecaoMultipla = (idsIniciais: string[] = []) => {
     setModoSelecaoMultipla(true);
     setIdsSelecionados(new Set(idsIniciais));
@@ -1128,6 +1191,7 @@ export default function LibraryPage({
       ) : (
         <div
           className="min-h-[calc(100dvh-220px)] space-y-2"
+          onClick={desselecionarInstancia}
           onContextMenu={abrirMenuContextoVazio}
         >
           {instanciasEmImportacao.length > 0 && (
@@ -1188,6 +1252,7 @@ export default function LibraryPage({
                 grupoSendoArrastado={grupoArrastadoId === grupo.id}
                 instanciaSelecionadaId={instanciaSelecionadaId}
                 instanciaAtivaId={instanciaAtivaId}
+                publicacoesPorInstancia={publicacoesPorInstancia}
                 agoraSegundos={agoraSegundos}
               />
             );
@@ -1341,6 +1406,7 @@ export default function LibraryPage({
           >
             {menuContexto.tipo === "instancia" && (() => {
               const instancia = menuContexto.instancia;
+              const modpack = modpacksPorInstancia[instancia.id];
               const grupoAtual = state.groups.find((grupo) => grupo.instanceIds.includes(instancia.id));
               const estaSelecionada = idsSelecionados.has(instancia.id);
               return (
@@ -1362,6 +1428,24 @@ export default function LibraryPage({
                   }}>
                     Gerenciar instância
                   </ItemMenuContextual>
+                  {modpack && (
+                    <ItemMenuContextual icone={<RefreshCw size={13} />} onClick={() => {
+                      setMenuContexto(null);
+                      onTrocarVersaoModpack(instancia, {
+                        id: modpack.projectId,
+                        title: modpack.name,
+                        description: "Escolha uma versão completa para substituir o modpack instalado.",
+                        icon_url: modpack.icon || instancia.icon || "",
+                        author: modpack.author,
+                        slug: modpack.slug,
+                        source: modpack.source,
+                        project_type: "modpack",
+                        versaoInicialId: modpack.versionId,
+                      });
+                    }}>
+                      Trocar versão do modpack
+                    </ItemMenuContextual>
+                  )}
                   <ItemMenuContextual icone={<Check size={13} />} onClick={() => {
                     const selecionadas = Array.from(idsSelecionados);
                     iniciarSelecaoMultipla(
@@ -1380,6 +1464,18 @@ export default function LibraryPage({
                     });
                   }}>
                     Abrir pasta
+                  </ItemMenuContextual>
+                  <ItemMenuContextual icone={<Globe size={13} />} onClick={() => {
+                    setMenuContexto(null);
+                    window.dispatchEvent(new CustomEvent(EVENTO_PUBLICAR_INSTANCIA_SOCIAL, {
+                      detail: {
+                        instanciaId: instancia.id,
+                        nome: instancia.name,
+                        publicar: !publicacoesPorInstancia[instancia.id],
+                      },
+                    }));
+                  }}>
+                    {publicacoesPorInstancia[instancia.id] ? "Tornar privada" : "Tornar pública"}
                   </ItemMenuContextual>
                   <ItemMenuContextual
                     icone={exportandoId === instancia.id
@@ -1815,7 +1911,7 @@ function SecaoImportacoesEmAndamento({
       <div
         className={cn(
           viewMode === "grid"
-            ? "grid grid-cols-[repeat(auto-fill,minmax(145px,1fr))] gap-2"
+            ? "grid grid-cols-[repeat(auto-fill,124px)] justify-start gap-2"
             : "space-y-2"
         )}
       >
@@ -1885,6 +1981,7 @@ function GrupoWidget({
   grupoSendoArrastado,
   instanciaSelecionadaId,
   instanciaAtivaId,
+  publicacoesPorInstancia,
   agoraSegundos,
 }: {
   grupo: InstanceGroup;
@@ -1915,6 +2012,7 @@ function GrupoWidget({
   grupoSendoArrastado: boolean;
   instanciaSelecionadaId: string | null;
   instanciaAtivaId: string | null;
+  publicacoesPorInstancia: Record<string, string>;
   agoraSegundos: number;
 }) {
   return (
@@ -2036,8 +2134,7 @@ function GrupoWidget({
             ) : viewMode === "grid" ? (
               <div
                 className={cn(
-                  "grid grid-cols-2 gap-2 px-1 pb-2 sm:grid-cols-3 md:grid-cols-4",
-                  "lg:grid-cols-5 xl:grid-cols-6"
+                  "grid grid-cols-[repeat(auto-fill,124px)] justify-start gap-2 px-1 pb-2"
                 )}
               >
                 {instances.map((instance, i) => (
@@ -2060,6 +2157,7 @@ function GrupoWidget({
                     }
                     modoSelecaoMultipla={modoSelecaoMultipla}
                     ativa={instance.id === instanciaAtivaId}
+                    publica={Boolean(publicacoesPorInstancia[instance.id])}
                     agoraSegundos={agoraSegundos}
                   />
                 ))}
@@ -2086,6 +2184,7 @@ function GrupoWidget({
                     }
                     modoSelecaoMultipla={modoSelecaoMultipla}
                     ativa={instance.id === instanciaAtivaId}
+                    publica={Boolean(publicacoesPorInstancia[instance.id])}
                     agoraSegundos={agoraSegundos}
                   />
                 ))}
@@ -2238,6 +2337,7 @@ function CardGrid({
   selecionada,
   modoSelecaoMultipla,
   ativa,
+  publica,
   agoraSegundos,
 }: {
   instance: Instance;
@@ -2253,6 +2353,7 @@ function CardGrid({
   selecionada: boolean;
   modoSelecaoMultipla: boolean;
   ativa: boolean;
+  publica: boolean;
   agoraSegundos: number;
 }) {
   const tempoExibicaoSegundos = calcularTempoJogadoParaExibicao(
@@ -2319,7 +2420,12 @@ function CardGrid({
       </div>
 
       {/* Nome */}
-      <h3 className="font-bold text-xs truncate w-full">{instance.name}</h3>
+      <div className="flex w-full items-center justify-center gap-1">
+        <h3 className="min-w-0 truncate text-xs font-bold">{instance.name}</h3>
+        {publica && <span title="Pública para amigos" className="shrink-0 text-emerald-300">
+          <Globe size={10} />
+        </span>}
+      </div>
 
       {/* Info */}
       <div className="flex items-center gap-1 text-[10px] text-white/25 mt-0.5">
@@ -2350,6 +2456,7 @@ function CardList({
   selecionada,
   modoSelecaoMultipla,
   ativa,
+  publica,
   agoraSegundos,
 }: {
   instance: Instance;
@@ -2365,6 +2472,7 @@ function CardList({
   selecionada: boolean;
   modoSelecaoMultipla: boolean;
   ativa: boolean;
+  publica: boolean;
   agoraSegundos: number;
 }) {
   const tempoExibicaoSegundos = calcularTempoJogadoParaExibicao(
@@ -2431,7 +2539,12 @@ function CardList({
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <h3 className="font-bold text-sm truncate">{instance.name}</h3>
+        <div className="flex items-center gap-1.5">
+          <h3 className="min-w-0 truncate text-sm font-bold">{instance.name}</h3>
+          {publica && <span title="Pública para amigos" className="shrink-0 text-emerald-300">
+            <Globe size={11} />
+          </span>}
+        </div>
       </div>
 
       {/* Tags */}

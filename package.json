@@ -1,7 +1,7 @@
 {
   "name": "dome-launcher",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "bunx --package @tauri-apps/cli tauri dev",
@@ -11,12 +11,14 @@
     "vite": "vite",
     "tauri:build": "bunx --package @tauri-apps/cli tauri build",
     "verificar:skins": "node scripts/verificar-modelos-skin.ts",
-    "verificar": "bun run build && cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets"
+    "verificar": "bun run build && cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
+    "verificar:social": "node scripts/verificar-transferencias-sociais.ts"
   },
   "dependencies": {
     "@iconify-icons/pixelarticons": "^1.2.6",
     "@iconify/react": "^6.0.2",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "2.5.4",
     "@tauri-apps/plugin-updater": "2.10.1",

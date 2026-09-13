@@ -285,6 +285,48 @@ pub(crate) async fn listar_versoes_projeto_curseforge(
         .collect())
 }
 
+#[tauri::command]
+pub(crate) async fn obter_versao_projeto_curseforge(
+    project_id: String,
+    file_id: String,
+    project_type: Option<String>,
+) -> Result<VersaoProjetoCurseforge, String> {
+    let project_id = project_id
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "ID de projeto CurseForge inválido.".to_string())?;
+    let file_id = file_id
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "ID de arquivo CurseForge inválido.".to_string())?;
+    let project_type = project_type
+        .as_deref()
+        .unwrap_or("modpack")
+        .trim()
+        .to_lowercase();
+    let url = format!(
+        "{}/mods/{}/files/{}",
+        CURSEFORGE_API_BASE, project_id, file_id
+    );
+    let request = anexar_headers_curseforge(reqwest::Client::new().get(&url))?;
+    let resposta = request
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao buscar versão do CurseForge: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "CurseForge retornou erro ao buscar versão: {}",
+            resposta.status()
+        ));
+    }
+    let payload: serde_json::Value = resposta
+        .json()
+        .await
+        .map_err(|e| format!("Erro ao interpretar versão do CurseForge: {}", e))?;
+    mapear_versao_projeto_curseforge(&payload["data"], &project_type)
+        .ok_or_else(|| "Versão do CurseForge sem arquivo instalável.".to_string())
+}
+
 fn versao_modrinth_compativel(
     versao: &serde_json::Value,
     versao_instancia: &str,

@@ -77,7 +77,7 @@ try {
             pagina.on("pageerror", (erro) => erros.push(erro.message));
             await pagina.goto(`${url}atual`);
             await pagina.waitForFunction(() =>
-                document.querySelectorAll('[data-pronto="true"]').length === 2,
+                document.querySelectorAll('[data-pronto="true"]').length === 3,
             );
             await pagina.waitForTimeout(300);
             if (await pagina.locator("html").getAttribute("data-bloqueio-dados")) {

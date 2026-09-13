@@ -1,8 +1,108 @@
+#[path = "operacoes_sociais.rs"]
+pub(crate) mod operacoes_sociais;
+#[path = "pacotes_sociais.rs"]
+pub(crate) mod pacotes_sociais;
+#[path = "vinculos_sociais.rs"]
+pub(crate) mod vinculos_sociais;
 use crate::launcher::LauncherState;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::io::AsyncWriteExt;
+
+#[tauri::command]
+pub fn descartar_pacote_social(caminho_arquivo: String) -> Result<(), String> {
+    let caminho = std::path::PathBuf::from(caminho_arquivo)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let raiz = std::env::temp_dir()
+        .join("dome-social-sync")
+        .join("outgoing")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !caminho.starts_with(raiz) {
+        return Err("Pacote fora da pasta de envio.".into());
+    }
+    std::fs::remove_file(caminho).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn obter_previa_pacote_social(
+    instance_id: String,
+    state: State<'_, LauncherState>,
+) -> Result<pacotes_sociais::PreviaSocial, String> {
+    let instancia =
+        crate::comandos::instancia_sistema::obter_instancia_por_id(&state, &instance_id)?;
+    tauri::async_runtime::spawn_blocking(move || pacotes_sociais::previa_rapida(&instancia))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn gerenciar_transferencias_sociais(
+    api_base_url: String,
+    access_token: String,
+    acao: String,
+    pedido_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = normalizar_api_base_url(&api_base_url)?;
+    let token = normalizar_token_social(&access_token)?;
+    let cliente = criar_cliente_http_launcher()?;
+    let endpoint = format!("{base}/api/launcher/social/sync");
+    let requisicao = if acao == "listar" {
+        cliente.get(endpoint)
+    } else if matches!(acao.as_str(), "confirmar" | "cancelar") {
+        let id = pedido_id
+            .filter(|id| !id.is_empty())
+            .ok_or("Pedido ausente.")?;
+        cliente.post(format!("{endpoint}/{}/{acao}", urlencoding::encode(&id)))
+    } else {
+        return Err("Ação inválida.".into());
+    };
+    let resposta = requisicao
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|_| "Não foi possível conectar ao serviço de transferências.".to_string())?;
+    if !resposta.status().is_success() {
+        return Err(
+            extrair_mensagem_erro_launcher(resposta, "Falha ao atualizar transferência.").await,
+        );
+    }
+    resposta.json().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn gerenciar_compartilhamentos_sociais(
+    api_base_url: String,
+    access_token: String,
+    acao: String,
+    dados: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if ![
+        "listar", "criar", "aceitar", "receber", "publicar", "convidar", "revogar", "remover",
+        "sair", "encerrar",
+    ]
+    .contains(&acao.as_str())
+    {
+        return Err("Ação inválida.".into());
+    }
+    let base = normalizar_api_base_url(&api_base_url)?;
+    let token = normalizar_token_social(&access_token)?;
+    let resposta = criar_cliente_http_launcher()?
+        .post(format!(
+            "{base}/api/launcher/social/compartilhamentos/{acao}"
+        ))
+        .bearer_auth(token)
+        .json(&dados)
+        .send()
+        .await
+        .map_err(|_| "Falha ao conectar ao serviço de compartilhamento.".to_string())?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha no compartilhamento.").await);
+    }
+    resposta.json().await.map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -192,6 +292,7 @@ pub struct RespostaStatusSocialLauncherApi {
 pub struct ResultadoExportacaoSyncSocial {
     pub caminho_arquivo: String,
     pub tamanho_bytes: u64,
+    pub previa: pacotes_sociais::PreviaSocial,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -235,6 +336,7 @@ fn criar_cliente_http_launcher() -> Result<reqwest::Client, String> {
 fn criar_cliente_http_transferencia() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(20))
+        .read_timeout(std::time::Duration::from_secs(60))
         .user_agent("DomeLauncher/1.0 (+https://domestudios.com.br)")
         .build()
         .map_err(|e| format!("Erro ao criar cliente HTTP de transferência: {}", e))
@@ -848,53 +950,38 @@ pub async fn logout_launcher_social(
 #[tauri::command]
 pub async fn export_launcher_social_sync_package(
     instance_id: String,
+    arquivos_configuracao: Option<Vec<String>>,
+    arquivos_referencia: Option<Vec<pacotes_sociais::ArquivoSocial>>,
     state: State<'_, LauncherState>,
 ) -> Result<ResultadoExportacaoSyncSocial, String> {
-    let instance_id = instance_id.trim().to_string();
-
-    // Captura apenas o path necessário para evitar mover o state inteiro
-    let instances_path = state.caminho_instancias()?;
-    let account = state.account.clone();
-    let accounts = state.accounts.clone();
-    let processos = state.processos_instancias.clone();
-
-    // A exportação zip é I/O síncrono pesado — mover para thread blocking
-    let resultado = tauri::async_runtime::spawn_blocking(move || {
-        let state_local = LauncherState {
-            account,
-            accounts,
-            instances_path: std::sync::Arc::new(std::sync::Mutex::new(instances_path)),
-            processos_instancias: processos,
-        };
-        crate::aplicacao::importacao_exportacao::exportar_instancia_social_sem_saves(
-            &state_local,
-            &instance_id,
-        )
+    let _ = arquivos_referencia;
+    let instancia =
+        crate::comandos::instancia_sistema::obter_instancia_por_id(&state, &instance_id)?;
+    let instancia_previa = instancia.clone();
+    let arquivos_selecionados = arquivos_configuracao.clone().unwrap_or_default();
+    let previa = tauri::async_runtime::spawn_blocking(move || {
+        pacotes_sociais::previa_selecionada(&instancia_previa, &arquivos_selecionados)
     })
     .await
-    .map_err(|e| format!("Erro ao iniciar exportação: {}", e))?
-    .map_err(|e| format!("Falha na exportação da instância: {}", e))?;
-
-    let caminho = resultado
-        .caminho_arquivo
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if caminho.is_empty() {
-        return Err("Falha ao gerar pacote de sync social.".to_string());
-    }
-
-    let metadata = std::fs::metadata(&caminho)
-        .map_err(|e| format!("Erro ao ler tamanho do pacote de sync: {}", e))?;
+    .map_err(|e| e.to_string())??;
+    let previa = pacotes_sociais::identificar_modrinth(previa).await;
+    let (caminho, previa) = tauri::async_runtime::spawn_blocking(move || {
+        pacotes_sociais::exportar_previa(&instancia, arquivos_configuracao, previa)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let metadata = std::fs::metadata(&caminho).map_err(|e| e.to_string())?;
+    let caminho = caminho.to_string_lossy().to_string();
 
     Ok(ResultadoExportacaoSyncSocial {
         caminho_arquivo: caminho,
         tamanho_bytes: metadata.len(),
+        previa,
     })
 }
 
-#[tauri::command]
-pub async fn upload_launcher_social_sync_package(
+async fn enviar_pacote_social(
+    app: tauri::AppHandle,
     api_base_url: String,
     access_token: String,
     payload: PayloadUploadSyncSocial,
@@ -909,17 +996,40 @@ pub async fn upload_launcher_social_sync_package(
         return Err("Parametros invalidos para upload de sync social.".to_string());
     }
 
+    let caminho_validado = std::path::PathBuf::from(&caminho_arquivo)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let raiz = std::env::temp_dir()
+        .join("dome-social-sync")
+        .join("outgoing")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !caminho_validado.starts_with(&raiz) {
+        return Err("Pacote fora da pasta de envio.".into());
+    }
+    let _temporario = pacotes_sociais::Temporario(caminho_validado);
     let metadata = std::fs::metadata(&caminho_arquivo)
         .map_err(|e| format!("Arquivo de sync nao encontrado: {}", e))?;
-    const LIMITE_PACOTE_SYNC: u64 = 512 * 1024 * 1024;
+    const LIMITE_PACOTE_SYNC: u64 = pacotes_sociais::LIMITE_PACOTE;
     if metadata.len() > LIMITE_PACOTE_SYNC {
-        return Err("Arquivo maior que 512 MB. Upload rejeitado.".to_string());
+        return Err("Arquivo maior que 2 GiB. Upload rejeitado.".to_string());
     }
 
     let arquivo = tokio::fs::File::open(&caminho_arquivo)
         .await
         .map_err(|e| format!("Erro ao abrir pacote de sync: {}", e))?;
-    let corpo = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(arquivo));
+    let mut progresso = operacoes_sociais::Progresso::novo(
+        app,
+        pedido_id.clone(),
+        Some(metadata.len()),
+        "enviando",
+    );
+    let fluxo = tokio_util::io::ReaderStream::new(arquivo).inspect(move |chunk| {
+        if let Ok(dados) = chunk {
+            progresso.avancar(dados.len() as u64);
+        }
+    });
+    let corpo = reqwest::Body::wrap_stream(fluxo);
 
     let endpoint = format!(
         "{}/api/launcher/social/sync/upload/{}",
@@ -932,6 +1042,7 @@ pub async fn upload_launcher_social_sync_package(
         .bearer_auth(token)
         .header("x-social-sync-token", token_upload)
         .header("content-type", "application/octet-stream")
+        .header("content-length", metadata.len())
         .body(corpo)
         .send()
         .await
@@ -949,8 +1060,10 @@ pub async fn upload_launcher_social_sync_package(
         .map_err(|e| format!("Resposta invalida no upload de sync social: {}", e))
 }
 
-#[tauri::command]
-pub async fn download_import_launcher_social_sync_package(
+async fn receber_pacote_social(
+    app: tauri::AppHandle,
+    cancelamento: tokio_util::sync::CancellationToken,
+    vinculo: Option<vinculos_sociais::VinculoSocial>,
     api_base_url: String,
     pedido_id: String,
     token_download: String,
@@ -963,6 +1076,46 @@ pub async fn download_import_launcher_social_sync_package(
         return Err("pedidoId e tokenDownload sao obrigatorios.".to_string());
     }
 
+    use sha2::{Digest, Sha256};
+    let recibos = state.caminho_instancias()?.join(".social-recebimentos");
+    std::fs::create_dir_all(&recibos).map_err(|e| e.to_string())?;
+    let recibo = recibos.join(format!(
+        "{:x}.json",
+        Sha256::digest(format!("{api_base}/{pedido_id}"))
+    ));
+    if let Ok(conteudo) = std::fs::read(&recibo) {
+        if let Ok(resultado) =
+            serde_json::from_slice::<ResultadoDownloadImportacaoSyncSocial>(&conteudo)
+        {
+            if resultado.instancia_id.as_deref().is_some_and(|id| {
+                crate::comandos::instancia_sistema::obter_instancia_por_id(&state, id).is_ok()
+            }) {
+                return Ok(resultado);
+            }
+        }
+    }
+
+    if let Some(v) = &vinculo {
+        if let Some((instancia, anterior)) =
+            vinculos_sociais::buscar(&state, &api_base, &v.compartilhamento_id)?
+        {
+            if anterior.versao == v.versao {
+                let locais = pacotes_sociais::previa(&instancia)?.arquivos;
+                if v.arquivos.iter().all(|a| {
+                    locais
+                        .iter()
+                        .any(|l| a.caminho == l.caminho && a.sha256 == l.sha256)
+                }) {
+                    return Ok(ResultadoDownloadImportacaoSyncSocial {
+                        pedido_id,
+                        caminho_arquivo: String::new(),
+                        instancia_id: Some(instancia.id),
+                        mensagem: "Versão já instalada.".into(),
+                    });
+                }
+            }
+        }
+    }
     let endpoint = format!(
         "{}/api/launcher/social/sync/download/{}?token={}",
         api_base,
@@ -970,11 +1123,10 @@ pub async fn download_import_launcher_social_sync_package(
         urlencoding::encode(&token_download)
     );
     let client = criar_cliente_http_transferencia()?;
-    let resposta = client
-        .get(&endpoint)
-        .send()
-        .await
-        .map_err(|e| format!("Erro de rede no download de sync social: {}", e))?;
+    let resposta = tokio::select! {
+        resposta = client.get(&endpoint).send() => resposta.map_err(|e| format!("Erro de rede no download: {}", e.without_url()))?,
+        _ = cancelamento.cancelled() => return Err("Transferência cancelada.".into()),
+    };
 
     if !resposta.status().is_success() {
         return Err(extrair_mensagem_erro_launcher(
@@ -992,33 +1144,45 @@ pub async fn download_import_launcher_social_sync_package(
             .map_err(|e| format!("Erro ao criar pasta temporaria de download social: {}", e))?;
     }
 
-    let nome_arquivo = format!(
-        "social-sync-{}-{}.dome",
-        pedido_id,
-        chrono::Utc::now().timestamp()
-    );
+    let nome_arquivo = format!("{}.dome", uuid::Uuid::new_v4());
     let caminho_arquivo = pasta_temp.join(nome_arquivo);
+    let _temporario = pacotes_sociais::Temporario(caminho_arquivo.clone());
     let mut arquivo = tokio::fs::File::create(&caminho_arquivo)
         .await
         .map_err(|e| format!("Erro ao criar arquivo temporario de sync: {}", e))?;
 
-    const LIMITE_PACOTE_SYNC: u64 = 512 * 1024 * 1024;
+    const LIMITE_PACOTE_SYNC: u64 = pacotes_sociais::LIMITE_PACOTE;
     if resposta
         .content_length()
         .is_some_and(|tamanho| tamanho > LIMITE_PACOTE_SYNC)
     {
-        return Err("Pacote social excede o limite de 512 MB.".to_string());
+        return Err("Pacote social excede o limite de 2 GiB.".to_string());
     }
 
+    let mut progresso = operacoes_sociais::Progresso::novo(
+        app,
+        pedido_id.clone(),
+        resposta.content_length(),
+        "recebendo",
+    );
     let mut tamanho_recebido = 0_u64;
     let mut stream = resposta.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let dados = chunk.map_err(|e| format!("Erro ao baixar chunk do pacote de sync: {}", e))?;
+    loop {
+        let chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            _ = cancelamento.cancelled() => return Err("Transferência cancelada.".into()),
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        let dados =
+            chunk.map_err(|e| format!("Erro ao baixar pacote de sync: {}", e.without_url()))?;
         tamanho_recebido += dados.len() as u64;
+        progresso.avancar(dados.len() as u64);
         if tamanho_recebido > LIMITE_PACOTE_SYNC {
             drop(arquivo);
             let _ = tokio::fs::remove_file(&caminho_arquivo).await;
-            return Err("Pacote social excede o limite de 512 MB.".to_string());
+            return Err("Pacote social excede o limite de 2 GiB.".to_string());
         }
         arquivo
             .write_all(&dados)
@@ -1044,15 +1208,71 @@ pub async fn download_import_launcher_social_sync_package(
     }
 
     eprintln!("[SocialSync] Iniciando importação da instância...");
-    let resultado_importacao = crate::aplicacao::importacao_exportacao::importar_instancia_arquivo(
-        caminho_arquivo.to_string_lossy().to_string(),
-        state,
+    if cancelamento.is_cancelled() {
+        return Err("Transferência cancelada.".into());
+    }
+    let raiz = state.caminho_instancias()?;
+    let pasta_preparacao = raiz
+        .join(".social-preparacao")
+        .join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;
+    let _preparacao = pacotes_sociais::PastaTemporaria::nova(&raiz, &pasta_preparacao)?;
+    let estado_preparacao = LauncherState {
+        account: state.account.clone(),
+        accounts: state.accounts.clone(),
+        processos_instancias: state.processos_instancias.clone(),
+        instances_path: std::sync::Arc::new(std::sync::Mutex::new(pasta_preparacao)),
+    };
+    let mut resultado_importacao =
+        crate::aplicacao::importacao_exportacao::importar_instancia_em_estado(
+            caminho_arquivo.to_string_lossy().to_string(),
+            &estado_preparacao,
+        )
+        .await?;
+    let id_preparado = resultado_importacao
+        .instancia_id
+        .as_deref()
+        .ok_or("Instância não foi preparada.")?;
+    let instancia = crate::comandos::instancia_sistema::obter_instancia_por_id(
+        &estado_preparacao,
+        id_preparado,
+    )?;
+    pacotes_sociais::restaurar_referencias(
+        &caminho_arquivo,
+        &instancia.path,
+        &raiz.join(".social-cache"),
     )
+    .await?;
+    if let Some(v) = &vinculo {
+        if v.api_base_url != api_base || v.compartilhamento_id.is_empty() {
+            return Err("Vínculo inválido.".into());
+        }
+        let recebidos = pacotes_sociais::previa(&instancia)?.arquivos;
+        if recebidos.len() != v.arquivos.len()
+            || recebidos.iter().any(|a| {
+                !v.arquivos
+                    .iter()
+                    .any(|b| a.caminho == b.caminho && a.sha256 == b.sha256)
+            })
+        {
+            return Err("O conteúdo recebido difere da versão revisada.".into());
+        }
+    }
+    if cancelamento.is_cancelled() {
+        return Err("Transferência cancelada.".into());
+    }
+    let estado_final = LauncherState {
+        account: state.account.clone(),
+        accounts: state.accounts.clone(),
+        processos_instancias: state.processos_instancias.clone(),
+        instances_path: state.instances_path.clone(),
+    };
+    let instancia = tauri::async_runtime::spawn_blocking(move || {
+        vinculos_sociais::publicar_local(&estado_final, instancia, vinculo)
+    })
     .await
-    .map_err(|e| {
-        eprintln!("[SocialSync] Erro na importação: {}", e);
-        e
-    })?;
+    .map_err(|e| e.to_string())??;
+    resultado_importacao.instancia_id = Some(instancia.id);
 
     eprintln!(
         "[SocialSync] Instância importada com sucesso: {:?}",
@@ -1062,12 +1282,20 @@ pub async fn download_import_launcher_social_sync_package(
     // Limpa arquivo temporário baixado
     let _ = tokio::fs::remove_file(&caminho_arquivo).await;
 
-    Ok(ResultadoDownloadImportacaoSyncSocial {
+    let resultado = ResultadoDownloadImportacaoSyncSocial {
         pedido_id,
-        caminho_arquivo: caminho_arquivo.to_string_lossy().to_string(),
+        caminho_arquivo: String::new(),
         instancia_id: resultado_importacao.instancia_id,
         mensagem: resultado_importacao.mensagem,
-    })
+    };
+    let temporario_recibo = recibo.with_extension("tmp");
+    std::fs::write(
+        &temporario_recibo,
+        serde_json::to_vec(&resultado).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(temporario_recibo, recibo).map_err(|e| e.to_string())?;
+    Ok(resultado)
 }
 
 fn normalizar_token_social(access_token: &str) -> Result<String, String> {
@@ -1094,4 +1322,49 @@ mod testes {
         assert!(normalizar_api_base_url("http://localhost:3000").is_ok());
         assert!(normalizar_api_base_url("http://api.domestudios.com.br").is_err());
     }
+}
+
+#[tauri::command]
+pub async fn upload_launcher_social_sync_package(
+    app: tauri::AppHandle,
+    api_base_url: String,
+    access_token: String,
+    payload: PayloadUploadSyncSocial,
+) -> Result<serde_json::Value, String> {
+    let operacao = operacoes_sociais::Operacao::iniciar(&payload.pedido_id)?;
+    tokio::select! {
+        resultado = enviar_pacote_social(app, api_base_url, access_token, payload) => resultado,
+        _ = operacao.token.cancelled() => Err("Transferência cancelada.".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn download_import_launcher_social_sync_package(
+    app: tauri::AppHandle,
+    api_base_url: String,
+    pedido_id: String,
+    token_download: String,
+    state: State<'_, LauncherState>,
+    vinculo: Option<vinculos_sociais::VinculoSocial>,
+) -> Result<ResultadoDownloadImportacaoSyncSocial, String> {
+    let chave = vinculo
+        .as_ref()
+        .map(|v| format!("compartilhamento:{}", v.compartilhamento_id))
+        .unwrap_or_else(|| pedido_id.clone());
+    let _trava_vinculo = if chave != pedido_id {
+        Some(operacoes_sociais::Operacao::iniciar(&chave)?)
+    } else {
+        None
+    };
+    let operacao = operacoes_sociais::Operacao::iniciar(&pedido_id)?;
+    receber_pacote_social(
+        app,
+        operacao.token.clone(),
+        vinculo,
+        api_base_url,
+        pedido_id,
+        token_download,
+        state,
+    )
+    .await
 }

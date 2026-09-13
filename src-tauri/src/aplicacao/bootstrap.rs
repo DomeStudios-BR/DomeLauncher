@@ -4,6 +4,13 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(janela) = app.get_webview_window("main") {
+                let _ = janela.show();
+                let _ = janela.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
@@ -47,6 +54,7 @@ pub fn run() {
             super::mods_conteudo::search_mods_online,
             super::mods_conteudo::buscar_detalhes_projeto_curseforge,
             super::mods_conteudo::listar_versoes_projeto_curseforge,
+            super::mods_conteudo::obter_versao_projeto_curseforge,
             super::mods_conteudo::install_mod,
             super::mods_conteudo::install_project_file,
             super::mods_conteudo::install_curseforge_project_file,
@@ -104,6 +112,13 @@ pub fn run() {
             crate::comandos::social_launcher::link_launcher_minecraft_account,
             crate::comandos::social_launcher::unlink_launcher_minecraft_account,
             crate::comandos::social_launcher::export_launcher_social_sync_package,
+            crate::comandos::social_launcher::obter_previa_pacote_social,
+            crate::comandos::social_launcher::descartar_pacote_social,
+            crate::comandos::social_launcher::operacoes_sociais::cancelar_transferencia_social_local,
+            crate::comandos::social_launcher::gerenciar_transferencias_sociais,
+            crate::comandos::social_launcher::gerenciar_compartilhamentos_sociais,
+            crate::comandos::social_launcher::vinculos_sociais::revisar_atualizacao_compartilhada,
+            crate::comandos::social_launcher::vinculos_sociais::desvincular_instancia_compartilhada,
             crate::comandos::social_launcher::upload_launcher_social_sync_package,
             crate::comandos::social_launcher::download_import_launcher_social_sync_package,
             crate::comandos::social_launcher::refresh_launcher_social_session,

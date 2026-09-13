@@ -36,6 +36,10 @@ import { EsqueletoAba } from "./components/EsqueletoCarregamento";
 import VisualizacaoInstanciaSocial from "./components/VisualizacaoInstanciaSocial";
 import type { AmigoSocial } from "./components/social/tiposSocial";
 import { aplicarCorDestaque, normalizarCorDestaque } from "./lib/corDestaque";
+import {
+  EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS,
+  type PublicacaoInstanciaSocial,
+} from "./lib/eventosTransferenciaSocial";
 
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
@@ -57,6 +61,7 @@ interface ModpackInstancia {
   source: "modrinth" | "curseforge";
   name: string;
   icon?: string | null;
+  modificado?: boolean;
 }
 
 async function normalizarImagemAtividade(valor: string | null | undefined): Promise<string | null> {
@@ -114,11 +119,28 @@ function normalizarTextoComparacao(valor: string | null | undefined): string {
     .toLowerCase();
 }
 
-function encontrarInstanciaDaAtividade(
+async function encontrarInstanciaDaAtividade(
   instancias: Instance[],
   atividade: AmigoSocial["atividadeAtual"]
-): Instance | null {
+): Promise<Instance | null> {
   if (!atividade || atividade.tipo === "launcher") return null;
+
+  if (atividade.tipo === "modpack_exato" && atividade.projectId && atividade.versionId) {
+    const resultados = await Promise.all(instancias.map(async (instancia) => {
+      try {
+        const modpack = await invoke<ModpackInstancia | null>("get_modpack_info", {
+          instanceId: instancia.id,
+        });
+        const corresponde = Boolean(modpack) && !modpack?.modificado && modpack?.source === atividade.source &&
+          String(modpack?.projectId) === String(atividade.projectId) &&
+          String(modpack?.versionId) === String(atividade.versionId);
+        return corresponde ? instancia : null;
+      } catch {
+        return null;
+      }
+    }));
+    return resultados.find((instancia): instancia is Instance => instancia !== null) ?? null;
+  }
 
   const instanciaPorId = atividade.instanciaId
     ? instancias.find((instancia) => normalizarTextoComparacao(instancia.id) ===
@@ -172,6 +194,7 @@ export default function App() {
   const [user, setUser] = useState<MinecraftAccount | null>(null);
   const [mapaExecucao, setMapaExecucao] = useState<Record<string, boolean>>({});
   const [servidorPorInstancia, setServidorPorInstancia] = useState<Record<string, string>>({});
+  const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
   const [contextoExplore, setContextoExplore] = useState<{
     tipo: TipoExplorePresence;
     fonte: FonteExplorePresence;
@@ -237,6 +260,17 @@ export default function App() {
     }));
     alterarAba(destino);
   }, [activeTab, alterarAba, historicoNavegacao.proximas]);
+
+  useEffect(() => {
+    const atualizarPublicacoes = (evento: Event) => {
+      const publicacoes = (evento as CustomEvent<PublicacaoInstanciaSocial[]>).detail ?? [];
+      setPublicacoesPorInstancia(Object.fromEntries(
+        publicacoes.map((publicacao) => [publicacao.instanciaId, publicacao.compartilhamentoId])
+      ));
+    };
+    window.addEventListener(EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS, atualizarPublicacoes);
+    return () => window.removeEventListener(EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS, atualizarPublicacoes);
+  }, []);
 
   useEffect(() => {
     const navegarPeloTeclado = (evento: KeyboardEvent) => {
@@ -409,13 +443,8 @@ export default function App() {
   }, [menuContaAberto]);
 
   useEffect(() => {
-    const instanciaAtualizada = selectedInstance
-      ? instances.find((instancia) => instancia.id === selectedInstance.id)
-      : null;
-    const proximaInstancia = instanciaAtualizada ?? instances[0] ?? null;
-
-    if (proximaInstancia !== selectedInstance) {
-      setSelectedInstance(proximaInstancia);
+    if (selectedInstance && !instances.some((instancia) => instancia.id === selectedInstance.id)) {
+      setSelectedInstance(null);
     }
   }, [instances, selectedInstance]);
 
@@ -768,8 +797,9 @@ export default function App() {
 
       const iconeUrl = await normalizarImagemAtividade(modpack?.icon || instanciaAtiva.icon);
       if (!ativo) return;
+      const compartilhamentoId = publicacoesPorInstancia[instanciaAtiva.id] ?? null;
 
-      const atividadeAtual = modpack?.projectId && modpack?.versionId
+      const atividadeAtual = modpack?.projectId && modpack?.versionId && !modpack.modificado && !compartilhamentoId
         ? {
             tipo: "modpack_exato",
             instanciaId: instanciaAtiva.id,
@@ -783,6 +813,8 @@ export default function App() {
             iconeUrl,
             versaoMinecraft: instanciaAtiva.version,
             loader: (instanciaAtiva.loader_type || instanciaAtiva.mc_type || "vanilla").toLowerCase(),
+            compartilhamentoId: null,
+            publicaAmigos: false,
             atualizadoEm: new Date().toISOString(),
           }
         : {
@@ -798,6 +830,8 @@ export default function App() {
             iconeUrl,
             versaoMinecraft: instanciaAtiva.version,
             loader: (instanciaAtiva.loader_type || instanciaAtiva.mc_type || "vanilla").toLowerCase(),
+            compartilhamentoId,
+            publicaAmigos: Boolean(compartilhamentoId),
             atualizadoEm: new Date().toISOString(),
           };
 
@@ -813,7 +847,7 @@ export default function App() {
     return () => {
       ativo = false;
     };
-  }, [instanciaAtiva, servidorPorInstancia]);
+  }, [instanciaAtiva, publicacoesPorInstancia, servidorPorInstancia]);
 
   useEffect(() => {
     return () => {
@@ -840,12 +874,20 @@ export default function App() {
     navegarParaAba("project-detail");
   }, [navegarParaAba]);
 
-  const abrirAtividadeAmigo = useCallback((amigo: AmigoSocial) => {
+  const abrirTrocaVersaoModpack = useCallback((instancia: Instance, projeto: ProjetoConteudo) => {
+    setAbaOrigemProjeto("instances");
+    setAtividadeSocialDetalhe(null);
+    setManagedInstanceId(instancia.id);
+    setProjetoDetalhe(projeto);
+    navegarParaAba("project-detail");
+  }, [navegarParaAba]);
+
+  const abrirAtividadeAmigo = useCallback(async (amigo: AmigoSocial) => {
     const atividade = amigo.atividadeAtual;
     if (!atividade || atividade.tipo === "launcher") return;
 
     setAbaOrigemProjeto("instances");
-    const instanciaInstalada = encontrarInstanciaDaAtividade(instances, atividade);
+    const instanciaInstalada = await encontrarInstanciaDaAtividade(instances, atividade);
     if (instanciaInstalada) {
       setProjetoDetalhe(null);
       setAtividadeSocialDetalhe(null);
@@ -874,6 +916,7 @@ export default function App() {
       slug: atividade.projectId,
       source: atividade.source,
       project_type: "modpack",
+      versaoInicialId: atividade.versionId || undefined,
     });
     navegarParaAba("instance-manager");
   }, [instances, navegarParaAba]);
@@ -1253,6 +1296,9 @@ export default function App() {
                   onSelectInstance={(instance) => {
                     setSelectedInstance(instance);
                   }}
+                  onDesselecionarInstancia={() => {
+                    setSelectedInstance(null);
+                  }}
                   onAbrirGerenciadorInstancia={(instance) => {
                     setProjetoDetalhe(null);
                     setManagedInstanceId(instance.id);
@@ -1262,6 +1308,8 @@ export default function App() {
                   onDelete={(id) => remove(id)}
                   onCreateNew={() => setIsCreateOpen(true)}
                   onAtualizarInstancias={fetchInstances}
+                  onTrocarVersaoModpack={abrirTrocaVersaoModpack}
+                  publicacoesSociais={publicacoesPorInstancia}
                   user={user}
                   onLogin={() => setIsLoginOpen(true)}
                 />
@@ -1306,7 +1354,9 @@ export default function App() {
                   projeto={projetoDetalhe}
                   instancias={instances}
                   instanciaInicialId={
-                    abaOrigemProjeto === "instance-manager" ? managedInstanceId : undefined
+                    abaOrigemProjeto === "instance-manager" || abaOrigemProjeto === "instances"
+                      ? managedInstanceId
+                      : undefined
                   }
                   usuarioLogado={Boolean(user)}
                   onSolicitarLogin={() => setIsLoginOpen(true)}
@@ -1378,10 +1428,6 @@ export default function App() {
                   onAbrirBiblioteca={() => {
                     setAtividadeSocialDetalhe(null);
                     void fetchInstances();
-                    navegarParaAba("instances");
-                  }}
-                  onVoltar={() => {
-                    setAtividadeSocialDetalhe(null);
                     navegarParaAba("instances");
                   }}
                 />

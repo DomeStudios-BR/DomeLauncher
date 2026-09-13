@@ -5,17 +5,17 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
-  ArrowLeft,
   Check,
   Download,
-  ExternalLink,
   Gamepad2,
   Loader2,
+  Heart,
   Search,
 } from "../iconesPixelados";
 import { cn } from "../lib/utils";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
 import type { Instance } from "../hooks/useLauncher";
+import { addFavorite, isFavorite, removeFavorite, type FavoriteItem } from "./Favorites";
 import {
   addCreatingInstance,
   completeCreatingInstance,
@@ -56,6 +56,7 @@ export interface ProjetoConteudo {
   body?: string;
   categorias?: string[];
   galeria?: ImagemGaleriaProjeto[];
+  versaoInicialId?: string;
 }
 
 interface ArquivoProjeto {
@@ -235,7 +236,7 @@ function loaderCompativel(
   loaderInstancia: string | null,
   tipoProjeto: TipoProjetoConteudo
 ): boolean {
-  if (tipoProjeto !== "mod") return true;
+  if (tipoProjeto === "resourcepack" || tipoProjeto === "shader") return true;
   if (loadersVersao.length === 0) return true;
   if (!loaderInstancia) return false;
   return loadersVersao.map((item) => item.toLowerCase()).includes(loaderInstancia);
@@ -307,22 +308,6 @@ function escolherVersaoLoaderIdeal(
     return compativel?.version || versoes[0].version;
   }
   return versoes.find((item) => item.stable !== false)?.version || versoes[0].version;
-}
-
-function montarUrlProjeto(projeto: ProjetoConteudo): string {
-  if (projeto.source === "modrinth") {
-    return `https://modrinth.com/${projeto.project_type}/${projeto.slug}`;
-  }
-  if (projeto.project_type === "modpack") {
-    return `https://www.curseforge.com/minecraft/modpacks/${projeto.slug}`;
-  }
-  if (projeto.project_type === "resourcepack") {
-    return `https://www.curseforge.com/minecraft/texture-packs/${projeto.slug}`;
-  }
-  if (projeto.project_type === "shader") {
-    return `https://www.curseforge.com/minecraft/shaders/${projeto.slug}`;
-  }
-  return `https://www.curseforge.com/minecraft/mc-mods/${projeto.slug}`;
 }
 
 function normalizarTipoProjeto(valor: string): TipoProjetoConteudo {
@@ -458,17 +443,27 @@ function normalizarNomeArquivoInstalado(nomeArquivo: string): string {
 async function buscarVersoesProjetoCurseforge(
   projectId: string,
   instancia: Instance | null,
-  tipoProjeto: TipoProjetoConteudo
+  tipoProjeto: TipoProjetoConteudo,
+  versaoInicialId?: string
 ): Promise<VersaoProjeto[]> {
   const loader = tipoProjeto === "mod"
     ? normalizarLoader(instancia?.loader_type || instancia?.mc_type)
     : null;
-  return invoke<VersaoProjeto[]>("listar_versoes_projeto_curseforge", {
+  const versoes = await invoke<VersaoProjeto[]>("listar_versoes_projeto_curseforge", {
     projectId,
     gameVersion: instancia?.version || null,
     loader,
     projectType: tipoProjeto,
   });
+  if (!versaoInicialId || versoes.some((versao) => String(versao.id) === String(versaoInicialId))) {
+    return versoes;
+  }
+  const versaoExata = await invoke<VersaoProjeto>("obter_versao_projeto_curseforge", {
+    projectId,
+    fileId: versaoInicialId,
+    projectType: tipoProjeto,
+  });
+  return [versaoExata, ...versoes];
 }
 
 export default function ProjetoDetalheModal({
@@ -498,6 +493,7 @@ export default function ProjetoDetalheModal({
   const [instalando, setInstalando] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [favorito, setFavorito] = useState(() => isFavorite(projeto.id));
 
   useEffect(() => {
     const voltarComEscape = (evento: KeyboardEvent) => {
@@ -514,7 +510,8 @@ export default function ProjetoDetalheModal({
     let cancelado = false;
     setAbaConteudo("descricao");
     setInstanciaSelecionadaId(instanciaInicialId ?? null);
-    setVersaoSelecionadaId(null);
+    setVersaoSelecionadaId(projeto.versaoInicialId ?? null);
+    setFavorito(isFavorite(projeto.id));
     setPesquisaInstancia("");
     setVersoesProjeto([]);
     setDetalhesProjeto(null);
@@ -545,7 +542,7 @@ export default function ProjetoDetalheModal({
     return () => {
       cancelado = true;
     };
-  }, [instanciaInicialId, projeto.id, projeto.source]);
+  }, [instanciaInicialId, projeto.id, projeto.source, projeto.versaoInicialId]);
 
   const instanciaSelecionada = useMemo(
     () =>
@@ -650,7 +647,8 @@ export default function ProjetoDetalheModal({
           : await buscarVersoesProjetoCurseforge(
               projeto.id,
               instanciaConsultaVersoes,
-              projeto.project_type
+              projeto.project_type,
+              projeto.versaoInicialId
             );
         if (!cancelado) setVersoesProjeto(versoes);
       } catch (e) {
@@ -675,6 +673,7 @@ export default function ProjetoDetalheModal({
     projeto.id,
     projeto.project_type,
     projeto.source,
+    projeto.versaoInicialId,
   ]);
 
   const projetoExibicao = useMemo<ProjetoConteudo>(
@@ -799,7 +798,7 @@ export default function ProjetoDetalheModal({
   }, [compatibilidades, pesquisaInstancia, requerCompatibilidade]);
 
   useEffect(() => {
-    if (projeto.project_type === "modpack") {
+    if (projeto.project_type === "modpack" && !instanciaInicialId) {
       setInstanciaSelecionadaId(null);
       return;
     }
@@ -834,6 +833,27 @@ export default function ProjetoDetalheModal({
     projeto.project_type,
   ]);
 
+  const alternarFavorito = () => {
+    if (favorito) {
+      removeFavorite(projeto.id);
+      setFavorito(false);
+      return;
+    }
+
+    const item: FavoriteItem = {
+      id: projeto.id,
+      title: projetoExibicao.title,
+      description: projetoExibicao.description,
+      icon_url: projetoExibicao.icon_url,
+      author: projetoExibicao.author,
+      type: projeto.project_type,
+      source: projeto.source,
+      slug: projetoExibicao.slug,
+    };
+    addFavorite(item);
+    setFavorito(true);
+  };
+
   const compatibilidadeSelecionada = useMemo(() => {
     if (!instanciaSelecionadaId) return null;
     return compatibilidades.find((item) => item.instancia.id === instanciaSelecionadaId) || null;
@@ -849,7 +869,18 @@ export default function ProjetoDetalheModal({
         if (loaders.includes("quilt")) return false;
         return loaders.length === 0 || ORDEM_LOADER_MODPACK.some((loader) => loaders.includes(loader));
       });
-    if (projeto.project_type === "modpack" || !instanciaSelecionada) return ordenadas;
+    if (projeto.project_type === "modpack") {
+      if (!instanciaInicialId || !instanciaSelecionada) return ordenadas;
+      const loaderInstancia = normalizarLoader(
+        instanciaSelecionada.loader_type || instanciaSelecionada.mc_type
+      );
+      return ordenadas.filter(
+        (versao) =>
+          versaoMinecraftCompativel(versao.game_versions || [], instanciaSelecionada.version) &&
+          loaderCompativel(versao.loaders || [], loaderInstancia, projeto.project_type)
+      );
+    }
+    if (!instanciaSelecionada) return ordenadas;
     if (projeto.source === "curseforge" && carregandoVersoes && ordenadas.length > 0) {
       return ordenadas;
     }
@@ -865,6 +896,7 @@ export default function ProjetoDetalheModal({
   }, [
     carregandoVersoes,
     instanciaSelecionada,
+    instanciaInicialId,
     projeto.project_type,
     projeto.source,
     versoesProjeto,
@@ -961,11 +993,14 @@ export default function ProjetoDetalheModal({
         versaoInstalada = versaoSelecionada.version_number;
         versaoId = versaoSelecionada.id;
 
-        const nomeInstancia = gerarNomeInstanciaDisponivel(
+        const instanciaModpackAlvo = instanciaInicialId
+          ? instancias.find((item) => item.id === instanciaInicialId) ?? null
+          : null;
+        const nomeInstancia = instanciaModpackAlvo?.name || gerarNomeInstanciaDisponivel(
           nomeBaseInstancia,
           instancias.map((item) => item.name)
         );
-        const idInstancia = gerarIdInstancia(nomeInstancia);
+        const idInstancia = instanciaModpackAlvo?.id || gerarIdInstancia(nomeInstancia);
         idOverlayCriacao = `${idInstancia}_${Date.now().toString(36)}`;
 
         const criandoInstancia: CreatingInstance = {
@@ -985,7 +1020,7 @@ export default function ProjetoDetalheModal({
         addCreatingInstance(criandoInstancia);
 
         let loaderVersion: string | undefined;
-        if (loaderSelecionado !== "vanilla") {
+        if (!instanciaModpackAlvo && loaderSelecionado !== "vanilla") {
           updateCreatingInstance(idOverlayCriacao, {
             progress: 8,
             message: "Buscando versão ideal do loader...",
@@ -1011,20 +1046,35 @@ export default function ProjetoDetalheModal({
           message: "Preparando arquivos da instância...",
         });
 
-        const paramsCriacao: Record<string, unknown> = {
-          name: nomeInstancia,
-          version: versaoMinecraft,
-          mcType: loaderSelecionado,
-        };
-        if (loaderSelecionado !== "vanilla") {
-          paramsCriacao.loaderType = loaderSelecionado;
-          paramsCriacao.loaderVersion = loaderVersion;
+        if (!instanciaModpackAlvo) {
+          const paramsCriacao: Record<string, unknown> = {
+            name: nomeInstancia,
+            version: versaoMinecraft,
+            mcType: loaderSelecionado,
+          };
+          if (loaderSelecionado !== "vanilla") {
+            paramsCriacao.loaderType = loaderSelecionado;
+            paramsCriacao.loaderVersion = loaderVersion;
+          }
+          await invoke("create_instance", paramsCriacao);
         }
-        await invoke("create_instance", paramsCriacao);
         updateCreatingInstance(idOverlayCriacao, {
           progress: 45,
           progressoIndeterminado: false,
-          message: "Registrando informações do modpack...",
+          message: instanciaModpackAlvo
+            ? "Substituindo arquivos do modpack..."
+            : "Instalando arquivos do modpack...",
+        });
+        updateCreatingInstance(idOverlayCriacao, {
+          progress: 60,
+          progressoIndeterminado: true,
+          message: "Instalando arquivos do modpack...",
+        });
+        await invoke("install_modpack_files", {
+          instanceId: idInstancia,
+          downloadUrl: arquivoModpackUrl,
+          fileName: arquivoModpackNome,
+          substituirConteudo: Boolean(instanciaModpackAlvo),
         });
         await invoke("save_modpack_info", {
           instanceId: idInstancia,
@@ -1039,16 +1089,6 @@ export default function ProjetoDetalheModal({
             source: projeto.source,
             installedVersion: versaoInstalada,
           },
-        });
-        updateCreatingInstance(idOverlayCriacao, {
-          progress: 60,
-          progressoIndeterminado: true,
-          message: "Instalando arquivos do modpack...",
-        });
-        await invoke("install_modpack_files", {
-          instanceId: idInstancia,
-          downloadUrl: arquivoModpackUrl,
-          fileName: arquivoModpackNome,
         });
         completeCreatingInstance(idOverlayCriacao);
         setInstalando(false);
@@ -1120,67 +1160,6 @@ export default function ProjetoDetalheModal({
 
   return (
     <div className="min-h-full space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <button
-          onClick={onVoltar}
-          className="inline-flex items-center gap-2 border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-wide text-white/80 hover:bg-white/10"
-        >
-          <ArrowLeft size={13} />
-          Voltar
-        </button>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => window.open(montarUrlProjeto(projetoExibicao), "_blank")}
-            className="inline-flex items-center gap-2 border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-white/80 hover:bg-white/10"
-          >
-            <ExternalLink size={12} />
-            Ver no site
-          </button>
-
-          {abaConteudo === "versoes" && (
-            <button
-              onClick={instalarProjeto}
-              disabled={
-                instalando ||
-                carregandoVersoes ||
-                !versaoSelecionada ||
-                !arquivoVersaoSelecionada ||
-                (projeto.project_type !== "modpack" && !instanciaSelecionadaId) ||
-                (requerCompatibilidade &&
-                  (!compatibilidadeSelecionada?.versaoIdeal ||
-                    !compatibilidadeSelecionada.arquivoIdeal))
-              }
-              className={cn(
-                "inline-flex items-center gap-2 border px-4 py-2 text-xs font-black uppercase tracking-wide",
-                instalando
-                  ? "border-white/20 bg-white/10 text-white/45"
-                  : sucesso
-                    ? "border-emerald-300 bg-emerald-500 text-black"
-                    : "border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400"
-              )}
-            >
-              {instalando ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Instalando...
-                </>
-              ) : sucesso ? (
-                <>
-                  <Check size={13} />
-                  Instalado
-                </>
-              ) : (
-                <>
-                  <Download size={13} />
-                  {rotuloAcao}
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-
       <section className="border border-white/10 bg-[#141416]">
         <div className="border-b border-white/10 p-5">
           <div className="flex items-start gap-4">
@@ -1194,7 +1173,67 @@ export default function ProjetoDetalheModal({
               className="h-20 w-20 rounded-xl border border-white/15 bg-black/30 object-cover"
             />
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-3xl font-black tracking-tight">{projetoExibicao.title}</h1>
+              <div className="flex items-start justify-between gap-4">
+                <h1 className="min-w-0 truncate text-3xl font-black tracking-tight">
+                  {projetoExibicao.title}
+                </h1>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={alternarFavorito}
+                    aria-label={favorito ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                    title={favorito ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                    className={cn(
+                      "inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all",
+                      favorito
+                        ? "bg-pink-500/20 text-pink-400"
+                        : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70"
+                    )}
+                  >
+                    <Heart size={16} fill={favorito ? "currentColor" : "none"} />
+                  </button>
+                  <button
+                    onClick={instalarProjeto}
+                    disabled={
+                      instalando ||
+                      carregandoVersoes ||
+                      !versaoSelecionada ||
+                      !arquivoVersaoSelecionada ||
+                      (projeto.project_type !== "modpack" && !instanciaSelecionadaId) ||
+                      (requerCompatibilidade &&
+                        (!compatibilidadeSelecionada?.versaoIdeal ||
+                          !compatibilidadeSelecionada.arquivoIdeal))
+                    }
+                    className={cn(
+                      "inline-flex items-center gap-2 border px-4 py-2 text-xs font-black uppercase tracking-wide",
+                      instalando
+                        ? "border-white/20 bg-white/10 text-white/45"
+                        : sucesso
+                          ? "border-emerald-300 bg-emerald-500 text-black"
+                          : "border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400"
+                    )}
+                  >
+                    {instalando ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        Instalando...
+                      </>
+                    ) : sucesso ? (
+                      <>
+                        <Check size={13} />
+                        Instalado
+                      </>
+                    ) : (
+                      <>
+                        <Download size={13} />
+                        {instanciaInicialId && projeto.project_type === "modpack"
+                          ? "Trocar versão"
+                          : rotuloAcao}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
               <p className="text-sm text-white/60">por {projetoExibicao.author}</p>
               <p className="mt-2 text-sm text-white/75">
                 {projetoExibicao.description || "Sem descrição disponível."}

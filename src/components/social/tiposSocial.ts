@@ -28,6 +28,8 @@ export interface AtividadeSocial {
   iconeUrl?: string | null;
   versaoMinecraft?: string | null;
   loader?: string | null;
+  compartilhamentoId?: string | null;
+  publicaAmigos?: boolean;
   atualizadoEm: string;
 }
 
