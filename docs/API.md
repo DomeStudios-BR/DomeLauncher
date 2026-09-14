@@ -87,6 +87,8 @@ O normalizador de `discord_social.rs` é menos restritivo e aceita prefixo HTTP 
 
 O token Minecraft comprova a conta perante o servidor; UUID/nome isolados não substituem essa prova.
 Status de presença usados: `online`, `ausente`, `offline`. Atividade e `emJogo` vêm do heartbeat.
+Se nenhum heartbeat chegar por mais de 45 segundos, a API apresenta o perfil como offline e oculta a atividade,
+mesmo que o último estado persistido ainda diga que o usuário estava jogando.
 A API local também tem `GET /auth/me`; o launcher usa `/social/profile/me`.
 
 ### Amigos e chat
@@ -184,7 +186,14 @@ Se a identificação estiver indisponível, o arquivo segue no ZIP. URLs de refe
 a HTTPS em `cdn.modrinth.com`, sem redirecionamentos. O recebimento confere tamanho e hash.
 Arquivos exclusivamente CurseForge ou locais continuam no pacote.
 
-- Upload: `POST /social/sync/upload/:pedidoId`, Bearer social, `x-social-sync-token`, corpo binário.
+- Preparação do upload: `POST /social/sync/upload/:pedidoId/preparar`, Bearer social,
+  `x-social-sync-token`, JSON `{ tamanhoBytes }` → `{ urlUpload, caminhoArquivo, tamanhoBytes }`.
+- Envio: `PUT` direto para `urlUpload`, com corpo binário, `Content-Type: application/octet-stream`
+  e o tamanho informado. Os bytes não atravessam a DomeAPI nem o proxy da Cloudflare.
+- Confirmação: `POST /social/sync/upload/:pedidoId/concluir`, Bearer social,
+  `x-social-sync-token`, JSON `{ caminhoArquivo }`. A API confere o objeto no bucket antes de liberar o download.
+- Compatibilidade: `POST /social/sync/upload/:pedidoId` mantém o upload intermediado para launchers antigos,
+  sujeito ao limite de corpo do proxy em produção.
 - Download: `GET /social/sync/download/:pedidoId?token=...`, token próprio, sem Bearer.
 - Recuperação: `GET /social/sync`, autenticado, até 100 pedidos recentes do participante.
 - Cancelamento: `POST /social/sync/:pedidoId/cancelar`, autenticado para um participante.

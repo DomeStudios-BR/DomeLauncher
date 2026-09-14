@@ -28,6 +28,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn } from "../lib/utils";
 import { ICONE_DOME_LAUNCHER } from "../lib/imagemProjeto";
+import { arquivoPodePertencerAoProjeto } from "../lib/conteudoInstalado";
 import {
   EXTENSOES_IMAGEM_INSTANCIA,
   prepararIconeInstancia,
@@ -1814,10 +1815,8 @@ export default function InstanceManager({
     const idProjeto = item.id.toLowerCase();
     if (idsProjetosInstalados.has(idProjeto)) return true;
 
-    const slug = item.slug.toLowerCase();
-    if (!slug) return false;
     return currentContent.some((instalado) =>
-      instalado.fileName.toLowerCase().includes(slug)
+      arquivoPodePertencerAoProjeto(instalado.fileName, item.slug)
     );
   };
 

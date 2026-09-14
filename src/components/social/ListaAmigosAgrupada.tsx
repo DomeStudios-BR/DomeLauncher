@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Download, Gamepad2, Mail, Plus, Search, Trash2, Users, X } from '../../iconesPixelados';
+import {
+    Check,
+    ChevronDown,
+    ChevronRight,
+    Copy,
+    Download,
+    Gamepad2,
+    Mail,
+    Plus,
+    Search,
+    Trash2,
+    Users,
+    X,
+} from '../../iconesPixelados';
 import { cn } from '../../lib/utils';
 import type {
     AmigoSocial,
@@ -21,6 +34,7 @@ import {
 type AbaSocial = 'amigos' | 'pedidos';
 
 interface ListaAmigosAgrupadaProps {
+    className?: string;
     sessaoAtiva: boolean;
     filtroAmigos: string;
     onAlterarFiltro: (valor: string) => void;
@@ -248,6 +262,7 @@ function LinhaAmigoJogando({
 }
 
 export function ListaAmigosAgrupada({
+    className,
     sessaoAtiva,
     filtroAmigos,
     onAlterarFiltro,
@@ -278,6 +293,8 @@ export function ListaAmigosAgrupada({
     rotuloStatus,
 }: ListaAmigosAgrupadaProps) {
     const [abaAtiva, setAbaAtiva] = useState<AbaSocial>('amigos');
+    const [onlineRecolhidos, setOnlineRecolhidos] = useState(false);
+    const [offlineRecolhidos, setOfflineRecolhidos] = useState(false);
     const [menuContexto, setMenuContexto] = useState<{
         amigo: AmigoSocial;
         x: number;
@@ -308,7 +325,7 @@ export function ListaAmigosAgrupada({
     };
 
     return (
-        <section className="overflow-hidden border border-white/10 bg-[#151515]">
+        <section className={cn('flex min-h-0 flex-col overflow-hidden border border-white/10 bg-[#151515]', className)}>
             <div className="grid grid-cols-2 border-b border-white/[0.07] p-1">
                 <button
                     type="button"
@@ -338,7 +355,7 @@ export function ListaAmigosAgrupada({
             {!sessaoAtiva && <p className="px-4 py-6 text-center text-[10px] text-white/35">Entre com o Discord para usar o social.</p>}
 
             {sessaoAtiva && abaAtiva === 'amigos' && (
-                <div className="space-y-3 p-3">
+                <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
                     <div className="relative">
                         <Search size={11} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
                         <input
@@ -389,14 +406,15 @@ export function ListaAmigosAgrupada({
                         </p>
                     )}
 
-                    {carregandoAmigos && totalAmigos === 0 && <p className="py-3 text-center text-[10px] text-white/30">Carregando...</p>}
-                    {!carregandoAmigos && erroAmigos && <p className="py-2 text-center text-[10px] text-red-300/70">{erroAmigos}</p>}
-                    {!carregandoAmigos && !erroAmigos && totalAmigos === 0 && !perfilEncontrado && !buscandoPerfil && !filtroAmigos.trim() && (
-                        <p className="py-3 text-center text-[10px] text-white/30">Nenhum amigo.</p>
-                    )}
+                    <div className="scrollbar-amigos min-h-0 flex-1 overflow-y-auto pr-1">
+                        {carregandoAmigos && totalAmigos === 0 && <p className="py-3 text-center text-[10px] text-white/30">Carregando...</p>}
+                        {!carregandoAmigos && erroAmigos && <p className="py-2 text-center text-[10px] text-red-300/70">{erroAmigos}</p>}
+                        {!carregandoAmigos && !erroAmigos && totalAmigos === 0 && !perfilEncontrado && !buscandoPerfil && !filtroAmigos.trim() && (
+                            <p className="py-3 text-center text-[10px] text-white/30">Nenhum amigo.</p>
+                        )}
 
-                    {!erroAmigos && totalAmigos > 0 && (
-                        <div className="space-y-3">
+                        {!erroAmigos && totalAmigos > 0 && (
+                            <div className="space-y-3">
                             {amigosJogando.length > 0 && (
                                 <div className="space-y-1 border-b border-emerald-400/15 pb-3">
                                     <p className="px-1 text-[8px] font-black uppercase tracking-[0.16em] text-emerald-300/65">
@@ -417,12 +435,20 @@ export function ListaAmigosAgrupada({
                             )}
                             {amigosDisponiveis.length > 0 && (
                                 <div className="space-y-1.5">
-                                    {amigosJogando.length > 0 && (
-                                        <p className="px-1 text-[8px] font-black uppercase tracking-[0.16em] text-white/25">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOnlineRecolhidos((valor) => !valor)}
+                                        aria-expanded={!onlineRecolhidos}
+                                        className="group flex h-4 w-full items-center gap-1 px-1 text-left"
+                                    >
+                                        <span className="text-white/25 group-hover:text-white/50">
+                                            {onlineRecolhidos ? <ChevronRight size={7} /> : <ChevronDown size={7} />}
+                                        </span>
+                                        <span className="text-[8px] font-black uppercase leading-none tracking-[0.16em] text-white/25 group-hover:text-white/50">
                                             Online
-                                        </p>
-                                    )}
-                                    {amigosDisponiveis.map((amigo) => (
+                                        </span>
+                                    </button>
+                                    {!onlineRecolhidos && amigosDisponiveis.map((amigo) => (
                                         <LinhaAmigo
                                             key={amigo.friendProfileId}
                                             amigo={amigo}
@@ -438,8 +464,20 @@ export function ListaAmigosAgrupada({
                             )}
                             {amigosOffline.length > 0 && (
                                 <div className="space-y-1.5 border-t border-white/[0.06] pt-3">
-                                    <p className="text-[8px] font-black uppercase tracking-[0.16em] text-white/25">Offline</p>
-                                    {amigosOffline.map((amigo) => (
+                                    <button
+                                        type="button"
+                                        onClick={() => setOfflineRecolhidos((valor) => !valor)}
+                                        aria-expanded={!offlineRecolhidos}
+                                        className="group flex h-4 w-full items-center gap-1 text-left"
+                                    >
+                                        <span className="text-white/25 group-hover:text-white/50">
+                                            {offlineRecolhidos ? <ChevronRight size={7} /> : <ChevronDown size={7} />}
+                                        </span>
+                                        <span className="text-[8px] font-black uppercase leading-none tracking-[0.16em] text-white/25 group-hover:text-white/50">
+                                            Offline
+                                        </span>
+                                    </button>
+                                    {!offlineRecolhidos && amigosOffline.map((amigo) => (
                                         <LinhaAmigo
                                             key={amigo.friendProfileId}
                                             amigo={amigo}
@@ -453,13 +491,14 @@ export function ListaAmigosAgrupada({
                                     ))}
                                 </div>
                             )}
-                        </div>
-                    )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
             {sessaoAtiva && abaAtiva === 'pedidos' && (
-                <div className="space-y-2 p-3">
+                <div className="scrollbar-amigos min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
                     {totalPedidos === 0 ? (
                         <p className="py-2 text-center text-[9px] text-white/25">Nenhum pedido.</p>
                     ) : pendentesRecebidas.map((pendente) => {

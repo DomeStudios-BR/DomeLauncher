@@ -175,6 +175,45 @@ svg {
   padding: calc(var(--altura-topbar) + 12px) 14px 14px;
   background: #101010;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
+  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.035);
+  scrollbar-width: thin;
+}
+
+.launcher-social::-webkit-scrollbar {
+  width: 6px;
+}
+
+.launcher-social::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.launcher-social::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.launcher-social::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 231, 183, 0.5);
+}
+
+.scrollbar-amigos {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-width: thin;
+}
+
+.scrollbar-amigos::-webkit-scrollbar {
+  width: 3px;
+}
+
+.scrollbar-amigos::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-amigos::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.scrollbar-amigos::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 231, 183, 0.45);
 }
 
 .launcher-social::before {

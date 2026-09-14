@@ -1970,7 +1970,7 @@ export default function SocialSidebar({
 
   if (carregandoSessao) {
     return (
-      <aside className={cn('launcher-social w-[311px] shrink-0 overflow-y-auto scrollbar-hide', className)}>
+      <aside className={cn('launcher-social w-[311px] shrink-0 overflow-y-auto', className)}>
         <EsqueletoSocial />
       </aside>
     );
@@ -2012,7 +2012,7 @@ export default function SocialSidebar({
 
     return (
       <>
-      <aside className={cn('launcher-social shrink-0 overflow-y-auto scrollbar-hide', className)}>
+      <aside className={cn('launcher-social shrink-0 overflow-y-auto', className)}>
         <div className="flex w-full flex-col items-center gap-3">
           <button
             type="button"
@@ -2102,9 +2102,10 @@ export default function SocialSidebar({
   }
 
   return (
-    <aside className={cn('launcher-social w-[311px] shrink-0 overflow-y-auto scrollbar-hide', className)}>
-      <div className="flex w-full flex-col gap-3">
-        <PerfilSocialPainel
+    <aside className={cn('launcher-social flex w-[311px] shrink-0 flex-col overflow-hidden', className)}>
+      <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
+        <div className="shrink-0">
+          <PerfilSocialPainel
           sessaoAtiva={Boolean(sessao)}
           perfil={perfil}
           onFecharDrawer={onFecharDrawer}
@@ -2139,9 +2140,11 @@ export default function SocialSidebar({
           onAlterarHandle={setHandleEditavel}
           onAtualizarStatus={atualizarStatusSocial}
           onRecuar={onAlternarRecuo}
-        />
+          />
+        </div>
 
         <ListaAmigosAgrupada
+          className="min-h-0 flex-1"
           sessaoAtiva={Boolean(sessao)}
           filtroAmigos={filtroAmigos}
           onAlterarFiltro={setFiltroAmigos}

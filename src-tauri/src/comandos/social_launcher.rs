@@ -1015,6 +1015,45 @@ async fn enviar_pacote_social(
         return Err("Arquivo maior que 2 GiB. Upload rejeitado.".to_string());
     }
 
+    let endpoint_preparar = format!(
+        "{}/api/launcher/social/sync/upload/{}/preparar",
+        api_base,
+        urlencoding::encode(&pedido_id)
+    );
+    let client = criar_cliente_http_transferencia()?;
+    let resposta_preparacao = client
+        .post(&endpoint_preparar)
+        .bearer_auth(&token)
+        .header("x-social-sync-token", &token_upload)
+        .json(&serde_json::json!({ "tamanhoBytes": metadata.len() }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao preparar upload de sync social: {}", e))?;
+    if !resposta_preparacao.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta_preparacao,
+            "Falha ao preparar o upload social.",
+        )
+        .await);
+    }
+    let preparacao = resposta_preparacao
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Resposta inválida ao preparar upload social: {}", e))?;
+    let url_upload = preparacao["urlUpload"]
+        .as_str()
+        .ok_or("A API não retornou a URL de upload.")?;
+    let caminho_remoto = preparacao["caminhoArquivo"]
+        .as_str()
+        .ok_or("A API não retornou o caminho do upload.")?;
+    let url_validada = reqwest::Url::parse(url_upload)
+        .map_err(|_| "URL assinada de upload inválida.".to_string())?;
+    let host = url_validada.host_str().unwrap_or_default();
+    let local = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if url_validada.scheme() != "https" && !(url_validada.scheme() == "http" && local) {
+        return Err("URL assinada de upload deve usar HTTPS.".to_string());
+    }
+
     let arquivo = tokio::fs::File::open(&caminho_arquivo)
         .await
         .map_err(|e| format!("Erro ao abrir pacote de sync: {}", e))?;
@@ -1031,30 +1070,45 @@ async fn enviar_pacote_social(
     });
     let corpo = reqwest::Body::wrap_stream(fluxo);
 
-    let endpoint = format!(
-        "{}/api/launcher/social/sync/upload/{}",
-        api_base,
-        urlencoding::encode(&pedido_id)
-    );
-    let client = criar_cliente_http_transferencia()?;
     let resposta = client
-        .post(&endpoint)
-        .bearer_auth(token)
-        .header("x-social-sync-token", token_upload)
+        .put(url_validada)
         .header("content-type", "application/octet-stream")
         .header("content-length", metadata.len())
         .body(corpo)
         .send()
         .await
-        .map_err(|e| format!("Erro de rede no upload de sync social: {}", e))?;
+        .map_err(|e| format!("Erro de rede no upload direto do pacote social: {}", e))?;
 
     if !resposta.status().is_success() {
-        return Err(
-            extrair_mensagem_erro_launcher(resposta, "Falha no upload do pacote social.").await,
-        );
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Falha no upload direto do pacote social.",
+        )
+        .await);
     }
 
-    resposta
+    let endpoint_concluir = format!(
+        "{}/api/launcher/social/sync/upload/{}/concluir",
+        api_base,
+        urlencoding::encode(&pedido_id)
+    );
+    let resposta_conclusao = client
+        .post(&endpoint_concluir)
+        .bearer_auth(token)
+        .header("x-social-sync-token", token_upload)
+        .json(&serde_json::json!({ "caminhoArquivo": caminho_remoto }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao confirmar upload de sync social: {}", e))?;
+    if !resposta_conclusao.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta_conclusao,
+            "Falha ao confirmar o upload social.",
+        )
+        .await);
+    }
+
+    resposta_conclusao
         .json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Resposta invalida no upload de sync social: {}", e))

@@ -1565,7 +1565,7 @@ export default function App() {
               usuarioMinecraft={user}
               iconeAtividadeLocal={instanciaAtiva?.icon}
               className={cn(
-                "flex h-full shrink-0 overflow-y-auto scrollbar-hide",
+                "h-full min-h-0 shrink-0",
                 ehTelaXl && (painelSocialRecuado ? "w-[72px]" : "w-[340px]"),
                 !ehTelaXl && "w-[340px]",
                 !ehTelaXl && "max-w-[92vw]"
