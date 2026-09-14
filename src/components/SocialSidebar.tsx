@@ -279,6 +279,10 @@ function mensagemErro(erro: unknown, padrao: string): string {
   return padrao;
 }
 
+function pacoteSocialNaoEncontrado(mensagem: string): boolean {
+  return /HTTP 404|PACOTE_INDISPONIVEL|ARQUIVO_NAO_ENCONTRADO|não encontrado no bucket/i.test(mensagem);
+}
+
 function idCardRecebimentoSocial(pedidoId: string): string {
   return `${PREFIXO_RECEBIMENTO_SOCIAL}${pedidoId}`;
 }
@@ -991,6 +995,16 @@ export default function SocialSidebar({
       setMensagemSync(mensagem);
       errorCreatingInstance(idCard, mensagem);
       atualizarOperacao({ ...evento, pedidoId, status: 'erro', mensagem });
+      if (pacoteSocialNaoEncontrado(mensagem)) {
+        await invoke('gerenciar_transferencias_sociais', {
+          apiBaseUrl: API_DOME_LAUNCHER_URL,
+          accessToken: token,
+          acao: 'cancelar',
+          pedidoId,
+        }).catch(() => undefined);
+        pedidosSyncEnviadosRef.current.delete(pedidoId);
+        detalhesRecebimentosRef.current.delete(pedidoId);
+      }
       if (friendProfileId) {
         publicarProgressoTransferenciaSocial({ estado: 'erro', mensagem, friendProfileId, pedidoId });
       }

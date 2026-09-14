@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ReactSkinview3d } from "react-skinview3d";
 import { Check, Download, Loader2, Pencil, Trash2, Upload, X } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
 import { MinecraftAccount } from "../App";
@@ -47,6 +46,7 @@ interface SkinSalva {
 }
 
 const CHAVE_SKINS_SALVAS = "dome-skins-salvas";
+const CHAVE_MODO_SEGURO_SKINS = "dome-skins-modo-seguro";
 
 function carregarSkinsSalvas(): SkinSalva[] {
   try {
@@ -105,6 +105,14 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [skinEditandoId, setSkinEditandoId] = useState<string | null>(null);
   const [skinAtualId, setSkinAtualId] = useState<string | null>(null);
   const [menuSkin, setMenuSkin] = useState<{ skin: SkinSalva; x: number; y: number } | null>(null);
+  const [modoSeguro3d, setModoSeguro3d] = useState(
+    () => localStorage.getItem(CHAVE_MODO_SEGURO_SKINS) === "true",
+  );
+
+  const ativarModoSeguro3d = useCallback(() => {
+    localStorage.setItem(CHAVE_MODO_SEGURO_SKINS, "true");
+    setModoSeguro3d(true);
+  }, []);
 
   const previewSkinUrl = useMemo(() => {
     if (!user) return "";
@@ -452,13 +460,22 @@ export function SkinManager({ user }: SkinManagerProps) {
           </span>
 
           <div className="flex h-[400px] w-full items-center justify-center drop-shadow-2xl transition-transform duration-500 hover:scale-105">
-            <SkinPreviewRenderer
-              skinUrl={previewSkinUrl}
-              capeUrl={capaAtualUrl}
-              model={variant}
-              height={450}
-              width={300}
-            />
+            {modoSeguro3d ? (
+              <MiniaturaSkinMinecraft
+                skinUrl={previewSkinUrl}
+                modelo={variant}
+                className="h-[78%] w-auto [image-rendering:pixelated]"
+              />
+            ) : (
+              <SkinPreviewRenderer
+                skinUrl={previewSkinUrl}
+                capeUrl={capaAtualUrl}
+                model={variant}
+                height={450}
+                width={300}
+                onFalhaWebgl={ativarModoSeguro3d}
+              />
+            )}
           </div>
 
           <span className="pointer-events-none mt-4 text-xs font-bold uppercase tracking-widest text-white/20 transition-colors group-hover:text-white/40">
@@ -548,24 +565,10 @@ export function SkinManager({ user }: SkinManagerProps) {
                     aria-label={`Abrir ações de ${skin.nome}`}
                     className="absolute inset-0 flex items-center justify-center p-3 disabled:opacity-50"
                   >
-                    <ReactSkinview3d
+                    <MiniaturaSkinMinecraft
                       skinUrl={bytesParaDataUrl(skin.bytes)}
-                      width={88}
-                      height={122}
-                      className="pointer-events-none h-[82%] w-[78%] transition-transform group-hover:scale-105"
-                      options={{
-                        model: skin.variant === "slim" ? "slim" : "default",
-                        zoom: 0.68,
-                      }}
-                      onReady={({ viewer }) => {
-                        const distancia = viewer.camera.position.length();
-                        viewer.camera.position.set(distancia * 0.52, 0, distancia * 0.85);
-                        viewer.camera.lookAt(0, 0, 0);
-                        viewer.controls.enableRotate = false;
-                        viewer.controls.enableZoom = false;
-                        viewer.controls.enablePan = false;
-                        viewer.controls.update();
-                      }}
+                      modelo={skin.variant}
+                      className="pointer-events-none h-[82%] w-auto max-w-full transition-transform group-hover:scale-105"
                     />
                   </button>
                   {carregando && (
@@ -685,12 +688,21 @@ export function SkinManager({ user }: SkinManagerProps) {
               </button>
 
               <div className="relative min-h-72 border-b border-white/8 bg-[radial-gradient(circle_at_50%_42%,rgba(52,211,153,0.09),transparent_58%)] md:border-b-0 md:border-r">
-                <SkinPreviewRenderer
-                  skinUrl={previewEditorUrl}
-                  capeUrl={capas.find((capa) => capa.id === capaSelecionadaId)?.url}
-                  model={variant}
-                  className="h-full min-h-72"
-                />
+                {modoSeguro3d ? (
+                  <MiniaturaSkinMinecraft
+                    skinUrl={previewEditorUrl}
+                    modelo={variant}
+                    className="mx-auto h-64 w-auto [image-rendering:pixelated]"
+                  />
+                ) : (
+                  <SkinPreviewRenderer
+                    skinUrl={previewEditorUrl}
+                    capeUrl={capas.find((capa) => capa.id === capaSelecionadaId)?.url}
+                    model={variant}
+                    className="h-full min-h-72"
+                    onFalhaWebgl={ativarModoSeguro3d}
+                  />
+                )}
                 <div className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-[9px] font-bold uppercase tracking-[0.18em] text-white/25">
                   Arraste para visualizar
                 </div>

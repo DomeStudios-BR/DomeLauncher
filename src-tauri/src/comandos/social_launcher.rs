@@ -1224,7 +1224,7 @@ async fn receber_pacote_social(
         instances_path: std::sync::Arc::new(std::sync::Mutex::new(pasta_preparacao)),
     };
     let mut resultado_importacao =
-        crate::aplicacao::importacao_exportacao::importar_instancia_em_estado(
+        crate::aplicacao::importacao_exportacao::importar_instancia_social_em_estado(
             caminho_arquivo.to_string_lossy().to_string(),
             &estado_preparacao,
         )

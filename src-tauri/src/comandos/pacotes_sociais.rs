@@ -631,7 +631,7 @@ mod testes {
         std::fs::write(raiz.join("options.txt"), b"opcoes pessoais").unwrap();
         let instancia = serde_json::from_value(serde_json::json!({
             "id": "teste", "name": "Teste", "version": "1.21.1", "mcType": "vanilla",
-            "path": raiz, "created": "2026-09-13"
+            "path": raiz, "created": "2026-09-13", "icon": "data:image/png;base64,AAAA"
         }))
         .unwrap();
         (
@@ -673,6 +673,9 @@ mod testes {
         assert!(zip.by_name("config/exemplo.json").is_ok());
         assert!(zip.by_name("saves/mundo.dat").is_ok());
         assert!(zip.by_name("options.txt").is_err());
+        let manifesto: serde_json::Value =
+            serde_json::from_reader(zip.by_name("dome_manifest.json").unwrap()).unwrap();
+        assert_eq!(manifesto["icon"], "data:image/png;base64,AAAA");
     }
 
     #[test]

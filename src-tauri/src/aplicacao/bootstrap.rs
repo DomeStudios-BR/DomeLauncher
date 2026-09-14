@@ -11,10 +11,10 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
-                if let Some(janela) = app.get_webview_window("main") {
+                if let Some(janela) = _app.get_webview_window("main") {
                     janela.open_devtools();
                 }
             }

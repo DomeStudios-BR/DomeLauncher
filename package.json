@@ -1,7 +1,7 @@
 {
   "name": "dome-launcher",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "scripts": {
     "dev": "bunx --package @tauri-apps/cli tauri dev",
@@ -30,7 +30,6 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "react-skinview3d": "^7.0.0",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",

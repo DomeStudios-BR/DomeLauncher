@@ -876,6 +876,7 @@ async fn criar_instancia_base_importada(
     loader_type: Option<&str>,
     loader_version: Option<&str>,
     icone_origem: Option<&str>,
+    baixar_arquivos_jogo: bool,
 ) -> Result<Instance, String> {
     let client = reqwest::Client::new();
     let res = client
@@ -910,9 +911,11 @@ async fn criar_instancia_base_importada(
         std::fs::create_dir_all(&instance_path).map_err(|e| e.to_string())?;
     }
 
-    super::instancias_criacao::download_instance_files(&instance_path, &details).await?;
-
     let loader_normalizado = detectar_loader_normalizado(loader_type);
+    let loader_exige_arquivos = matches!(loader_normalizado.as_deref(), Some("forge" | "neoforge"));
+    if baixar_arquivos_jogo || loader_exige_arquivos {
+        super::instancias_criacao::download_instance_files(&instance_path, &details).await?;
+    }
     let (loader_type_salvo, loader_version_final, mc_type) = match loader_normalizado.as_deref() {
         Some("forge") => {
             let versao_loader =
@@ -1121,6 +1124,7 @@ pub(crate) async fn importar_instancias_externas(
             instancia.loader_type.as_deref(),
             instancia.loader_version.as_deref(),
             instancia.icone.as_deref(),
+            true,
         )
         .await
         {
@@ -1412,6 +1416,21 @@ pub(crate) async fn importar_instancia_em_estado(
     caminho_arquivo: String,
     state: &LauncherState,
 ) -> Result<ResultadoImportacaoArquivo, String> {
+    importar_instancia_em_estado_com_opcoes(caminho_arquivo, state, true).await
+}
+
+pub(crate) async fn importar_instancia_social_em_estado(
+    caminho_arquivo: String,
+    state: &LauncherState,
+) -> Result<ResultadoImportacaoArquivo, String> {
+    importar_instancia_em_estado_com_opcoes(caminho_arquivo, state, false).await
+}
+
+async fn importar_instancia_em_estado_com_opcoes(
+    caminho_arquivo: String,
+    state: &LauncherState,
+    baixar_arquivos_jogo: bool,
+) -> Result<ResultadoImportacaoArquivo, String> {
     let caminho = std::path::PathBuf::from(caminho_arquivo.trim());
     if !caminho.exists() {
         return Err("Arquivo não encontrado.".to_string());
@@ -1506,7 +1525,8 @@ pub(crate) async fn importar_instancia_em_estado(
         &versao_mc,
         loader_type.as_deref(),
         loader_version.as_deref(),
-        None,
+        manifesto.as_ref().and_then(|dados| dados.icon.as_deref()),
+        baixar_arquivos_jogo,
     )
     .await?;
 

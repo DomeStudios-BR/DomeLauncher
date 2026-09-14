@@ -208,11 +208,16 @@ O evento nativo `social-transferencia-bytes` informa `pedidoId`, `etapa`, `bytes
 
 O prazo inicial é de dez minutos; depois do aceite vale o prazo de transferência de duas horas.
 O servidor mantém o pacote após o download HTTP e só marca conclusão quando o destinatário
-confirma a importação. A confirmação é idempotente. A limpeza remove pacotes pontuais após o
-prazo, preservando o estado final de operações concluídas/canceladas.
+confirma a importação. A confirmação é idempotente e remove imediatamente do bucket o objeto de uma
+transferência pontual. Se essa remoção falhar, a limpeza periódica tenta novamente após o prazo.
+Objetos de instâncias publicadas são compartilhados entre recebimentos e não são removidos pela confirmação;
+só saem quando a publicação correspondente é encerrada e limpa.
 
 A instalação social acontece em `.social-preparacao`, dentro da raiz de instâncias. A pasta só
-é disponibilizada após a preparação completa. Recibos locais em `.social-recebimentos` evitam
+é disponibilizada após a preparação completa. O ícone do manifesto é aplicado à nova instância.
+Para Vanilla e Fabric, o recebimento baixa apenas os manifestos e o loader necessários; cliente, bibliotecas
+e assets do Minecraft são preparados pelo fluxo cacheado no primeiro lançamento. Forge e NeoForge continuam
+preparando esses arquivos durante a importação porque seus instaladores dependem deles. Recibos locais evitam
 reimportar o mesmo pedido se a confirmação remota falhar. O cache `.social-cache` reutiliza
 conteúdo referenciado por hash com cópias independentes.
 
@@ -289,6 +294,8 @@ mantém o status. A API local responde erros como `{ erro: { codigo, mensagem } 
 - **401:** confira tipo de token, expiração e renovação; token Microsoft não autentica rotas sociais.
 - **403:** confira participante e permissão; não contorne autorização no cliente.
 - **404:** busca por handle vira ausência; em sync pode indicar pacote indisponível.
+  Quando o objeto pontual não existe mais no bucket, a API encerra o pedido e o launcher também tenta cancelá-lo,
+  impedindo novas tentativas a cada inicialização. A limpeza de inicialização cobre registros órfãos antigos.
 - **429:** confira recarregamentos em cascata e limitador do servidor; evite retries imediatos.
 - **Conexão:** separe base do build, CSP da WebView, proxy Socket.IO e rede do Rust.
 

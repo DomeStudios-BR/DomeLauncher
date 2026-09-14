@@ -35,17 +35,23 @@ function desenharParte(
   contexto: CanvasRenderingContext2D,
   imagem: HTMLImageElement,
   parte: ParteSkin,
+  expansao = 0,
 ) {
+  const destinoX = Math.max(0, parte.destinoX - expansao);
+  const destinoY = Math.max(0, parte.destinoY - expansao);
+  const limiteX = Math.min(contexto.canvas.width, parte.destinoX + parte.destinoLargura + expansao);
+  const limiteY = Math.min(contexto.canvas.height, parte.destinoY + parte.destinoAltura + expansao);
+
   contexto.drawImage(
     imagem,
     parte.origemX,
     parte.origemY,
     parte.largura,
     parte.altura,
-    parte.destinoX,
-    parte.destinoY,
-    parte.destinoLargura,
-    parte.destinoAltura,
+    destinoX,
+    destinoY,
+    limiteX - destinoX,
+    limiteY - destinoY,
   );
 }
 
@@ -73,14 +79,17 @@ export function MiniaturaSkinMinecraft({
 
       const larguraBraco = modelo === "slim" ? 12 : 16;
       const deslocamentoBraco = modelo === "slim" ? 4 : 0;
-      const bracos: ParteSkin[] = [
+      const bracosBase: ParteSkin[] = [
         { origemX: 44, origemY: 20, largura: modelo === "slim" ? 3 : 4, altura: 12, destinoX: deslocamentoBraco, destinoY: 32, destinoLargura: larguraBraco, destinoAltura: 48 },
         { origemX: 36, origemY: 52, largura: modelo === "slim" ? 3 : 4, altura: 12, destinoX: 48, destinoY: 32, destinoLargura: larguraBraco, destinoAltura: 48 },
+      ];
+      const mangas: ParteSkin[] = [
         { origemX: 44, origemY: 36, largura: modelo === "slim" ? 3 : 4, altura: 12, destinoX: deslocamentoBraco, destinoY: 32, destinoLargura: larguraBraco, destinoAltura: 48 },
         { origemX: 52, origemY: 52, largura: modelo === "slim" ? 3 : 4, altura: 12, destinoX: 48, destinoY: 32, destinoLargura: larguraBraco, destinoAltura: 48 },
       ];
-      bracos.forEach((parte) => desenharParte(contexto, imagem, parte));
-      CAMADAS_EXTERNAS.forEach((parte) => desenharParte(contexto, imagem, parte));
+      bracosBase.forEach((parte) => desenharParte(contexto, imagem, parte));
+      mangas.forEach((parte) => desenharParte(contexto, imagem, parte, 2));
+      CAMADAS_EXTERNAS.forEach((parte) => desenharParte(contexto, imagem, parte, 2));
     };
     imagem.src = skinUrl;
 

@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ReactSkinview3d } from "react-skinview3d";
 import { SkinPreviewRenderer } from "../../src/components/SkinPreviewRenderer";
+import { MiniaturaSkinMinecraft } from "../../src/components/MiniaturaSkinMinecraft";
 
 const textura = document.createElement("canvas");
 textura.width = 64;
@@ -19,25 +19,17 @@ createRoot(document.getElementById("root")!).render(
                     model={modelo}
                     skinUrl={skinUrl}
                     onReady={() => document.getElementById(modelo)!.setAttribute("data-pronto", "true")}
+                    onFalhaWebgl={modelo === "classic"
+                        ? () => { document.documentElement.dataset.modoSeguro = "true"; }
+                        : undefined}
                 />
             </section>
         ))}
         <section id="miniatura" style={{ width: 120, height: 160 }}>
-            <ReactSkinview3d
+            <MiniaturaSkinMinecraft
                 skinUrl={skinUrl}
-                width={88}
-                height={122}
-                options={{ model: "default", zoom: 0.68 }}
-                onReady={({ viewer }) => {
-                    const distancia = viewer.camera.position.length();
-                    viewer.camera.position.set(distancia * 0.52, 0, distancia * 0.85);
-                    viewer.camera.lookAt(0, 0, 0);
-                    viewer.controls.enableRotate = false;
-                    viewer.controls.enableZoom = false;
-                    viewer.controls.enablePan = false;
-                    viewer.controls.update();
-                    document.getElementById("miniatura")!.setAttribute("data-pronto", "true");
-                }}
+                modelo="classic"
+                className="h-full w-auto"
             />
         </section>
     </div>,

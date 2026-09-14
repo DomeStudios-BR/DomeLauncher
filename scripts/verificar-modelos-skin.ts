@@ -77,7 +77,7 @@ try {
             pagina.on("pageerror", (erro) => erros.push(erro.message));
             await pagina.goto(`${url}atual`);
             await pagina.waitForFunction(() =>
-                document.querySelectorAll('[data-pronto="true"]').length === 3,
+                document.querySelectorAll('[data-pronto="true"]').length === 2,
             );
             await pagina.waitForTimeout(300);
             if (await pagina.locator("html").getAttribute("data-bloqueio-dados")) {
@@ -86,6 +86,8 @@ try {
             if (erros.length || await pagina.getByText("Não foi possível carregar o modelo 3D.").count()) {
                 throw new Error(`Falha na renderização: ${erros.join("; ")}`);
             }
+            await pagina.locator("#classic canvas").dispatchEvent("webglcontextlost");
+            await pagina.waitForFunction(() => document.documentElement.dataset.modoSeguro === "true");
             const destinoImagem = process.env.DOME_CAPTURA_SKINS;
             if (destinoImagem) await pagina.screenshot({ path: destinoImagem });
             console.log("Validado: modelos clássico e slim carregados com bundle minificado e CSP de produção.");

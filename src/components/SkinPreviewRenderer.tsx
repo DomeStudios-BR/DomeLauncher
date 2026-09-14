@@ -188,6 +188,7 @@ interface SkinPreviewRendererProps {
   width?: number;
   className?: string;
   onReady?: () => void;
+  onFalhaWebgl?: () => void;
 }
 
 export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
@@ -198,6 +199,7 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
   width = 300,
   className,
   onReady,
+  onFalhaWebgl,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
@@ -246,9 +248,22 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
     );
     camera.position.set(0, 1.1, 4.2);
 
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: false,
+        powerPreference: "low-power",
+      });
+    } catch (erro) {
+      console.error("Não foi possível iniciar a prévia WebGL:", erro);
+      setLoading(false);
+      setErroModelo(true);
+      onFalhaWebgl?.();
+      return;
+    }
     renderer.setSize(initialWidth, initialHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     while (mountRef.current.firstChild) {
@@ -260,8 +275,10 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
     const tratarPerdaContexto = (evento: Event) => {
       evento.preventDefault();
       if (descartado) return;
+      localStorage.setItem("dome-skins-modo-seguro", "true");
       setLoading(false);
       setErroModelo(true);
+      onFalhaWebgl?.();
     };
     renderer.domElement.addEventListener("webglcontextlost", tratarPerdaContexto);
 
@@ -355,7 +372,6 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
       controls.dispose();
       renderer.domElement.removeEventListener("webglcontextlost", tratarPerdaContexto);
       renderer.dispose();
-      renderer.forceContextLoss();
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
@@ -365,7 +381,7 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
       actionsRef.current = {};
       activeActionRef.current = null;
     };
-  }, [model, tentativa]);
+  }, [model, onFalhaWebgl, tentativa]);
 
   // Helpers de Animação
   const playActive = (newAction: THREE.AnimationAction, once: boolean) => {

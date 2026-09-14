@@ -45,6 +45,10 @@ try {
             await pagina.getByRole('heading', { name: 'Instâncias compartilhadas' }).waitFor();
             await pagina.getByText('Vanilla', { exact: true }).waitFor();
             await pagina.getByText('62%', { exact: true }).waitFor();
+            const cardProgresso = pagina.getByText('Vanilla', { exact: true })
+                .locator('xpath=ancestor::div[contains(@class, "rounded-2xl")][1]');
+            assert.equal(Math.round((await cardProgresso.boundingBox())?.width ?? 0), 320,
+                'O card de progresso precisa manter largura fixa durante as mudanças de etapa.');
             await pagina.getByRole('button', { name: 'Revisar instalação / atualização' }).click();
             const atualizar = pagina.getByRole('button', { name: 'Atualizar instância', exact: true });
             assert(await atualizar.isDisabled(), 'Conflito precisa de aceite explícito.');
