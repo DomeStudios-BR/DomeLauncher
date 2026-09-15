@@ -18,6 +18,7 @@ import type { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
 import type { ProjetoConteudo, TipoProjetoConteudo } from "./ProjetoDetalheModal";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
+import { NoticiasMinecraft } from "./NoticiasMinecraft";
 
 interface ResultadoBuscaApi {
   project_id: string;
@@ -287,6 +288,8 @@ export default function HomePage({
         onVerMais={onExplore}
         onAbrirProjeto={(item) => onAbrirProjeto({ ...item, source: "modrinth" })}
       />
+
+      <NoticiasMinecraft />
     </div>
   );
 }

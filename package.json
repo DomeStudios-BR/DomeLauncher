@@ -1,7 +1,7 @@
 {
   "name": "dome-launcher",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "scripts": {
     "dev": "bunx --package @tauri-apps/cli tauri dev",
@@ -15,6 +15,7 @@
     "verificar:social": "node scripts/verificar-transferencias-sociais.ts"
   },
   "dependencies": {
+    "@fontsource/sora": "^5.3.0",
     "@iconify-icons/pixelarticons": "^1.2.6",
     "@iconify/react": "^6.0.2",
     "@tauri-apps/api": "^2.11.1",

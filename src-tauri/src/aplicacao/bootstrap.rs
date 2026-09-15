@@ -98,6 +98,7 @@ pub fn run() {
             crate::comandos::modpacks::get_modpack_info,
             crate::comandos::modpacks::check_modpack_updates,
             crate::comandos::noticias_minecraft::get_minecraft_news,
+            crate::comandos::noticias_minecraft::get_minecraft_article,
             crate::comandos::social_launcher::get_launcher_friends,
             crate::comandos::social_launcher::search_launcher_friend_by_handle,
             crate::comandos::social_launcher::get_launcher_social_profile,

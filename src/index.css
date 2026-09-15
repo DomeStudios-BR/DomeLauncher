@@ -1,15 +1,23 @@
-@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap");
+@import "@fontsource/sora/latin-400.css";
+@import "@fontsource/sora/latin-500.css";
+@import "@fontsource/sora/latin-600.css";
+@import "@fontsource/sora/latin-700.css";
+@import "@fontsource/sora/latin-800.css";
 @import "tailwindcss";
 
 @font-face {
   font-family: "MinecraftSeven";
-  src: local("Minecraft Seven"), local("MinecraftSeven"), local("Mojangles");
+  src: url("./assets/fonts/MinecraftSeven.woff") format("woff");
+  font-style: normal;
+  font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
   font-family: "MinecraftTen";
-  src: local("Minecraft Ten"), local("MinecraftTen");
+  src: url("./assets/fonts/MinecraftTen.woff") format("woff");
+  font-style: normal;
+  font-weight: 400;
   font-display: swap;
 }
 

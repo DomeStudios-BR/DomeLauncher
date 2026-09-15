@@ -162,3 +162,5 @@ Vanilla/Fabric/Forge/NeoForge, seleção/instalação de Java, Modrinth/CurseFor
 importação/exportação/sync, login Discord, amigos, chat e encerramento de sessão. Valide atualização assinada
 com uma versão de teste. Só declare publicação após o workflow terminar e os assets remotos serem conferidos.
 Detecção da atualização, interação para instalar e disponibilidade do pacote são verificações distintas.
+A descrição publicada no `latest.json` é guardada antes da instalação e exibida uma única vez, em um modal de
+novidades, quando a versão instalada for aberta pela primeira vez. Preserve esse vínculo com `releaseBody`.

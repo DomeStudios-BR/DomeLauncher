@@ -17,6 +17,18 @@ HTTP segue `React → invoke Tauri → reqwest/Rust → DomeAPI → JSON → Rea
 Presença e notificações seguem `React → socket.io-client → DomeAPI` diretamente.
 Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, estados e tokens.
 
+## Notícias oficiais do Minecraft
+
+A Home consulta pelo comando `get_minecraft_news` o sitemap oficial do `minecraft.net`, limita a resposta a dez itens
+e mantém um cache local de 30 minutos em `%APPDATA%/dome/cache`. Um espelho somente de leitura dos artigos oficiais
+é usado como contingência caso o site esteja indisponível. Ao selecionar uma notícia,
+`get_minecraft_article` aceita somente URLs HTTPS de artigos do domínio oficial e devolve uma estrutura com texto e
+imagens, em vez de HTML executável. A interface renderiza essa estrutura em um modal próprio e não executa scripts,
+estilos, links ou iframes recebidos do site.
+
+O conteúdo depende da disponibilidade e da marcação atual do site oficial. Falhas de rede ou mudanças nessa marcação
+devem aparecer como estado de erro recuperável, sem impedir o restante da Home de funcionar.
+
 ## Configuração pública
 
 Base padrão: `https://api.domestudios.com.br`, sem `/api/launcher` e sem barra final.

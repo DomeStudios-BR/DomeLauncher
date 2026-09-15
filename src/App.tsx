@@ -17,6 +17,7 @@ import {
 } from "./iconesPixelados";
 import { AnimatePresence, motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { cn } from "./lib/utils";
 import { LoginModal } from "./components/LoginModal";
@@ -34,6 +35,7 @@ import InstanceManager from "./components/InstanceManager";
 import SocialSidebar from "./components/SocialSidebar";
 import { EsqueletoAba } from "./components/EsqueletoCarregamento";
 import VisualizacaoInstanciaSocial from "./components/VisualizacaoInstanciaSocial";
+import { NovidadesVersaoModal, type NovidadesVersao } from "./components/NovidadesVersaoModal";
 import type { AmigoSocial } from "./components/social/tiposSocial";
 import { aplicarCorDestaque, normalizarCorDestaque } from "./lib/corDestaque";
 import {
@@ -165,6 +167,8 @@ async function encontrarInstanciaDaAtividade(
 }
 
 const CHAVE_ULTIMA_INSTANCIA = "dome:ultima-instancia-iniciada";
+const CHAVE_NOVIDADES_PENDENTES = "dome:novidades-pendentes";
+const CHAVE_ULTIMA_NOVIDADE_EXIBIDA = "dome:ultima-novidade-exibida";
 const INTERVALO_VERIFICACAO_INSTANCIAS_MS = 20 * 1000;
 const LIMITE_HISTORICO_NAVEGACAO = 50;
 type TipoExplorePresence = "modpack" | "mod" | "resourcepack" | "shader";
@@ -204,6 +208,7 @@ export default function App() {
     localStorage.getItem(CHAVE_ULTIMA_INSTANCIA)
   );
   const [atualizacaoDisponivel, setAtualizacaoDisponivel] = useState<Update | null>(null);
+  const [novidadesVersao, setNovidadesVersao] = useState<NovidadesVersao | null>(null);
   const [instalandoAtualizacao, setInstalandoAtualizacao] = useState(false);
   const [erroAtualizacao, setErroAtualizacao] = useState<string | null>(null);
   const [progressoAtualizacao, setProgressoAtualizacao] = useState<{
@@ -467,6 +472,40 @@ export default function App() {
     }
   }, [ultimaInstanciaIniciada]);
 
+  useEffect(() => {
+    const carregarNovidadesPendentes = async () => {
+      const valorPendente = localStorage.getItem(CHAVE_NOVIDADES_PENDENTES);
+      if (!valorPendente) return;
+
+      try {
+        const pendente = JSON.parse(valorPendente) as Partial<NovidadesVersao>;
+        if (typeof pendente.versao !== "string" || typeof pendente.conteudo !== "string") {
+          localStorage.removeItem(CHAVE_NOVIDADES_PENDENTES);
+          return;
+        }
+
+        const versaoAtual = (await getVersion()).replace(/^v/i, "");
+        const versaoPendente = pendente.versao.replace(/^v/i, "");
+        const ultimaExibida = localStorage.getItem(CHAVE_ULTIMA_NOVIDADE_EXIBIDA);
+        if (versaoAtual === versaoPendente && ultimaExibida !== versaoAtual) {
+          setNovidadesVersao({ versao: versaoAtual, conteudo: pendente.conteudo });
+        }
+      } catch {
+        localStorage.removeItem(CHAVE_NOVIDADES_PENDENTES);
+      }
+    };
+
+    void carregarNovidadesPendentes();
+  }, []);
+
+  const fecharNovidadesVersao = useCallback(() => {
+    if (novidadesVersao) {
+      localStorage.setItem(CHAVE_ULTIMA_NOVIDADE_EXIBIDA, novidadesVersao.versao);
+      localStorage.removeItem(CHAVE_NOVIDADES_PENDENTES);
+    }
+    setNovidadesVersao(null);
+  }, [novidadesVersao]);
+
   const verificarAtualizacoes = useCallback(async () => {
     if (import.meta.env.DEV) {
       return;
@@ -509,6 +548,12 @@ export default function App() {
         }
       });
 
+      const novidadesPendentes: NovidadesVersao = {
+        versao: atualizacaoDisponivel.version.replace(/^v/i, ""),
+        conteudo: atualizacaoDisponivel.body?.trim() ||
+          "Melhorias gerais e correções para deixar sua experiência mais estável.",
+      };
+      localStorage.setItem(CHAVE_NOVIDADES_PENDENTES, JSON.stringify(novidadesPendentes));
       await invoke("reiniciar_aplicativo");
     } catch (erro) {
       setErroAtualizacao(
@@ -1250,7 +1295,7 @@ export default function App() {
           )}
         >
           <Suspense fallback={<EsqueletoAba />}>
-            <AnimatePresence mode="wait">
+            <AnimatePresence mode="popLayout">
             {activeTab === "home" && (
               <motion.div
                 key="home"
@@ -1600,6 +1645,7 @@ export default function App() {
         onCreated={() => void fetchInstances()}
       />
       <CreatingInstancesOverlay />
+      <NovidadesVersaoModal novidades={novidadesVersao} onClose={fecharNovidadesVersao} />
       </div>
   );
 }
