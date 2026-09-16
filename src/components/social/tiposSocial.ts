@@ -49,6 +49,28 @@ export interface PerfilSocial {
   emJogo?: boolean;
   atividadeAtual?: AtividadeSocial | null;
   ultimoSeenEm?: string | null;
+  emblemas?: Array<{
+    emblemaId: string;
+    nome: string;
+    descricao: string;
+    imagemUrl: string;
+    concedidoEm: string;
+  }>;
+  emblemasExibidos?: Array<{
+    emblemaId: string;
+    nome: string;
+    descricao: string;
+    imagemUrl: string;
+    concedidoEm: string;
+  }>;
+  bannerPerfilUrl?: string | null;
+  capturasFavoritas?: Array<{
+    id: string;
+    nome: string;
+    instanciaNome: string;
+    criadaEm?: string | null;
+    imagemUrl: string;
+  }>;
   criadoEm: string;
   atualizadoEm: string;
 }
@@ -58,6 +80,14 @@ export interface SessaoSocial {
   refreshToken: string;
   expiraEm: string;
   perfil: PerfilSocial;
+}
+
+export interface EmblemaSocial {
+  emblemaId: string;
+  nome: string;
+  descricao: string;
+  imagemUrl: string;
+  concedidoEm: string;
 }
 
 export interface AmigoSocial {
@@ -70,6 +100,7 @@ export interface AmigoSocial {
   status?: StatusPresenca;
   atividadeAtual?: AtividadeSocial | null;
   ultimoSeenEm?: string | null;
+  emblemaDestaque?: EmblemaSocial | null;
 }
 
 export interface SolicitacaoRecebida {

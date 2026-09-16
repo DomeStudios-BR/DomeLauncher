@@ -47,6 +47,7 @@ const carregarSkinManager = () =>
 const carregarProjetoDetalheModal = () => import("./components/ProjetoDetalheModal");
 const SkinManager = lazy(carregarSkinManager);
 const ProjetoDetalheModal = lazy(carregarProjetoDetalheModal);
+const PerfilComunidade = lazy(() => import("./components/PerfilComunidade"));
 
 export interface MinecraftAccount {
   uuid: string;
@@ -178,6 +179,7 @@ const TITULOS_ABA: Record<string, string> = {
   explore: "Explorar",
   favorites: "Favoritos",
   skins: "Skins",
+  profile: "Perfil",
   settings: "Configurações",
   "instance-manager": "Instância",
   "project-detail": "Projeto",
@@ -186,6 +188,7 @@ const TITULOS_ABA: Record<string, string> = {
 export default function App() {
   const { instances, launch, launchServer, remove, fetchInstances } = useLauncher();
   const [activeTab, setActiveTab] = useState("home");
+  const [perfilVisualizadoId, setPerfilVisualizadoId] = useState<string | null>(null);
   const [historicoNavegacao, setHistoricoNavegacao] = useState<{
     anteriores: string[];
     proximas: string[];
@@ -935,8 +938,16 @@ export default function App() {
   }, []);
 
   const handleProfileClick = () => {
-    setMenuContaAberto((atual) => !atual);
+    setMenuContaAberto(false);
+    setPerfilVisualizadoId(null);
+    navegarParaAba("profile");
   };
+
+  const abrirPerfilSocial = useCallback((perfilId: string) => {
+    setPerfilVisualizadoId(perfilId);
+    setSocialDrawerAberto(false);
+    navegarParaAba("profile");
+  }, [navegarParaAba]);
 
   const abrirProjeto = useCallback((origem: AbaOrigemProjeto, projeto: ProjetoConteudo) => {
     setAbaOrigemProjeto(origem);
@@ -1008,7 +1019,10 @@ export default function App() {
   const ocultarTopbar = activeTab === "instance-manager";
 
   return (
-    <div className="app-shell launcher-shell relative flex h-screen w-full overflow-hidden text-white">
+    <div className={cn(
+      "app-shell launcher-shell relative flex h-screen w-full overflow-hidden text-white",
+      activeTab === "profile" && "perfil-comunidade-ativa"
+    )}>
       <aside className="launcher-side-menu relative z-20 flex w-[81px] shrink-0 flex-col">
         <div className="absolute inset-x-0 top-0 flex h-[50px] items-center justify-center gap-1">
           <button
@@ -1085,11 +1099,13 @@ export default function App() {
               onClick={handleProfileClick}
               className={cn(
                 "flex h-11 w-11 items-center justify-center border transition-colors",
-                user
+                activeTab === "profile"
+                  ? "border-emerald-400/45 bg-emerald-500/12"
+                  : user
                   ? "border-emerald-400/40 bg-[#171717]"
                   : "border-white/15 bg-[#171717] hover:border-white/30"
               )}
-              title={user ? user.name : "Contas Minecraft"}
+              title="Abrir perfil da comunidade"
             >
               {user ? (
                 <img
@@ -1316,7 +1332,7 @@ export default function App() {
           className={cn(
             "flex-1 overflow-y-auto scrollbar-hide",
             !ocultarTopbar && "launcher-painel-conteudo",
-            activeTab === "instance-manager" ? "" : "px-6 pb-24 pt-6"
+            activeTab === "instance-manager" || activeTab === "profile" ? "" : "px-6 pb-24 pt-6"
           )}
         >
           <Suspense fallback={<EsqueletoAba />}>
@@ -1404,6 +1420,26 @@ export default function App() {
                   publicacoesSociais={publicacoesPorInstancia}
                   user={user}
                   onLogin={() => setIsLoginOpen(true)}
+                />
+              </motion.div>
+            )}
+
+            {activeTab === "profile" && (
+              <motion.div
+                key="profile"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="min-h-full"
+              >
+                <PerfilComunidade
+                  key={perfilVisualizadoId ?? "me"}
+                  instances={instances}
+                  minecraftUuid={user?.uuid}
+                  perfilId={perfilVisualizadoId}
+                  onAbrirInstancia={abrirGerenciadorInstancia}
+                  onAbrirBiblioteca={() => navegarParaAba("instances")}
+                  onGerenciarContas={() => setMenuContaAberto(true)}
                 />
               </motion.div>
             )}
@@ -1686,6 +1722,7 @@ export default function App() {
               }
               onAlterarChatAberto={setChatSocialAberto}
               onAbrirAtividadeAmigo={abrirAtividadeAmigo}
+              onAbrirPerfil={abrirPerfilSocial}
               recuado={ehTelaXl && painelSocialRecuado}
               onAlternarRecuo={
                 ehTelaXl ? () => setPainelSocialRecuado((anterior) => !anterior) : undefined

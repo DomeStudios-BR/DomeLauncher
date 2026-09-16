@@ -67,9 +67,9 @@ export function NoticiasMinecraft() {
         try {
             const [minecraft, dome] = await Promise.allSettled([
                 invoke<NoticiaMinecraft[]>("get_minecraft_news", { limit: 4 }),
-                fetch(`${CONFIGURACAO_SOCIAL.apiBaseUrl}/api/launcher/novidades?limite=8`).then(async (resposta) => {
-                    if (!resposta.ok) throw new Error("Falha ao carregar novidades da Dome.");
-                    return resposta.json() as Promise<{ novidades: NovidadeDomeApi[] }>;
+                invoke<NovidadeDomeApi[]>("get_launcher_news", {
+                    apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+                    limite: 8,
                 }),
             ]);
 
@@ -78,7 +78,7 @@ export function NoticiasMinecraft() {
                 todas.push(...minecraft.value.map((item) => ({ ...item, origem: "minecraft" as const })));
             }
             if (dome.status === "fulfilled") {
-                todas.push(...dome.value.novidades.map((item) => ({
+                todas.push(...dome.value.map((item) => ({
                     titulo: item.titulo,
                     descricao: item.resumo,
                     url: `dome://${item.id}`,

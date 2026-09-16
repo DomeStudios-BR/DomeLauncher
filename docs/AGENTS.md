@@ -32,6 +32,7 @@ Windows é o alvo atual de release.
 | `src/hooks/useLauncher.ts` | Estado principal e integração via `invoke` |
 | `src/types.ts` | Contratos compartilhados do frontend |
 | `src/components/`, `src/pages/instance/` | Interface e telas da instância |
+| `src/components/PerfilComunidade.tsx` | Perfil próprio, personalização, atividade, biblioteca e galeria local |
 | `src/components/SocialSidebar.tsx` | Sessão social, amigos, chat, presença e transferências |
 | `src/components/social/`, `src/lib/` | Componentes sociais, tipos e utilitários |
 | `src/stores/` | Estado de criação/importação de instâncias |

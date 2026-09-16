@@ -10,6 +10,11 @@ interface MenuStatusSocialProps {
     aparecerOffline: boolean;
     salvando: boolean;
     onAtualizar: (status: Exclude<StatusPresenca, 'offline'>, invisivel: boolean) => void;
+    emblemaDestaque?: {
+        imagemUrl: string;
+        nome: string;
+        descricao: string;
+    } | null;
 }
 
 export function MenuStatusSocial({
@@ -18,6 +23,7 @@ export function MenuStatusSocial({
     aparecerOffline,
     salvando,
     onAtualizar,
+    emblemaDestaque,
 }: MenuStatusSocialProps) {
     const [aberto, setAberto] = useState(false);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -43,6 +49,14 @@ export function MenuStatusSocial({
                 aria-label="Alterar presença"
             >
                 <span className="truncate text-[17px] font-semibold leading-none text-white/95">{nome}</span>
+                {emblemaDestaque && (
+                    <img
+                        src={emblemaDestaque.imagemUrl}
+                        alt={`Destaque: ${emblemaDestaque.nome}`}
+                        title={`${emblemaDestaque.nome} — ${emblemaDestaque.descricao}`}
+                        className="h-5 w-5 shrink-0 object-contain"
+                    />
+                )}
                 <IndicadorStatusSocial
                     status={aparecerOffline ? 'offline' : statusManual}
                     className="h-2.5 w-2.5"

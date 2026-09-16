@@ -814,8 +814,8 @@ export default function Explore({
                     {item.fontes.includes("modrinth") && (
                       <span
                         className={cn(
-                          "rounded-full border border-emerald-500/20 bg-emerald-500/10",
-                          "px-2 py-0.5 text-[10px] font-bold text-emerald-400"
+                          "rounded-full border border-[#1bd96a]/20 bg-[#1bd96a]/10",
+                          "px-2 py-0.5 text-[10px] font-bold text-[#1bd96a]"
                         )}
                       >
                         Modrinth

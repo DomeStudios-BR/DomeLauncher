@@ -17,11 +17,19 @@ HTTP segue `React → invoke Tauri → reqwest/Rust → DomeAPI → JSON → Rea
 Presença e notificações seguem `React → socket.io-client → DomeAPI` diretamente.
 Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, estados e tokens.
 
+A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET /api/launcher/friends`.
+Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
+tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
+PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. Bio e banner
+são personalizações locais e não são expostos a outros jogadores. Comentários e emblemas vêm da DomeAPI;
+sem sessão ou dados remotos, a tela não injeta identidade, comentários ou emblemas demonstrativos.
+
 ## Novidades
 
 A Home combina duas fontes e ordena tudo pela data de publicação:
 
-- `GET /api/launcher/novidades?limite=8`, para notícias e atualizações publicadas no painel da Dome Studios.
+- `GET /api/launcher/novidades?limite=8`, consultado pelo comando nativo `get_launcher_news`, para notícias e
+  atualizações publicadas no painel da Dome Studios. A leitura nativa evita depender de CORS na WebView.
   A API consulta a release mais recente de `levigarciia/DomeLauncher` no GitHub e a importa uma única vez
   como atualização publicada e editável; novas releases entram pelo mesmo fluxo;
 - notícias oficiais do Minecraft, carregadas pelo comando nativo descrito abaixo.
@@ -111,6 +119,9 @@ O normalizador de `discord_social.rs` é menos restritivo e aceita prefixo HTTP 
 | `POST /auth/logout` | `logout_launcher_social` | Sem corpo; retorno IPC `void` após sucesso HTTP |
 | `GET /social/profile/me` | `get_launcher_social_profile` | Perfil direto, sem envelope `perfil` |
 | `PATCH /social/profile/me` | `save_launcher_social_profile` | `{ nomeSocial?, handle?, contaMinecraftPrincipalUuid? }` → `{ sucesso?, perfil? }` |
+| `GET /social/profile/me/comments` | `get_launcher_profile_comments` | `{ comentarios }`, do mais recente ao mais antigo |
+| `POST /social/profile/me/comments` | `post_launcher_profile_comment` | `{ conteudo }` → comentário criado |
+| `DELETE /social/profile/me/comments/:id` | `delete_launcher_profile_comment` | Exclusão autenticada pelo dono do perfil |
 | `PATCH /social/status/me` | `set_launcher_social_status` | `{ statusManual?, aparecerOffline? }` → `{ sucesso?, perfil? }` |
 | `POST /social/minecraft/link` | `link_launcher_minecraft_account` | `{ uuid, nome, minecraftAccessToken }` → `{ sucesso?, perfil? }` |
 | `DELETE /social/minecraft/:uuid` | `unlink_launcher_minecraft_account` | Sem corpo → `{ sucesso?, perfil? }` |
@@ -162,6 +173,7 @@ Na integração existente, reutilize `obterTokenValido` antes de enviar requisi�
 | --- | --- |
 | Sessão | `accessToken`, `refreshToken`, `expiraEm`, `perfil` |
 | Perfil | `perfilId`, `discordId`, `discordUsername`, `discordGlobalName?`, `discordAvatar?`, `handle`, `nomeSocial`, `contasMinecraftVinculadas`, `contaMinecraftPrincipalUuid?`, `online`, `status?`, `aparecerOffline?`, `emJogo?`, `atividadeAtual?`, `ultimoSeenEm?`, `criadoEm`, `atualizadoEm` |
+| Emblema | `emblemaId`, `nome`, `descricao`, `imagemUrl`, `concedidoEm` |
 | Conta vinculada | `uuid`, `nome`, `vinculadoEm`, `ultimoUsoEm?` |
 | Amigo | `amizadeId`, `friendProfileId`, `nome`, `handle?`, `avatarUrl?`, `online`, `status?`, `atividadeAtual?`, `ultimoSeenEm?` |
 | Pedido recebido | `id`, `dePerfilId`, `deHandle?`, `deNome`, `criadoEm` |
@@ -173,6 +185,10 @@ Na integração existente, reutilize `obterTokenValido` antes de enviar requisi�
 Datas são strings interpretadas como datas pelo cliente. Campos opcionais podem admitir `null`; consulte
 os tipos Rust/TypeScript antes de mudar serialização. Atividade usa `launcher`, `modpack_exato` ou
 `instancia_personalizada`; `source` usa `modrinth` ou `curseforge`.
+
+O painel administra emblemas por `GET` e `POST /api/admin/launcher/emblemas` e distribui por
+`POST /api/admin/launcher/emblemas/:id/distribuir`. Imagens PNG, JPEG ou WebP de até 2 MB são enviadas como corpo
+binário para `POST /api/admin/launcher/emblemas/imagens` e servidas com cache imutável pela rota pública devolvida.
 
 ## Socket.IO
 

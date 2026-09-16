@@ -62,6 +62,14 @@ interface AtividadeSocial {
   atualizadoEm: string;
 }
 
+interface EmblemaSocial {
+  emblemaId: string;
+  nome: string;
+  descricao: string;
+  imagemUrl: string;
+  concedidoEm: string;
+}
+
 interface PerfilSocial {
   perfilId: string;
   discordId: string;
@@ -78,6 +86,8 @@ interface PerfilSocial {
   emJogo?: boolean;
   atividadeAtual?: AtividadeSocial | null;
   ultimoSeenEm?: string | null;
+  emblemas?: EmblemaSocial[];
+  emblemasExibidos?: EmblemaSocial[];
   criadoEm: string;
   atualizadoEm: string;
 }
@@ -99,6 +109,13 @@ interface AmigoSocial {
   status?: StatusPresenca;
   atividadeAtual?: AtividadeSocial | null;
   ultimoSeenEm?: string | null;
+  emblemaDestaque?: {
+    emblemaId: string;
+    nome: string;
+    descricao: string;
+    imagemUrl: string;
+    concedidoEm: string;
+  } | null;
 }
 
 interface SolicitacaoRecebida {
@@ -239,6 +256,7 @@ interface SocialSidebarProps {
   onFecharDrawer?: () => void;
   onAlterarChatAberto?: (aberto: boolean) => void;
   onAbrirAtividadeAmigo?: (amigo: AmigoSocial) => void;
+  onAbrirPerfil?: (perfilId: string) => void;
   recuado?: boolean;
   onAlternarRecuo?: () => void;
 }
@@ -429,6 +447,7 @@ export default function SocialSidebar({
   onFecharDrawer,
   onAlterarChatAberto,
   onAbrirAtividadeAmigo,
+  onAbrirPerfil,
   recuado = false,
   onAlternarRecuo,
 }: SocialSidebarProps) {
@@ -1202,6 +1221,27 @@ export default function SocialSidebar({
     setErroChat(null);
     setMensagemSync(null);
   }, []);
+
+  useEffect(() => {
+    const aoAbrirChatExterno = (evento: Event) => {
+      const perfilId = (evento as CustomEvent<{ friendProfileId?: string }>).detail?.friendProfileId;
+      if (!perfilId) return;
+      abrirChatComAmigo(perfilId);
+    };
+    window.addEventListener("dome:social-abrir-chat", aoAbrirChatExterno);
+    return () => window.removeEventListener("dome:social-abrir-chat", aoAbrirChatExterno);
+  }, [abrirChatComAmigo]);
+
+  useEffect(() => {
+    const aoPerfilAtualizado = (evento: Event) => {
+      const perfilAtualizado = (evento as CustomEvent<{ perfil?: PerfilSocial }>).detail?.perfil;
+      if (!perfilAtualizado) return;
+      setPerfil(perfilAtualizado);
+      persistirPerfilNaSessao(perfilAtualizado);
+    };
+    window.addEventListener("dome:social-perfil-atualizado", aoPerfilAtualizado);
+    return () => window.removeEventListener("dome:social-perfil-atualizado", aoPerfilAtualizado);
+  }, [persistirPerfilNaSessao]);
 
   useEffect(() => {
     atividadeLocalRef.current = atividadeLocal;
@@ -2170,6 +2210,7 @@ export default function SocialSidebar({
           amigoSelecionadoPerfilId={chatAberto ? amigoSelecionadoPerfilId : null}
           onAbrirChat={abrirChatComAmigo}
           onAbrirAtividade={onAbrirAtividadeAmigo}
+          onAbrirPerfil={onAbrirPerfil}
           onRemoverAmigo={(friendProfileId) => void removerAmigo(friendProfileId)}
           formatarTempoRelativo={tempoRelativo}
           rotuloStatus={rotuloStatus}
