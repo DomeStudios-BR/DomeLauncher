@@ -171,7 +171,7 @@ const CHAVE_ULTIMA_NOVIDADE_EXIBIDA = "dome:ultima-novidade-exibida";
 const INTERVALO_VERIFICACAO_INSTANCIAS_MS = 20 * 1000;
 const LIMITE_HISTORICO_NAVEGACAO = 50;
 type TipoExplorePresence = "modpack" | "mod" | "resourcepack" | "shader";
-type FonteExplorePresence = "modrinth" | "curseforge";
+type FonteExplorePresence = "modrinth" | "curseforge" | "ambas";
 const TITULOS_ABA: Record<string, string> = {
   home: "Início",
   instances: "Biblioteca",
@@ -720,7 +720,9 @@ export default function App() {
                 : "shader";
         return {
           detalhes: `Vendo ${prefixoTipo} ${contextoExplore.titulo}`,
-          estado: `Fonte: ${contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
+          estado: contextoExplore.fonte === "ambas"
+            ? "Fontes: Modrinth e CurseForge"
+            : `Fonte: ${contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
         };
       }
       return { detalhes: "Explorando conteúdo", estado: "Mods, modpacks e shaders" };
