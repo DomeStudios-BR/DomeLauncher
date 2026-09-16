@@ -267,6 +267,14 @@ export default function PerfilComunidade({
     () => perfil?.emblemas ?? [],
     [perfil?.emblemas],
   );
+  const emblemasOrdenadosEdicao = useMemo(() => {
+    const ordem = new Map(emblemasExibidosIds.map((id, indice) => [id, indice]));
+    return [...emblemasDisponiveis].sort((a, b) => {
+      const ordemA = ordem.has(a.emblemaId) ? ordem.get(a.emblemaId)! : Number.MAX_SAFE_INTEGER;
+      const ordemB = ordem.has(b.emblemaId) ? ordem.get(b.emblemaId)! : Number.MAX_SAFE_INTEGER;
+      return ordemA - ordemB;
+    });
+  }, [emblemasDisponiveis, emblemasExibidosIds]);
   const emblemasExibidos = useMemo(
     () => (perfil?.emblemasExibidos ?? perfil?.emblemas ?? []).slice(0, 4),
     [perfil?.emblemas, perfil?.emblemasExibidos],
@@ -866,23 +874,57 @@ export default function PerfilComunidade({
                   ) : null}
                 </div>
                 <div className="resumo-conta">
-                  <div className="emblemas-resumo" aria-label="Emblemas em destaque">
-                    {emblemasExibidos.map((emblema, indice) => (
-                      <button
-                        key={emblema.emblemaId}
-                        type="button"
-                        className={indice === 0 ? "emblema-primeiro" : undefined}
-                        aria-label={`${emblema.nome}: ${emblema.descricao}. Conquistado em ${formatarData(emblema.concedidoEm)}${indice === 0 ? " (destaque)" : ""}`}
-                      >
-                        <img src={emblema.imagemUrl} alt={emblema.nome} />
-                        <span className="tooltip-emblema">
-                          <strong>{emblema.nome}{indice === 0 ? " ★" : ""}</strong>
-                          <span>{emblema.descricao}</span>
-                          <small>Conquistado em {formatarData(emblema.concedidoEm)}</small>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                  {editando && ehPerfilProprio ? (
+                    <div className="seletor-emblemas-perfil inline-cabecalho" aria-label="Escolher emblemas exibidos">
+                      {emblemasOrdenadosEdicao.map((emblema) => {
+                        const indice = emblemasExibidosIds.indexOf(emblema.emblemaId);
+                        const selecionado = indice >= 0;
+                        return (
+                          <div key={emblema.emblemaId} className={`emblema-opcao ${selecionado ? "selecionado" : ""}`}>
+                            <button
+                              type="button"
+                              className="emblema-botao"
+                              title={indice === 0 ? "Emblema em destaque" : emblema.nome}
+                              onClick={() => alternarEmblemaExibido(emblema.emblemaId)}
+                            >
+                              <img src={emblema.imagemUrl} alt={emblema.nome} />
+                              {selecionado && <b>{indice + 1}</b>}
+                            </button>
+                            {selecionado && (
+                              <div className="emblema-ordem">
+                                <button type="button" title="Mover para esquerda" disabled={indice <= 0} onClick={() => moverEmblemaExibido(emblema.emblemaId, -1)}>‹</button>
+                                {indice !== 0 ? (
+                                  <button type="button" title="Tornar destaque" onClick={() => tornarEmblemaDestaque(emblema.emblemaId)}>★</button>
+                                ) : (
+                                  <span className="destaque-marca" title="Destaque atual">★</span>
+                                )}
+                                <button type="button" title="Mover para direita" disabled={indice >= emblemasExibidosIds.length - 1} onClick={() => moverEmblemaExibido(emblema.emblemaId, 1)}>›</button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {emblemasDisponiveis.length === 0 && <span>Nenhum emblema conquistado.</span>}
+                    </div>
+                  ) : (
+                    <div className="emblemas-resumo" aria-label="Emblemas em destaque">
+                      {emblemasExibidos.map((emblema, indice) => (
+                        <button
+                          key={emblema.emblemaId}
+                          type="button"
+                          className={indice === 0 ? "emblema-primeiro" : undefined}
+                          aria-label={`${emblema.nome}: ${emblema.descricao}. Conquistado em ${formatarData(emblema.concedidoEm)}${indice === 0 ? " (destaque)" : ""}`}
+                        >
+                          <img src={emblema.imagemUrl} alt={emblema.nome} />
+                          <span className="tooltip-emblema">
+                            <strong>{emblema.nome}{indice === 0 ? " ★" : ""}</strong>
+                            <span>{emblema.descricao}</span>
+                            <small>Conquistado em {formatarData(emblema.concedidoEm)}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="cabecalho-acoes abaixo-emblemas">
                     {!editando && ehPerfilProprio && (
                       <button className="botao primario" id="editarPerfil" type="button" onClick={() => setEditando(true)}>
@@ -966,38 +1008,7 @@ export default function PerfilComunidade({
               <div className="barra-edicao-inline" role="status">
                 <div>
                   <strong>Editando perfil</strong>
-                  <span>{erroSalvarPerfil ?? "Escolha até 4 emblemas. O primeiro é o destaque ao lado do nome e na barra social."}</span>
-                </div>
-                <div className="seletor-emblemas-perfil" aria-label="Escolher emblemas exibidos">
-                  {emblemasDisponiveis.map((emblema) => {
-                    const indice = emblemasExibidosIds.indexOf(emblema.emblemaId);
-                    const selecionado = indice >= 0;
-                    return (
-                      <div key={emblema.emblemaId} className={`emblema-opcao ${selecionado ? "selecionado" : ""}`}>
-                        <button
-                          type="button"
-                          className="emblema-botao"
-                          title={indice === 0 ? "Emblema em destaque" : emblema.nome}
-                          onClick={() => alternarEmblemaExibido(emblema.emblemaId)}
-                        >
-                          <img src={emblema.imagemUrl} alt={emblema.nome} />
-                          {selecionado && <b>{indice + 1}</b>}
-                        </button>
-                        {selecionado && (
-                          <div className="emblema-ordem">
-                            <button type="button" title="Mover para esquerda" disabled={indice <= 0} onClick={() => moverEmblemaExibido(emblema.emblemaId, -1)}>‹</button>
-                            {indice !== 0 ? (
-                              <button type="button" title="Tornar destaque" onClick={() => tornarEmblemaDestaque(emblema.emblemaId)}>★</button>
-                            ) : (
-                              <span className="destaque-marca" title="Destaque atual">★</span>
-                            )}
-                            <button type="button" title="Mover para direita" disabled={indice >= emblemasExibidosIds.length - 1} onClick={() => moverEmblemaExibido(emblema.emblemaId, 1)}>›</button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {emblemasDisponiveis.length === 0 && <span>Nenhum emblema conquistado.</span>}
+                  <span>{erroSalvarPerfil ?? "Clique nos emblemas acima para escolher até 4. O primeiro é o destaque."}</span>
                 </div>
                 <button className="botao secundario" type="button" disabled={salvandoPerfil} onClick={cancelarEdicao}>
                   Cancelar

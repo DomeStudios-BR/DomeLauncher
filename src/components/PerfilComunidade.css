@@ -2425,6 +2425,15 @@
   background: #0d0d0d;
 }
 
+.perfil-comunidade .seletor-emblemas-perfil.inline-cabecalho {
+  max-width: 100%;
+  justify-content: end;
+  padding: 0 0 10px;
+  border: 0;
+  border-bottom: 1px solid #2c2c2c;
+  background: transparent;
+}
+
 .perfil-comunidade .emblema-opcao {
   display: flex;
   flex-direction: column;
