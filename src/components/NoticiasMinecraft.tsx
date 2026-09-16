@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { Calendar, ChevronRight, Loader2, Newspaper, X } from "../iconesPixelados";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
+import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
+import ReactMarkdown from "react-markdown";
 
 interface NoticiaMinecraft {
     titulo: string;
@@ -10,6 +12,20 @@ interface NoticiaMinecraft {
     url: string;
     imagem_url: string | null;
     publicado_em: string;
+    origem?: "minecraft" | "dome";
+    categoria?: "noticia" | "atualizacao";
+    conteudo_local?: string;
+}
+
+interface NovidadeDomeApi {
+    id: string;
+    titulo: string;
+    resumo: string;
+    conteudo: string;
+    imagemUrl: string;
+    categoria: "noticia" | "atualizacao";
+    versao: string;
+    publicadoEm: string;
 }
 
 interface BlocoNoticiaMinecraft {
@@ -22,11 +38,12 @@ interface BlocoNoticiaMinecraft {
 interface ConteudoNoticiaMinecraft {
     autor: string | null;
     blocos: BlocoNoticiaMinecraft[];
+    markdown?: string;
 }
 
 function formatarData(data: string): string {
     const dataConvertida = new Date(data);
-    if (Number.isNaN(dataConvertida.getTime())) return "Minecraft News";
+    if (Number.isNaN(dataConvertida.getTime())) return "Dome Studios";
 
     return dataConvertida.toLocaleDateString("pt-BR", {
         day: "2-digit",
@@ -48,7 +65,33 @@ export function NoticiasMinecraft() {
         setCarregando(true);
         setErro(null);
         try {
-            setNoticias(await invoke<NoticiaMinecraft[]>("get_minecraft_news", { limit: 4 }));
+            const [minecraft, dome] = await Promise.allSettled([
+                invoke<NoticiaMinecraft[]>("get_minecraft_news", { limit: 4 }),
+                fetch(`${CONFIGURACAO_SOCIAL.apiBaseUrl}/api/launcher/novidades?limite=8`).then(async (resposta) => {
+                    if (!resposta.ok) throw new Error("Falha ao carregar novidades da Dome.");
+                    return resposta.json() as Promise<{ novidades: NovidadeDomeApi[] }>;
+                }),
+            ]);
+
+            const todas: NoticiaMinecraft[] = [];
+            if (minecraft.status === "fulfilled") {
+                todas.push(...minecraft.value.map((item) => ({ ...item, origem: "minecraft" as const })));
+            }
+            if (dome.status === "fulfilled") {
+                todas.push(...dome.value.novidades.map((item) => ({
+                    titulo: item.titulo,
+                    descricao: item.resumo,
+                    url: `dome://${item.id}`,
+                    imagem_url: item.imagemUrl || null,
+                    publicado_em: item.publicadoEm,
+                    origem: "dome" as const,
+                    categoria: item.categoria,
+                    conteudo_local: item.conteudo,
+                })));
+            }
+            todas.sort((a, b) => new Date(b.publicado_em).getTime() - new Date(a.publicado_em).getTime());
+            setNoticias(todas.slice(0, 4));
+            if (!todas.length) throw new Error("Nenhuma novidade disponível.");
         } catch {
             setErro("As notícias não puderam ser carregadas agora.");
         } finally {
@@ -74,6 +117,15 @@ export function NoticiasMinecraft() {
         setNoticiaAberta(noticia);
         setConteudo(null);
         setErroArtigo(null);
+        if (noticia.origem !== "minecraft") {
+            setConteudo({
+                autor: "Dome Studios",
+                blocos: [],
+                markdown: noticia.conteudo_local || noticia.descricao,
+            });
+            setCarregandoArtigo(false);
+            return;
+        }
         setCarregandoArtigo(true);
         try {
             setConteudo(await invoke<ConteudoNoticiaMinecraft>("get_minecraft_article", { url: noticia.url }));
@@ -95,7 +147,7 @@ export function NoticiasMinecraft() {
                 <div className="flex items-end justify-between gap-4">
                     <div>
                         <h2 className="font-['MinecraftTen','Sora',sans-serif] text-[14px] uppercase tracking-[0.28px] text-white/80">
-                            Notícias do Minecraft
+                            Novidades
                         </h2>
                     </div>
                     <Newspaper size={18} className="text-emerald-300/70" />
@@ -141,6 +193,9 @@ export function NoticiasMinecraft() {
                                     <span className="mb-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/55">
                                         <Calendar size={10} />
                                         {formatarData(noticia.publicado_em)}
+                                        {noticia.origem !== "minecraft" && (
+                                            <span className="text-emerald-300">· {noticia.categoria === "atualizacao" ? "Atualização" : "Dome Launcher"}</span>
+                                        )}
                                     </span>
                                     <h3 className="line-clamp-2 font-['MinecraftTen','Sora',sans-serif] text-[15px] leading-5 tracking-[0.2px] text-white">
                                         {noticia.titulo}
@@ -187,7 +242,9 @@ export function NoticiasMinecraft() {
                                 <div className="relative flex items-start gap-5 p-6 pr-16">
                                     <div className="min-w-0 flex-1">
                                         <p className="mb-2 text-[10px] uppercase tracking-[0.18em] text-emerald-300">
-                                            Minecraft News
+                                            {noticiaAberta.origem === "minecraft"
+                                                ? "Minecraft News"
+                                                : noticiaAberta.categoria === "atualizacao" ? "Atualização do Dome Launcher" : "Dome Launcher"}
                                         </p>
                                         <h2
                                             id="titulo-noticia-minecraft"
@@ -223,6 +280,45 @@ export function NoticiasMinecraft() {
                                     )}
 
                                     {erroArtigo && <p className="py-16 text-center text-sm text-red-200/80">{erroArtigo}</p>}
+
+                                    {conteudo?.markdown && (
+                                        <div className="space-y-4 text-[14px] leading-7 text-white/75">
+                                            <ReactMarkdown
+                                                components={{
+                                                    h1: ({ children }) => <h3 className="pt-2 font-['MinecraftTen'] text-2xl text-white">{children}</h3>,
+                                                    h2: ({ children }) => <h3 className="pt-2 font-['MinecraftTen'] text-xl text-white">{children}</h3>,
+                                                    h3: ({ children }) => <h4 className="pt-1 font-['MinecraftTen'] text-lg text-white">{children}</h4>,
+                                                    p: ({ children }) => <p>{children}</p>,
+                                                    ul: ({ children }) => <ul className="list-disc space-y-2 pl-6">{children}</ul>,
+                                                    ol: ({ children }) => <ol className="list-decimal space-y-2 pl-6">{children}</ol>,
+                                                    li: ({ children }) => <li className="pl-1">{children}</li>,
+                                                    strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
+                                                    blockquote: ({ children }) => (
+                                                        <blockquote className="border-l-2 border-emerald-300/50 pl-4 text-white/60">
+                                                            {children}
+                                                        </blockquote>
+                                                    ),
+                                                    code: ({ children }) => (
+                                                        <code className="bg-white/8 px-1.5 py-0.5 font-mono text-[13px] text-emerald-200">
+                                                            {children}
+                                                        </code>
+                                                    ),
+                                                    a: ({ href, children }) => (
+                                                        <a
+                                                            href={href}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="text-emerald-300 underline decoration-emerald-300/35 underline-offset-2"
+                                                        >
+                                                            {children}
+                                                        </a>
+                                                    ),
+                                                }}
+                                            >
+                                                {conteudo.markdown}
+                                            </ReactMarkdown>
+                                        </div>
+                                    )}
 
                                     {conteudo?.blocos.map((bloco, indice) => {
                                         if (bloco.tipo === "imagem" && bloco.url) {

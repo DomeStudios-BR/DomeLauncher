@@ -17,7 +17,25 @@ HTTP segue `React → invoke Tauri → reqwest/Rust → DomeAPI → JSON → Rea
 Presença e notificações seguem `React → socket.io-client → DomeAPI` diretamente.
 Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, estados e tokens.
 
-## Notícias oficiais do Minecraft
+## Novidades
+
+A Home combina duas fontes e ordena tudo pela data de publicação:
+
+- `GET /api/launcher/novidades?limite=8`, para notícias e atualizações publicadas no painel da Dome Studios.
+  A API consulta a release mais recente de `levigarciia/DomeLauncher` no GitHub e a importa uma única vez
+  como atualização publicada e editável; novas releases entram pelo mesmo fluxo;
+- notícias oficiais do Minecraft, carregadas pelo comando nativo descrito abaixo.
+
+O painel usa as rotas autenticadas `GET`, `POST`, `PUT` e `DELETE` em
+`/api/admin/launcher/novidades`. Rascunhos nunca são devolvidos pela rota pública. Publicar uma notícia
+exige título, resumo e conteúdo; imagem HTTPS, categoria e versão de atualização são metadados opcionais.
+As edições feitas no painel não são sobrescritas pela sincronização da release já importada.
+
+O editor também aceita anexos locais PNG, JPEG e WebP de até 5 MB por
+`POST /api/admin/launcher/novidades/imagens`. A API valida assinatura e tipo do arquivo, guarda o objeto no
+bucket e devolve uma URL pública em `/api/launcher/novidades/imagens/:arquivo`; essa URL deve ser salva na notícia.
+
+### Notícias oficiais do Minecraft
 
 A Home consulta pelo comando `get_minecraft_news` o sitemap oficial do `minecraft.net`, limita a resposta a dez itens
 e mantém um cache local de 30 minutos em `%APPDATA%/dome/cache`. Um espelho somente de leitura dos artigos oficiais

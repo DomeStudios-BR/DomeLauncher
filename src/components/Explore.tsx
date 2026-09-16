@@ -221,12 +221,15 @@ export default function Explore({
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [versoesMinecraft, setVersoesMinecraft] = useState<string[]>([]);
   const [versaoMinecraft, setVersaoMinecraft] = useState("");
+  const [pesquisaVersao, setPesquisaVersao] = useState("");
+  const [seletorVersaoAberto, setSeletorVersaoAberto] = useState(false);
   const [loader, setLoader] = useState<LoaderFiltro>("");
   const [ordenacao, setOrdenacao] = useState<OrdenacaoBusca>("relevancia");
 
   const hasLoaded = useRef(false);
   const lastSearch = useRef({ query: "", contentType: "", filtros: "" });
   const fimListaRef = useRef<HTMLDivElement | null>(null);
+  const seletorVersaoRef = useRef<HTMLDivElement | null>(null);
   const proximosOffsetsRef = useRef<Record<Source, number>>({ modrinth: 0, curseforge: 0 });
   const temMaisPorFonteRef = useRef<Record<Source, boolean>>({ modrinth: true, curseforge: true });
   const carregandoMaisRef = useRef(false);
@@ -259,6 +262,20 @@ export default function Explore({
       cancelado = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!seletorVersaoAberto) return;
+
+    const fecharAoClicarFora = (evento: MouseEvent) => {
+      if (!seletorVersaoRef.current?.contains(evento.target as Node)) {
+        setSeletorVersaoAberto(false);
+        setPesquisaVersao("");
+      }
+    };
+
+    document.addEventListener("mousedown", fecharAoClicarFora);
+    return () => document.removeEventListener("mousedown", fecharAoClicarFora);
+  }, [seletorVersaoAberto]);
 
   useEffect(() => {
     const aceitaLoader = contentType === "mod" || contentType === "modpack";
@@ -504,6 +521,16 @@ export default function Explore({
     setOrdenacao("relevancia");
   };
 
+  const versoesMinecraftFiltradas = versoesMinecraft.filter((versao) =>
+    versao.toLowerCase().includes(pesquisaVersao.trim().toLowerCase())
+  );
+
+  const selecionarVersaoMinecraft = (versao: string) => {
+    setVersaoMinecraft(versao);
+    setPesquisaVersao("");
+    setSeletorVersaoAberto(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
@@ -567,36 +594,105 @@ export default function Explore({
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
+              className={seletorVersaoAberto ? "overflow-visible" : "overflow-hidden"}
             >
               <div className="grid gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-3 md:grid-cols-3">
-                <div className="min-w-0">
+                <div className="order-2 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Minecraft
                   </span>
-                  <div className="relative">
-                    <select
-                      aria-label="Versão do Minecraft"
-                      value={versaoMinecraft}
-                      onChange={(evento) => setVersaoMinecraft(evento.target.value)}
+                  <div ref={seletorVersaoRef} className="relative">
+                    <div
                       className={cn(
-                        "w-full appearance-none rounded-xl border border-white/10 bg-[#171717]",
-                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50"
+                        "flex items-center rounded-xl border border-white/10 bg-[#171717]",
+                        "focus-within:border-emerald-500/50"
                       )}
                     >
-                      <option value="">Todas as versões</option>
-                      {versoesMinecraft.map((versao) => (
-                        <option key={versao} value={versao}>{versao}</option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      size={14}
-                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/35"
-                    />
+                      <Search size={13} className="ml-3 shrink-0 text-white/35" />
+                      <input
+                        type="text"
+                        role="combobox"
+                        aria-label="Pesquisar versão do Minecraft"
+                        aria-expanded={seletorVersaoAberto}
+                        aria-controls="opcoes-versao-minecraft"
+                        autoComplete="off"
+                        value={seletorVersaoAberto ? pesquisaVersao : versaoMinecraft}
+                        placeholder={versaoMinecraft || "Todas as versões"}
+                        onFocus={() => setSeletorVersaoAberto(true)}
+                        onChange={(evento) => {
+                          setPesquisaVersao(evento.target.value);
+                          setSeletorVersaoAberto(true);
+                        }}
+                        className="min-w-0 flex-1 bg-transparent px-2 py-2 text-xs font-bold text-white outline-none"
+                      />
+                      <button
+                        type="button"
+                        aria-label={seletorVersaoAberto ? "Fechar versões" : "Abrir versões"}
+                        onClick={() => {
+                          setPesquisaVersao("");
+                          setSeletorVersaoAberto((aberto) => !aberto);
+                        }}
+                        className="self-stretch px-3 text-white/35 transition-colors hover:text-white/70"
+                      >
+                        <ChevronDown
+                          size={14}
+                          className={cn("transition-transform", seletorVersaoAberto && "rotate-180")}
+                        />
+                      </button>
+                    </div>
+
+                    <AnimatePresence>
+                      {seletorVersaoAberto && (
+                        <motion.div
+                          id="opcoes-versao-minecraft"
+                          role="listbox"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className={cn(
+                            "scrollbar-custom absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto",
+                            "rounded-xl border border-white/10 bg-[#171717] p-1 shadow-2xl"
+                          )}
+                        >
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={!versaoMinecraft}
+                            onClick={() => selecionarVersaoMinecraft("")}
+                            className={cn(
+                              "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
+                              !versaoMinecraft && "bg-emerald-500/15 text-emerald-300"
+                            )}
+                          >
+                            Todas as versões
+                          </button>
+                          {versoesMinecraftFiltradas.map((versao) => (
+                            <button
+                              key={versao}
+                              type="button"
+                              role="option"
+                              aria-selected={versaoMinecraft === versao}
+                              onClick={() => selecionarVersaoMinecraft(versao)}
+                              className={cn(
+                                "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
+                                versaoMinecraft === versao && "bg-emerald-500/15 text-emerald-300"
+                              )}
+                            >
+                              {versao}
+                            </button>
+                          ))}
+                          {versoesMinecraftFiltradas.length === 0 && pesquisaVersao.trim() && (
+                            <p className="px-3 py-4 text-center text-xs text-white/40">
+                              Nenhuma versão encontrada.
+                            </p>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
 
-                <label className="min-w-0">
+                <label className="order-3 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Modloader
                   </span>
@@ -625,7 +721,7 @@ export default function Explore({
                   </div>
                 </label>
 
-                <div className="min-w-0">
+                <div className="order-1 min-w-0">
                   <span
                     className={cn(
                       "mb-1.5 flex items-center justify-between text-[10px] font-bold uppercase",
