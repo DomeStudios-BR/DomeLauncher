@@ -80,7 +80,8 @@ const Mods: React.FC<ModsProps> = ({ instance }) => {
       const results: any[] = await invoke('search_mods_online', {
         query: '',
         platform: plataformaAtiva,
-        contentType: 'mod'
+        contentType: 'mod',
+        filtros: null
       })
 
       const formattedResults: ProjectListEntry[] = results.slice(0, 20).map(result => ({
@@ -160,7 +161,8 @@ const Mods: React.FC<ModsProps> = ({ instance }) => {
       const results: any[] = await invoke('search_mods_online', {
         query,
         platform: platformParam,
-        contentType: 'mod'
+        contentType: 'mod',
+        filtros: null
       })
 
       console.log('Resultados recebidos:', results.length, results)

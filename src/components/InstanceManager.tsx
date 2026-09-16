@@ -681,6 +681,7 @@ export default function InstanceManager({
               query: termoBusca,
               platform: "modrinth",
               contentType: projectType,
+              filtros: null,
             });
 
             for (const resultado of resultadosBusca) {
@@ -992,10 +993,12 @@ export default function InstanceManager({
         query,
         platform: plataforma,
         contentType: tipoConteudo,
-        gameVersion: instanceDetails.version,
-        loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
-        offset: acumular ? searchResults.length : 0,
-        limit: 20,
+        filtros: {
+          gameVersion: instanceDetails.version,
+          loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
+          offset: acumular ? searchResults.length : 0,
+          limit: 20,
+        },
       });
 
       const pagina = resultados.map((item: any) => ({
