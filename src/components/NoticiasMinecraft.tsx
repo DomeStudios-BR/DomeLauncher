@@ -89,13 +89,13 @@ export function NoticiasMinecraft() {
             <motion.section
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.14 }}
+                transition={{ delay: 0.02 }}
                 className="space-y-3 pb-2"
             >
                 <div className="flex items-end justify-between gap-4">
                     <div>
                         <h2 className="font-['MinecraftTen','Sora',sans-serif] text-[14px] uppercase tracking-[0.28px] text-white/80">
-                            Últimas do Minecraft
+                            Notícias do Minecraft
                         </h2>
                     </div>
                     <Newspaper size={18} className="text-emerald-300/70" />
@@ -125,7 +125,7 @@ export function NoticiasMinecraft() {
                                 type="button"
                                 initial={{ opacity: 0, y: 8 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.16 + indice * 0.035 }}
+                                transition={{ delay: 0.04 + indice * 0.035 }}
                                 onClick={() => void abrirNoticia(noticia)}
                                 className="group relative min-h-36 overflow-hidden border border-white/10 bg-[#171717] text-left transition-colors hover:border-emerald-300/45"
                             >

@@ -1,13 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
-  ChevronRight,
-  Download,
-  Gamepad2,
   Globe,
   Loader2,
   MoreHorizontal,
-  Play,
-  Star,
+  Trash2,
   Wifi,
   WifiOff,
 } from "../iconesPixelados";
@@ -16,33 +12,7 @@ import { motion } from "framer-motion";
 import type { Instance } from "../hooks/useLauncher";
 import type { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
-import type { ProjetoConteudo, TipoProjetoConteudo } from "./ProjetoDetalheModal";
-import { obterImagemProjeto } from "../lib/imagemProjeto";
 import { NoticiasMinecraft } from "./NoticiasMinecraft";
-
-interface ResultadoBuscaApi {
-  project_id: string;
-  title: string;
-  description: string;
-  icon_url: string | null;
-  author: string;
-  downloads: number;
-  follows: number;
-  project_type: TipoProjetoConteudo;
-  slug: string;
-}
-
-interface ResultadoBusca {
-  id: string;
-  title: string;
-  description: string;
-  icon_url: string;
-  author: string;
-  downloads: number;
-  follows: number;
-  project_type: TipoProjetoConteudo;
-  slug: string;
-}
 
 interface ServerInfo {
   name: string;
@@ -92,12 +62,6 @@ function validarData(data: string): Date | null {
     return null;
   }
   return dataConvertida;
-}
-
-function formatarNumero(valor: number): string {
-  if (valor >= 1_000_000) return `${(valor / 1_000_000).toFixed(1)}M`;
-  if (valor >= 1_000) return `${(valor / 1_000).toFixed(1)}K`;
-  return valor.toString();
 }
 
 function tempoRelativo(data: string): string {
@@ -164,8 +128,7 @@ interface HomePageProps {
   onLaunch: (id: string) => void;
   onLaunchServer: (id: string, address: string) => void;
   onLogin: () => void;
-  onExplore: () => void;
-  onAbrirProjeto: (projeto: ProjetoConteudo) => void;
+  biblioteca: ReactNode;
 }
 
 export default function HomePage({
@@ -176,12 +139,8 @@ export default function HomePage({
   onLaunch,
   onLaunchServer,
   onLogin,
-  onExplore,
-  onAbrirProjeto,
+  biblioteca,
 }: HomePageProps) {
-  const [modpacks, setModpacks] = useState<ResultadoBusca[]>([]);
-  const [mods, setMods] = useState<ResultadoBusca[]>([]);
-  const [carregando, setCarregando] = useState(true);
   const instanciasRecentes = useMemo(
     () =>
       instances
@@ -195,47 +154,6 @@ export default function HomePage({
     [instances]
   );
 
-  useEffect(() => {
-    const buscar = async () => {
-      setCarregando(true);
-      try {
-        const [respostaModpacks, respostaMods] = await Promise.all([
-          fetch(
-            'https://api.modrinth.com/v2/search?facets=[["project_type:modpack"]]&limit=6&index=follows'
-          ),
-          fetch(
-            'https://api.modrinth.com/v2/search?facets=[["project_type:mod"]]&limit=6&index=follows'
-          ),
-        ]);
-
-        const dadosModpacks = (await respostaModpacks.json()) as { hits: ResultadoBuscaApi[] };
-        const dadosMods = (await respostaMods.json()) as { hits: ResultadoBuscaApi[] };
-
-        const mapearResultados = (hits: ResultadoBuscaApi[]): ResultadoBusca[] =>
-          hits.map((item) => ({
-            id: item.project_id,
-            title: item.title,
-            description: item.description,
-            icon_url: item.icon_url ?? "",
-            author: item.author,
-            downloads: item.downloads,
-            follows: item.follows,
-            project_type: item.project_type,
-            slug: item.slug,
-          }));
-
-        setModpacks(mapearResultados(dadosModpacks.hits ?? []));
-        setMods(mapearResultados(dadosMods.hits ?? []));
-      } catch (erro) {
-        console.error("Erro ao buscar conteúdo da Home:", erro);
-      } finally {
-        setCarregando(false);
-      }
-    };
-
-    buscar();
-  }, []);
-
   return (
     <div className="home-dome-figma space-y-8">
       <motion.div
@@ -247,6 +165,8 @@ export default function HomePage({
           {user ? `Bem vindo de volta, ${user.name}!` : "Bem vindo ao Dome Launcher!"}
         </h1>
       </motion.div>
+
+      <NoticiasMinecraft />
 
       {instanciasRecentes.length > 0 && (
         <SecaoVolteAJogar
@@ -271,35 +191,23 @@ export default function HomePage({
         />
       )}
 
-      <SecaoDestaque
-        titulo="Conheça modpacks"
-        itens={modpacks}
-        carregando={carregando}
-        delay={0.06}
-        onVerMais={onExplore}
-        onAbrirProjeto={(item) => onAbrirProjeto({ ...item, source: "modrinth" })}
-      />
-
-      <SecaoDestaque
-        titulo="Descubra mods"
-        itens={mods}
-        carregando={carregando}
-        delay={0.1}
-        onVerMais={onExplore}
-        onAbrirProjeto={(item) => onAbrirProjeto({ ...item, source: "modrinth" })}
-      />
-
-      <NoticiasMinecraft />
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="min-h-[calc(100vh-100px)] space-y-3"
+      >
+        <CabecalhoSecao titulo="Biblioteca" />
+        {biblioteca}
+      </motion.section>
     </div>
   );
 }
 
 function CabecalhoSecao({
   titulo,
-  onVerMais,
 }: {
   titulo: string;
-  onVerMais?: () => void;
 }) {
   return (
     <div className="flex items-center justify-between">
@@ -307,15 +215,6 @@ function CabecalhoSecao({
         {titulo}
       </h2>
 
-      {onVerMais && (
-        <button
-          onClick={onVerMais}
-          className="flex items-center gap-1 text-[13px] text-white/65 transition-colors hover:text-white/90"
-        >
-          Ver mais
-          <ChevronRight size={12} />
-        </button>
-      )}
     </div>
   );
 }
@@ -581,9 +480,24 @@ function SecaoVolteAJogar({
     | { tipo: "mundo"; instancia: Instance; mundo: MundoInfo }
     | { tipo: "servidor"; instancia: Instance; servidor: ServerInfo };
 
+  const chaveItemVolteAJogar = (item: ItemVolteAJogar) => item.tipo === "instancia"
+    ? `instancia-${item.instancia.id}`
+    : item.tipo === "mundo"
+      ? `mundo-${item.instancia.id}-${item.mundo.path}`
+      : `servidor-${item.instancia.id}-${item.servidor.address}-${item.servidor.port}`;
+
   const [itensVolteAJogar, setItensVolteAJogar] = useState<ItemVolteAJogar[]>(
     []
   );
+  const [menuItemAberto, setMenuItemAberto] = useState<string | null>(null);
+  const [itensOcultos, setItensOcultos] = useState<Set<string>>(() => {
+    try {
+      const salvos = JSON.parse(localStorage.getItem("dome:volte-a-jogar:ocultos") || "[]");
+      return new Set(Array.isArray(salvos) ? salvos.filter((item) => typeof item === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [statusServidores, setStatusServidores] = useState<
     Record<string, { online: boolean; erro?: string; ping?: number; icon?: string | null }>
   >({});
@@ -648,7 +562,9 @@ function SecaoVolteAJogar({
       const itensOrdenados = [...itensPrioritarios, ...itensFallback];
 
       if (!cancelado) {
-        setItensVolteAJogar(itensOrdenados.slice(0, 6));
+        setItensVolteAJogar(
+          itensOrdenados.filter((item) => !itensOcultos.has(chaveItemVolteAJogar(item))).slice(0, 6)
+        );
       }
     };
 
@@ -657,7 +573,18 @@ function SecaoVolteAJogar({
     return () => {
       cancelado = true;
     };
-  }, [instances]);
+  }, [instances, itensOcultos]);
+
+  const removerDeVolteAJogar = (item: ItemVolteAJogar) => {
+    const chave = chaveItemVolteAJogar(item);
+    setItensOcultos((anteriores) => {
+      const atualizados = new Set(anteriores);
+      atualizados.add(chave);
+      localStorage.setItem("dome:volte-a-jogar:ocultos", JSON.stringify([...atualizados]));
+      return atualizados;
+    });
+    setMenuItemAberto(null);
+  };
 
   useEffect(() => {
     let cancelado = false;
@@ -717,7 +644,7 @@ function SecaoVolteAJogar({
     <motion.section
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.02 }}
+      transition={{ delay: 0.06 }}
       className="space-y-3"
     >
       <CabecalhoSecao titulo="Volte a jogar" />
@@ -731,12 +658,7 @@ function SecaoVolteAJogar({
               ? statusServidores[chaveServidor(instancia.id, item.servidor)]
               : undefined;
 
-          const chaveItem =
-            item.tipo === "instancia"
-              ? `instancia-${instancia.id}`
-              : item.tipo === "mundo"
-                ? `mundo-${instancia.id}-${item.mundo.path}`
-                : `servidor-${instancia.id}-${item.servidor.address}-${item.servidor.port}`;
+          const chaveItem = chaveItemVolteAJogar(item);
 
           return (
             <motion.article
@@ -855,16 +777,35 @@ function SecaoVolteAJogar({
                   {item.tipo === "servidor" ? "Abrir" : "Jogar"}
                 </button>
 
-                <button
-                  onClick={(evento) => {
-                    evento.stopPropagation();
-                    onSelectInstance(instancia);
-                  }}
-                  className="text-white/35 transition-colors hover:text-white/70"
-                  title="Abrir detalhes da instância"
-                >
-                  <MoreHorizontal size={14} />
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={(evento) => {
+                      evento.stopPropagation();
+                      setMenuItemAberto((atual) => atual === chaveItem ? null : chaveItem);
+                    }}
+                    className="p-1 text-white/35 transition-colors hover:bg-white/5 hover:text-white/70"
+                    title="Mais opções"
+                    aria-expanded={menuItemAberto === chaveItem}
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                  {menuItemAberto === chaveItem && (
+                    <div
+                      className="absolute right-0 top-full z-30 mt-2 w-52 border border-white/12 bg-[#171717] p-1 shadow-2xl"
+                      onClick={(evento) => evento.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => removerDeVolteAJogar(item)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-white/70 transition-colors hover:bg-red-400/10 hover:text-red-300"
+                      >
+                        <Trash2 size={13} />
+                        Remover de Volte a jogar
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {item.tipo === "servidor" && !status?.online && status?.erro && (
@@ -876,89 +817,6 @@ function SecaoVolteAJogar({
           );
         })}
       </div>
-    </motion.section>
-  );
-}
-
-function SecaoDestaque({
-  titulo,
-  itens,
-  carregando,
-  delay,
-  onVerMais,
-  onAbrirProjeto,
-}: {
-  titulo: string;
-  itens: ResultadoBusca[];
-  carregando: boolean;
-  delay: number;
-  onVerMais: () => void;
-  onAbrirProjeto: (item: ResultadoBusca) => void;
-}) {
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay }}
-      className="space-y-3"
-    >
-      <CabecalhoSecao titulo={titulo} onVerMais={onVerMais} />
-
-      {carregando ? (
-        <div className="flex items-center gap-2 py-5 text-white/65">
-          <Loader2 size={14} className="animate-spin" />
-          <span className="font-['MinecraftSeven','Sora',sans-serif] text-[12px]">
-            Carregando...
-          </span>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {itens.slice(0, 3).map((item) => (
-            <article
-              key={item.id}
-              onClick={() => onAbrirProjeto(item)}
-              className="cursor-pointer border border-white/10 bg-[rgba(255,255,255,0.03)] p-[13px] transition-colors hover:border-white/20"
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 overflow-hidden bg-black/30">
-                  <img
-                    src={obterImagemProjeto(item.icon_url, item.project_type, item.id)}
-                    alt={item.title}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-['MinecraftTen','Sora',sans-serif] text-[14px] tracking-[0.28px] text-white">
-                    {item.title}
-                  </p>
-                  <span className="flex items-center gap-1 font-['MinecraftSeven','Sora',sans-serif] text-[12px] text-white/70">
-                    <Gamepad2 size={10} />
-                    {item.author}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-[9px] border-t border-white/10 pt-[9px]">
-                <div className="flex items-center gap-3 font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/65">
-                  <span className="flex items-center gap-1">
-                    <Download size={9} />
-                    {formatarNumero(item.downloads)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Star size={9} />
-                    {formatarNumero(item.follows)}
-                  </span>
-                  <span className="ml-auto flex items-center gap-1 text-white/70">
-                    <Play size={9} fill="currentColor" />
-                    Abrir
-                  </span>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
     </motion.section>
   );
 }

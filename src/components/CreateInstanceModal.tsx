@@ -3,10 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronDown, Pencil, Search } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "../lib/utils";
-import {
-  EXTENSOES_IMAGEM_INSTANCIA,
-  prepararIconeInstancia,
-} from "../lib/iconeInstancia";
+import EditorIconeModal, { gerarIconeAleatorio } from "./editor-icone/EditorIconeModal";
 import {
   addCreatingInstance,
   updateCreatingInstance,
@@ -47,8 +44,8 @@ export default function CreateInstanceModal({
   const [versionSearch, setVersionSearch] = useState("");
   const [versionSearchChanged, setVersionSearchChanged] = useState(false);
   const [customIcon, setCustomIcon] = useState<string | null>(null);
+  const [editorIconeAberto, setEditorIconeAberto] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
-  const iconInputRef = useRef<HTMLInputElement>(null);
 
   // Carregar versões do Minecraft
   useEffect(() => {
@@ -129,6 +126,9 @@ export default function CreateInstanceModal({
       setIsVersionOpen(false);
       setVersionSearchChanged(false);
       setCustomIcon(null);
+      void gerarIconeAleatorio().then(setCustomIcon).catch((erro) => {
+        console.error("Erro ao gerar ícone inicial:", erro);
+      });
     }
   }, [isOpen]);
 
@@ -191,18 +191,6 @@ export default function CreateInstanceModal({
     }
   };
 
-  const handleIconChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    try {
-      setCustomIcon(await prepararIconeInstancia(file));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível preparar a imagem.");
-    }
-  };
-
   if (!isOpen) return null;
 
   const handleCreate = async () => {
@@ -219,7 +207,7 @@ export default function CreateInstanceModal({
       status: "downloading",
       progress: 0,
       message: "Iniciando download...",
-      icon: customIcon || `https://api.dicebear.com/9.x/shapes/svg?seed=${instanceId}`,
+      icon: customIcon || "/dome.png",
     };
     addCreatingInstance(creatingInstance);
 
@@ -228,7 +216,7 @@ export default function CreateInstanceModal({
 
     // Criar em background
     try {
-      const params: any = { name, version, mcType: loader, icon: customIcon };
+      const params: any = { name, version, mcType: loader, icon: customIcon || "/dome.png" };
       if (loader !== "vanilla") {
         params.loaderType = loader;
         params.loaderVersion = loaderVersion;
@@ -282,25 +270,18 @@ export default function CreateInstanceModal({
           {/* Icon + Name */}
           <div className="flex gap-4">
             <div className="relative group">
-              <input
-                ref={iconInputRef}
-                type="file"
-                accept={EXTENSOES_IMAGEM_INSTANCIA}
-                onChange={(event) => void handleIconChange(event)}
-                className="hidden"
-              />
               <div className="w-16 h-16 rounded-xl bg-linear-to-br from-emerald-500/20 to-orange-500/20 border border-white/10 overflow-hidden">
                 <img
-                  src={customIcon || `https://api.dicebear.com/9.x/shapes/svg?seed=${name || "default"}`}
+                  src={customIcon || "/dome.png"}
                   alt=""
                   className="w-full h-full object-cover"
                 />
               </div>
               <button
                 type="button"
-                onClick={() => iconInputRef.current?.click()}
-                aria-label="Alterar imagem da instância"
-                title="Alterar imagem"
+                onClick={() => setEditorIconeAberto(true)}
+                aria-label="Abrir editor de ícone"
+                title="Criar ícone"
                 className="absolute -bottom-1 -right-1 w-6 h-6 bg-white/10 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors"
               >
                 <Pencil size={12} className="text-white/60" />
@@ -513,6 +494,12 @@ export default function CreateInstanceModal({
           </button>
         </div>
       </motion.div>
+      <EditorIconeModal
+        aberto={editorIconeAberto}
+        iconeAtual={customIcon}
+        aoFechar={() => setEditorIconeAberto(false)}
+        aoSalvar={setCustomIcon}
+      />
     </div>
   );
 }
