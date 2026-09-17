@@ -30,6 +30,8 @@ pub fn run() {
             super::importacao_exportacao::listar_instancias_importaveis,
             super::importacao_exportacao::importar_instancias_externas,
             super::instancias_criacao::create_instance,
+            super::instancias_criacao::migrar_versao_instancia,
+            super::sincronizacao_instancias::aplicar_sincronizacao_instancias,
             super::lancamento_jogo::launch_instance,
             super::lancamento_jogo::launch_instance_to_server,
             super::instancias_basicas::get_minecraft_versions,

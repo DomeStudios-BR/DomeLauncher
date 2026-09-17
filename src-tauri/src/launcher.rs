@@ -578,6 +578,62 @@ impl LauncherState {
         });
     }
 
+    pub fn iniciar_monitoramento_processo(
+        &self,
+        instance_id: &str,
+        mut processo: std::process::Child,
+    ) {
+        let instance_id = instance_id.to_string();
+        let pid = processo.id();
+
+        let Ok(instances_path) = self.caminho_instancias() else {
+            eprintln!("[Instâncias] Falha ao acessar a pasta durante o monitoramento.");
+            return;
+        };
+        self.registrar_processo_instancia(&instance_id, pid);
+        let processos_instancias = Arc::clone(&self.processos_instancias);
+
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut ultimo_tick = chrono::Utc::now();
+
+            loop {
+                match processo.try_wait() {
+                    Ok(Some(_)) | Err(_) => {
+                        let _ = Self::atualizar_tempo_jogado_instancia_por_caminho(
+                            &instances_path,
+                            &instance_id,
+                            true,
+                            true,
+                        );
+                        if let Ok(mut processos) = processos_instancias.lock() {
+                            if processos.get(&instance_id).copied() == Some(pid) {
+                                processos.remove(&instance_id);
+                            }
+                        }
+                        break;
+                    }
+                    Ok(None) => {}
+                }
+
+                if chrono::Utc::now()
+                    .signed_duration_since(ultimo_tick)
+                    .num_seconds()
+                    >= 60
+                {
+                    let _ = Self::atualizar_tempo_jogado_instancia_por_caminho(
+                        &instances_path,
+                        &instance_id,
+                        false,
+                        false,
+                    );
+                    ultimo_tick = chrono::Utc::now();
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        });
+    }
+
     fn calcular_duracao_sessao_segundos(
         sessao_iniciada_em: &str,
         agora: &chrono::DateTime<chrono::Utc>,

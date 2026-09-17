@@ -54,6 +54,7 @@ import {
   type PublicacaoInstanciaSocial,
 } from "../lib/eventosTransferenciaSocial";
 import ModalAnaliseModpack from "./social/ModalAnaliseModpack";
+import MigrarVersaoInstanciaModal from "./MigrarVersaoInstanciaModal";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -277,6 +278,7 @@ export default function LibraryPage({
   const [modpacksPorInstancia, setModpacksPorInstancia] = useState<Record<string, ModpackInstalado>>({});
   const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
   const [modalAnalise, setModalAnalise] = useState<{ instancia: Instance; modpack: ModpackInstalado } | null>(null);
+  const [instanciaMigracao, setInstanciaMigracao] = useState<Instance | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Salvar estado ao mudar
@@ -1478,6 +1480,14 @@ export default function LibraryPage({
                       Trocar versão do modpack
                     </ItemMenuContextual>
                   )}
+                  {!modpack && (
+                    <ItemMenuContextual icone={<RefreshCw size={13} />} onClick={() => {
+                      setMenuContexto(null);
+                      setInstanciaMigracao(instancia);
+                    }}>
+                      Trocar versão
+                    </ItemMenuContextual>
+                  )}
                   {modpack && (
                     <ItemMenuContextual icone={<Star size={13} />} onClick={() => {
                       setMenuContexto(null);
@@ -1654,6 +1664,11 @@ export default function LibraryPage({
           </MenuContextual>
         )}
       </AnimatePresence>
+      <MigrarVersaoInstanciaModal
+        instancia={instanciaMigracao}
+        onClose={() => setInstanciaMigracao(null)}
+        onMigrada={onAtualizarInstancias}
+      />
 
       {modalAnalise && (
         <ModalAnaliseModpack

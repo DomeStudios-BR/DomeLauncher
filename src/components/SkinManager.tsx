@@ -48,6 +48,24 @@ interface SkinSalva {
 const CHAVE_SKINS_SALVAS = "dome-skins-salvas";
 const CHAVE_MODO_SEGURO_SKINS = "dome-skins-modo-seguro";
 
+function salvarSkinsSalvas(skins: SkinSalva[]): boolean {
+  try {
+    localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(skins));
+    return true;
+  } catch (erro) {
+    console.warn("Não foi possível persistir as skins salvas:", erro);
+    return false;
+  }
+}
+
+function modoSeguroSalvo(): boolean {
+  try {
+    return localStorage.getItem(CHAVE_MODO_SEGURO_SKINS) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function carregarSkinsSalvas(): SkinSalva[] {
   try {
     const valor = localStorage.getItem(CHAVE_SKINS_SALVAS);
@@ -105,12 +123,14 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [skinEditandoId, setSkinEditandoId] = useState<string | null>(null);
   const [skinAtualId, setSkinAtualId] = useState<string | null>(null);
   const [menuSkin, setMenuSkin] = useState<{ skin: SkinSalva; x: number; y: number } | null>(null);
-  const [modoSeguro3d, setModoSeguro3d] = useState(
-    () => localStorage.getItem(CHAVE_MODO_SEGURO_SKINS) === "true",
-  );
+  const [modoSeguro3d, setModoSeguro3d] = useState(modoSeguroSalvo);
 
   const ativarModoSeguro3d = useCallback(() => {
-    localStorage.setItem(CHAVE_MODO_SEGURO_SKINS, "true");
+    try {
+      localStorage.setItem(CHAVE_MODO_SEGURO_SKINS, "true");
+    } catch {
+      // O modo seguro continua válido nesta sessão mesmo sem persistência do WebView.
+    }
     setModoSeguro3d(true);
   }, []);
 
@@ -181,7 +201,7 @@ export function SkinManager({ user }: SkinManagerProps) {
           salvaEm: Date.now(),
         };
         const lista = [atualizada, ...atuais.filter((skin) => skin.id !== idAtual)].slice(0, 12);
-        localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(lista));
+        salvarSkinsSalvas(lista);
         return lista;
       });
     } catch (erro) {
@@ -287,7 +307,7 @@ export function SkinManager({ user }: SkinManagerProps) {
   const persistirSkinsSalvas = (criarLista: (atuais: SkinSalva[]) => SkinSalva[]) => {
     setSkinsSalvas((atuais) => {
       const limitadas = criarLista(atuais).slice(0, 12);
-      localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(limitadas));
+      salvarSkinsSalvas(limitadas);
       return limitadas;
     });
   };

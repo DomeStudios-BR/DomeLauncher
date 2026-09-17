@@ -1582,8 +1582,15 @@
 
 .perfil-comunidade .comentario-meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+
+.perfil-comunidade .comentario-emblema-destaque {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .perfil-comunidade .comentario-meta strong {

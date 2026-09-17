@@ -39,6 +39,22 @@ interface GlobalSettings {
   discord_rpc_ativo: boolean;
   cor_destaque: string;
   instances_path: string;
+  sincronizacao_instancias: ConfiguracaoSincronizacao;
+}
+
+interface ConfiguracaoSincronizacao {
+  instancia_origem_id: string | null;
+  configuracoes: boolean;
+  opcoes: boolean;
+  texturas: boolean;
+  shaders: boolean;
+  servidores: boolean;
+}
+
+interface InstanciaSincronizavel {
+  id: string;
+  name: string;
+  version: string;
 }
 
 interface JavaInfo {
@@ -92,6 +108,14 @@ export default function Settings() {
     discord_rpc_ativo: true,
     cor_destaque: "#10B981",
     instances_path: "",
+    sincronizacao_instancias: {
+      instancia_origem_id: null,
+      configuracoes: false,
+      opcoes: false,
+      texturas: false,
+      shaders: false,
+      servidores: false,
+    },
   });
 
   const [javas, setJavas] = useState<JavaInfo[]>([]);
@@ -104,6 +128,9 @@ export default function Settings() {
   const [javaAberto, setJavaAberto] = useState(true);
   const [codigoCor, setCodigoCor] = useState("#10B981");
   const [selecionandoPasta, setSelecionandoPasta] = useState(false);
+  const [instancias, setInstancias] = useState<InstanciaSincronizavel[]>([]);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [mensagemSync, setMensagemSync] = useState<string | null>(null);
   const ignorarPrimeiraPersistencia = useRef(true);
   const configuracoesAtuais = useRef(settings);
   const alteracoesPendentes = useRef(false);
@@ -117,9 +144,10 @@ export default function Settings() {
   const carregarDados = async () => {
     setCarregando(true);
     try {
-      const [cfg, ram] = await Promise.all([
+      const [cfg, ram, instanciasDisponiveis] = await Promise.all([
         invoke<GlobalSettings>("get_settings"),
         invoke<number>("get_system_ram"),
+        invoke<InstanciaSincronizavel[]>("get_instances"),
       ]);
       const configuracoesCarregadas = {
         ...cfg,
@@ -130,6 +158,7 @@ export default function Settings() {
       setSettings(configuracoesCarregadas);
       setCodigoCor(configuracoesCarregadas.cor_destaque);
       setSystemRam(ram);
+      setInstancias(instanciasDisponiveis);
       detectarJavas();
     } catch (e) {
       console.error("Erro ao carregar configurações:", e);
@@ -251,6 +280,31 @@ export default function Settings() {
     setCodigoCor(codigo);
     if (ehCorHexValida(codigo)) {
       atualizarConfig("cor_destaque", codigo);
+    }
+  };
+
+  const atualizarSync = <K extends keyof ConfiguracaoSincronizacao>(
+    chave: K,
+    valor: ConfiguracaoSincronizacao[K],
+  ) => {
+    atualizarConfig("sincronizacao_instancias", {
+      ...configuracoesAtuais.current.sincronizacao_instancias,
+      [chave]: valor,
+    });
+    setMensagemSync(null);
+  };
+
+  const aplicarSyncAgora = async () => {
+    setSincronizando(true);
+    setMensagemSync(null);
+    try {
+      await persistirConfiguracoes(configuracoesAtuais.current, true);
+      const quantidade = await invoke<number>("aplicar_sincronizacao_instancias");
+      setMensagemSync(`Sincronização aplicada em ${quantidade} instância${quantidade === 1 ? "" : "s"}.`);
+    } catch (e: unknown) {
+      setErro(`Não foi possível sincronizar: ${e}`);
+    } finally {
+      setSincronizando(false);
     }
   };
 
@@ -688,6 +742,59 @@ export default function Settings() {
         </div>
       </Secao>
 
+        <Secao
+          icone={<RefreshCw className="text-emerald-400" size={20} />}
+          titulo="Sincronização entre instâncias"
+          descricao="Use uma instância como base para as demais"
+        >
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-white/70">Instância de origem</label>
+            <select
+              value={settings.sincronizacao_instancias.instancia_origem_id ?? ""}
+              onChange={(e) => atualizarSync("instancia_origem_id", e.target.value || null)}
+              className="h-11 w-full border border-white/10 bg-[#101011] px-3 text-sm text-white"
+            >
+              <option value="">Selecione uma instância</option>
+              {instancias.map((instancia) => (
+                <option key={instancia.id} value={instancia.id}>
+                  {instancia.name} — {instancia.version}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs leading-relaxed text-white/35">
+              Os itens escolhidos serão copiados desta instância para as atuais e para todas as novas instâncias.
+            </p>
+          </div>
+
+          <div className="space-y-2 border-t border-white/5 pt-4">
+            {([
+              ["configuracoes", "Configurações de mods", "Pasta config"],
+              ["opcoes", "Opções do Minecraft", "Keybinds, sensibilidade e outras opções do arquivo options.txt"],
+              ["texturas", "Pacotes de textura", "Pasta resourcepacks"],
+              ["shaders", "Shaders", "Pasta shaderpacks"],
+              ["servidores", "Servidores", "Arquivo servers.dat"],
+            ] as const).map(([chave, titulo, descricao]) => (
+              <ToggleItem
+                key={chave}
+                titulo={titulo}
+                descricao={descricao}
+                ativo={settings.sincronizacao_instancias[chave]}
+                onChange={(valor) => atualizarSync(chave, valor)}
+              />
+            ))}
+          </div>
+
+          {mensagemSync && <p className="text-xs font-medium text-emerald-300">{mensagemSync}</p>}
+          <button
+            type="button"
+            disabled={sincronizando || !settings.sincronizacao_instancias.instancia_origem_id}
+            onClick={() => void aplicarSyncAgora()}
+            className="flex items-center gap-2 bg-emerald-400 px-4 py-3 text-xs font-black text-black disabled:opacity-40"
+          >
+            <RefreshCw size={14} className={sincronizando ? "animate-spin" : ""} />
+            {sincronizando ? "Aplicando..." : "Aplicar em todas agora"}
+          </button>
+        </Secao>
       </div>
     </div>
   );

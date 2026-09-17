@@ -34,6 +34,18 @@ pub struct GlobalSettings {
     pub discord_rpc_ativo: bool,
     pub cor_destaque: String,
     pub instances_path: String,
+    pub sincronizacao_instancias: ConfiguracaoSincronizacaoInstancias,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ConfiguracaoSincronizacaoInstancias {
+    pub instancia_origem_id: Option<String>,
+    pub configuracoes: bool,
+    pub opcoes: bool,
+    pub texturas: bool,
+    pub shaders: bool,
+    pub servidores: bool,
 }
 
 impl Default for GlobalSettings {
@@ -61,6 +73,7 @@ impl Default for GlobalSettings {
             discord_rpc_ativo: true,
             cor_destaque: "#10B981".to_string(),
             instances_path: get_default_instances_path().to_string_lossy().to_string(),
+            sincronizacao_instancias: ConfiguracaoSincronizacaoInstancias::default(),
         }
     }
 }

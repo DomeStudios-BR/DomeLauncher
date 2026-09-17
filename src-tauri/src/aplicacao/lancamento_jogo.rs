@@ -112,6 +112,7 @@ async fn launch_instance_com_opcoes(
     let account = obter_conta_valida_para_launch(state).await?;
 
     let instance_path = caminho_instancia_por_id(state, &id)?;
+    super::sincronizacao_instancias::aplicar_sincronizacao_antes_de_jogar(&instance_path)?;
 
     // 0. Carregar informações da instância
     let instance_config_path = instance_path.join("instance.json");
@@ -361,7 +362,7 @@ async fn launch_instance_com_opcoes(
 
     let mut comando_java = std::process::Command::new(&java_exe);
     comando_java.args(&args).current_dir(&instance_path);
-    let mut pid_iniciado: Option<u32> = None;
+    let processo_iniciado: std::process::Child;
 
     #[cfg(windows)]
     {
@@ -372,11 +373,8 @@ async fn launch_instance_com_opcoes(
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         comando_java.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 
-        let resultado_spawn = match comando_java.spawn() {
-            Ok(child) => {
-                pid_iniciado = Some(child.id());
-                Ok(())
-            }
+        processo_iniciado = match comando_java.spawn() {
+            Ok(child) => child,
             Err(erro) if erro.raw_os_error() == Some(5) => {
                 eprintln!(
                     "[Launch] Aviso: criação destacada bloqueada (acesso negado). Tentando fallback padrão."
@@ -384,39 +382,33 @@ async fn launch_instance_com_opcoes(
 
                 let mut comando_fallback = std::process::Command::new(&java_exe);
                 comando_fallback.args(&args).current_dir(&instance_path);
-                let child = comando_fallback.spawn().map_err(|e| {
+                comando_fallback.spawn().map_err(|e| {
                     format!(
                         "Falha ao iniciar Java ({}): {}. Verifique suas configurações de Java.",
                         java_exe, e
                     )
-                })?;
-                pid_iniciado = Some(child.id());
-                Ok(())
+                })?
             }
-            Err(erro) => Err(format!(
-                "Falha ao iniciar Java ({}): {}. Verifique suas configurações de Java.",
-                java_exe, erro
-            )),
+            Err(erro) => {
+                return Err(format!(
+                    "Falha ao iniciar Java ({}): {}. Verifique suas configurações de Java.",
+                    java_exe, erro
+                ))
+            }
         };
-
-        resultado_spawn?;
     }
 
     #[cfg(not(windows))]
     {
-        let child = comando_java.spawn().map_err(|e| {
+        processo_iniciado = comando_java.spawn().map_err(|e| {
             format!(
                 "Falha ao iniciar Java ({}): {}. Verifique suas configurações de Java.",
                 java_exe, e
             )
         })?;
-        pid_iniciado = Some(child.id());
     }
 
-    if let Some(pid) = pid_iniciado {
-        state.registrar_processo_instancia(&id, pid);
-        state.iniciar_monitoramento_tempo_jogado(&id, pid);
-    }
+    state.iniciar_monitoramento_processo(&id, processo_iniciado);
 
     Ok(())
 }

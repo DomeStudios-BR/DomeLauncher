@@ -30,6 +30,7 @@ import Favorites from "./components/Favorites";
 import LibraryPage from "./components/LibraryPage";
 import HomePage from "./components/HomePage";
 import SettingsPage from "./components/Settings";
+import { LimiteErroSkins } from "./components/LimiteErroSkins";
 import InstanceManager from "./components/InstanceManager";
 import SocialSidebar from "./components/SocialSidebar";
 import { EsqueletoAba } from "./components/EsqueletoCarregamento";
@@ -45,9 +46,24 @@ import {
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
 const carregarProjetoDetalheModal = () => import("./components/ProjetoDetalheModal");
-const SkinManager = lazy(carregarSkinManager);
 const ProjetoDetalheModal = lazy(carregarProjetoDetalheModal);
 const PerfilComunidade = lazy(() => import("./components/PerfilComunidade"));
+
+function TelaSkinsRecuperavel({ user }: { user: MinecraftAccount | null }) {
+  const [tentativa, setTentativa] = useState(0);
+  const GerenciadorSkins = useMemo(() => lazy(carregarSkinManager), [tentativa]);
+
+  return (
+    <LimiteErroSkins
+      tentativa={tentativa}
+      onTentarNovamente={() => setTentativa((valor) => valor + 1)}
+    >
+      <Suspense fallback={<EsqueletoAba />}>
+        <GerenciadorSkins user={user} />
+      </Suspense>
+    </LimiteErroSkins>
+  );
+}
 
 export interface MinecraftAccount {
   uuid: string;
@@ -230,6 +246,7 @@ export default function App() {
   const [painelSocialRecuado, setPainelSocialRecuado] = useState(true);
   const ehTelaXl = useBreakpointXl();
   const ultimaAssinaturaPresence = useRef<string>("");
+  const falhasDeteccaoExecucao = useRef<Record<string, number>>({});
   const menuContaRef = useRef<HTMLDivElement | null>(null);
   const alterarAba = useCallback((aba: string) => {
     startTransition(() => setActiveTab(aba));
@@ -297,6 +314,23 @@ export default function App() {
 
     window.addEventListener("keydown", navegarPeloTeclado);
     return () => window.removeEventListener("keydown", navegarPeloTeclado);
+  }, [avancarNavegacao, historicoNavegacao, voltarNavegacao]);
+
+  useEffect(() => {
+    const navegarPeloMouse = (evento: MouseEvent) => {
+      if (evento.button === 3 && historicoNavegacao.anteriores.length > 0) {
+        evento.preventDefault();
+        voltarNavegacao();
+      }
+
+      if (evento.button === 4 && historicoNavegacao.proximas.length > 0) {
+        evento.preventDefault();
+        avancarNavegacao();
+      }
+    };
+
+    window.addEventListener("mousedown", navegarPeloMouse, true);
+    return () => window.removeEventListener("mousedown", navegarPeloMouse, true);
   }, [avancarNavegacao, historicoNavegacao, voltarNavegacao]);
 
   useEffect(() => {
@@ -597,6 +631,17 @@ export default function App() {
         idsInstancias.map((id) => [id, Boolean(mapa?.[id])])
       );
       setMapaExecucao((anterior) => {
+        for (const id of idsInstancias) {
+          if (mapaNormalizado[id]) {
+            falhasDeteccaoExecucao.current[id] = 0;
+            continue;
+          }
+          if (anterior[id]) {
+            const falhas = (falhasDeteccaoExecucao.current[id] ?? 0) + 1;
+            falhasDeteccaoExecucao.current[id] = falhas;
+            if (falhas < 2) mapaNormalizado[id] = true;
+          }
+        }
         const houveEncerramento = idsInstancias.some(
           (id) => Boolean(anterior[id]) && !Boolean(mapaNormalizado[id])
         );
@@ -795,6 +840,7 @@ export default function App() {
     setInstanciaSendoEncerrada(id);
     try {
       await invoke("kill_instance", { instanceId: id });
+      falhasDeteccaoExecucao.current[id] = 2;
       setMapaExecucao((anterior) => ({ ...anterior, [id]: false }));
       await fetchInstances();
       await verificarInstanciasEmExecucao();
@@ -1523,7 +1569,7 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
               >
-                <SkinManager user={user} />
+                <TelaSkinsRecuperavel user={user} />
               </motion.div>
             )}
 

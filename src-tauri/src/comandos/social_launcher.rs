@@ -209,6 +209,8 @@ pub struct ComentarioPerfilLauncherApi {
     pub autor_perfil_id: String,
     pub autor_nome: String,
     pub autor_avatar_url: Option<String>,
+    #[serde(default)]
+    pub emblema_destaque: Option<EmblemaSocialLauncherApi>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -237,8 +239,28 @@ pub struct PerfilSocialLauncherApi {
     pub banner_perfil_url: Option<String>,
     #[serde(default)]
     pub capturas_favoritas: Vec<CapturaFavoritaPerfilLauncherApi>,
+    #[serde(default)]
+    pub bio: String,
+    #[serde(default)]
+    pub instancias_recentes: Vec<InstanciaPublicaPerfilLauncherApi>,
+    #[serde(default)]
+    pub instancias_favoritas: Vec<InstanciaPublicaPerfilLauncherApi>,
+    #[serde(default)]
+    pub amigos: Vec<AmigoLauncherApi>,
     pub criado_em: String,
     pub atualizado_em: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanciaPublicaPerfilLauncherApi {
+    pub id: String,
+    pub nome: String,
+    pub versao: String,
+    pub carregador: String,
+    pub icone_url: Option<String>,
+    pub horas_jogadas: f64,
+    pub ultima_vez: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -530,6 +552,17 @@ pub struct CapturaApresentacaoLauncherApi {
     pub dados_url: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApresentacaoPerfilLauncherApi {
+    pub banner_dados_url: Option<String>,
+    pub capturas: Vec<CapturaApresentacaoLauncherApi>,
+    pub emblemas_exibidos_ids: Vec<String>,
+    pub bio: String,
+    pub instancias_recentes: Vec<InstanciaPublicaPerfilLauncherApi>,
+    pub instancias_favoritas: Vec<InstanciaPublicaPerfilLauncherApi>,
+}
+
 fn decodificar_imagem_dados(dados_url: &str) -> Result<(String, Vec<u8>), String> {
     let (cabecalho, conteudo) = dados_url.split_once(',').ok_or("Imagem inválida.")?;
     let tipo = cabecalho
@@ -578,19 +611,20 @@ async fn enviar_midia_perfil(
 pub async fn save_launcher_profile_presentation(
     api_base_url: String,
     access_token: String,
-    banner_dados_url: Option<String>,
-    capturas: Vec<CapturaApresentacaoLauncherApi>,
-    emblemas_exibidos_ids: Vec<String>,
+    apresentacao: ApresentacaoPerfilLauncherApi,
 ) -> Result<PerfilSocialLauncherApi, String> {
     let api_base = normalizar_api_base_url(&api_base_url)?;
     let token = normalizar_token_social(&access_token)?;
     let cliente = criar_cliente_http_launcher()?;
-    let banner_perfil_url = match banner_dados_url.filter(|valor| !valor.is_empty()) {
+    let banner_perfil_url = match apresentacao
+        .banner_dados_url
+        .filter(|valor| !valor.is_empty())
+    {
         Some(valor) => Some(enviar_midia_perfil(&cliente, &api_base, &token, &valor).await?),
         None => None,
     };
     let mut capturas_favoritas = Vec::new();
-    for captura in capturas.into_iter().take(3) {
+    for captura in apresentacao.capturas.into_iter().take(3) {
         let imagem_url =
             enviar_midia_perfil(&cliente, &api_base, &token, &captura.dados_url).await?;
         capturas_favoritas.push(serde_json::json!({
@@ -606,7 +640,10 @@ pub async fn save_launcher_profile_presentation(
         .json(&serde_json::json!({
             "bannerPerfilUrl": banner_perfil_url,
             "capturasFavoritas": capturas_favoritas,
-            "emblemasExibidosIds": emblemas_exibidos_ids
+            "emblemasExibidosIds": apresentacao.emblemas_exibidos_ids,
+            "bio": apresentacao.bio,
+            "instanciasRecentes": apresentacao.instancias_recentes,
+            "instanciasFavoritas": apresentacao.instancias_favoritas
         }))
         .send()
         .await

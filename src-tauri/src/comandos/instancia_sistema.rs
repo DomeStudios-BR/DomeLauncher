@@ -123,16 +123,9 @@ fn obter_mapa_instancias_em_execucao(
             continue;
         }
 
-        if let Some(pid) = state.obter_pid_instancia(instance_id) {
-            let pid_sistema = sysinfo::Pid::from_u32(pid);
-            if let Some(processo) = system.process(pid_sistema) {
-                if processo.name().to_lowercase().contains("java") {
-                    resultados.insert(instance_id.clone(), true);
-                    continue;
-                }
-            } else {
-                state.remover_pid_instancia(instance_id);
-            }
+        if state.obter_pid_instancia(instance_id).is_some() {
+            resultados.insert(instance_id.clone(), true);
+            continue;
         }
 
         let instance_path_normalizado = normalizar_caminho_processo(&instance_path);
