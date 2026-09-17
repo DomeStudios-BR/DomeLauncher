@@ -14,7 +14,7 @@ interface EditorIconeModalProps {
     iconeAtual?: string | null;
     chavePersistencia?: string;
     aoFechar: () => void;
-    aoSalvar: (icone: string) => void;
+    aoSalvar: (icone: string) => void | Promise<void>;
 }
 
 interface ConfiguracaoPersistida {
@@ -200,7 +200,7 @@ export default function EditorIconeModal({
                     localStorage.removeItem(chave);
                 }
             }
-            aoSalvar(icone);
+            await aoSalvar(icone);
             aoFechar();
         } catch (erro) {
             alert(erro instanceof Error ? erro.message : "Não foi possível criar o ícone.");

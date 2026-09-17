@@ -71,8 +71,22 @@ export interface PerfilSocial {
     criadaEm?: string | null;
     imagemUrl: string;
   }>;
+  bio?: string;
+  instanciasRecentes?: InstanciaPublicaPerfil[];
+  instanciasFavoritas?: InstanciaPublicaPerfil[];
+  amigos?: AmigoSocial[];
   criadoEm: string;
   atualizadoEm: string;
+}
+
+export interface InstanciaPublicaPerfil {
+  id: string;
+  nome: string;
+  versao: string;
+  carregador: string;
+  iconeUrl?: string | null;
+  horasJogadas: number;
+  ultimaVez?: string | null;
 }
 
 export interface SessaoSocial {

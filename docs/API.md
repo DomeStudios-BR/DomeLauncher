@@ -29,11 +29,30 @@ Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, es
 A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET /api/launcher/friends`.
 Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
-PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. Bio e banner
-são personalizações locais e não são expostos a outros jogadores. Comentários, emblemas e análises vêm da DomeAPI;
+PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O banner,
+as capturas favoritas, a bio, os metadados públicos das instâncias recentes e favoritas e os emblemas exibidos
+são salvos na DomeAPI. Perfis visitados também recebem a lista resumida de amizades aceitas do jogador. Caminhos
+locais de instâncias nunca são enviados. Se a cota do armazenamento local acabar,
+o cache de preferências descarta imagens incorporadas em base64 sem invalidar o salvamento remoto. Comentários,
+emblemas e análises vêm da DomeAPI;
 sem sessão ou dados remotos, a tela não injeta identidade, comentários ou emblemas demonstrativos.
 Análises só existem para instâncias com `modpack.json` do Modrinth/CurseForge; instâncias personalizadas
 não oferecem publicação, e a API rejeita qualquer `source` diferente desses dois.
+
+`migrar_versao_instancia` atende somente instâncias personalizadas. O comando prepara uma cópia completa,
+baixa a nova base e o loader e identifica mods pelo SHA-512 no Modrinth e pelo fingerprint no CurseForge. Mods
+reconhecidos são substituídos por versões compatíveis e suas dependências obrigatórias; arquivos não reconhecidos,
+incompatíveis ou desativados
+permanecem no backup. Mundos, opções, configurações, resource packs e shaders são copiados sem alteração. A troca
+das pastas só ocorre depois da preparação e tenta restaurar a instância anterior se a ativação falhar.
+O modal fecha após iniciar a operação, que continua no indicador global da biblioteca sem bloquear a navegação.
+
+## Sincronização local entre instâncias
+
+As configurações globais podem definir uma instância de origem e sincronizar seletivamente `config/`, `options.txt`,
+`resourcepacks/`, `shaderpacks/` e `servers.dat`. `aplicar_sincronizacao_instancias` replica os itens escolhidos para
+as instâncias existentes. A mesma configuração é aplicada após criar uma instância e novamente antes de jogar, o que
+também cobre instâncias importadas ou instaladas por outros fluxos. A instância de origem nunca é sobrescrita.
 
 ## Novidades
 

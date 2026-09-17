@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha512};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -717,9 +718,436 @@ pub(crate) async fn create_instance(
     let version_content = serde_json::to_string_pretty(&details).map_err(|e| e.to_string())?;
     std::fs::write(version_manifest_path, version_content).map_err(|e| e.to_string())?;
 
+    super::sincronizacao_instancias::aplicar_sincronizacao_nova_instancia(&instance_path)?;
+
     // 6. Instância criada com os arquivos preparados para o primeiro launch
     println!("=== CRIAÇÃO DE INSTÂNCIA CONCLUÍDA COM SUCESSO ===");
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResultadoMigracaoVersao {
+    versao_anterior: String,
+    versao_nova: String,
+    mods_migrados: usize,
+    mods_preservados_backup: Vec<String>,
+    caminho_backup: String,
+}
+
+fn copiar_diretorio(origem: &std::path::Path, destino: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(destino)
+        .map_err(|e| format!("Erro ao criar {}: {}", destino.display(), e))?;
+    for entrada in
+        std::fs::read_dir(origem).map_err(|e| format!("Erro ao ler {}: {}", origem.display(), e))?
+    {
+        let entrada = entrada.map_err(|e| e.to_string())?;
+        let caminho_origem = entrada.path();
+        let caminho_destino = destino.join(entrada.file_name());
+        if caminho_origem.is_dir() {
+            copiar_diretorio(&caminho_origem, &caminho_destino)?;
+        } else {
+            std::fs::copy(&caminho_origem, &caminho_destino)
+                .map_err(|e| format!("Erro ao copiar {}: {}", caminho_origem.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
+fn hash_sha512_arquivo(caminho: &std::path::Path) -> Result<String, String> {
+    let bytes =
+        std::fs::read(caminho).map_err(|e| format!("Erro ao ler {}: {}", caminho.display(), e))?;
+    Ok(format!("{:x}", Sha512::digest(bytes)))
+}
+
+async fn identificar_mods_modrinth(
+    client: &reqwest::Client,
+    mods_dir: &std::path::Path,
+) -> Result<Vec<(String, String, bool)>, String> {
+    if !mods_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let pasta = mods_dir.to_path_buf();
+    let hashes = tauri::async_runtime::spawn_blocking(move || {
+        let arquivos = std::fs::read_dir(&pasta)
+            .map_err(|e| format!("Erro ao listar mods: {}", e))?
+            .flatten()
+            .filter_map(|entrada| {
+                let nome = entrada.file_name().to_string_lossy().to_string();
+                let minusculo = nome.to_lowercase();
+                (entrada.path().is_file()
+                    && (minusculo.ends_with(".jar") || minusculo.ends_with(".jar.disabled")))
+                .then_some((nome, entrada.path(), minusculo.ends_with(".disabled")))
+            })
+            .collect::<Vec<_>>();
+        arquivos
+            .into_iter()
+            .map(|(nome, caminho, desabilitado)| {
+                Ok((nome, hash_sha512_arquivo(&caminho)?, desabilitado))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })
+    .await
+    .map_err(|e| format!("Falha ao analisar os mods: {}", e))??;
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let resposta = client
+        .post(format!("{}/version_files", MODRINTH_API_BASE))
+        .header("User-Agent", "DomeLauncher/1.0")
+        .json(&serde_json::json!({
+            "hashes": hashes.iter().map(|(_, hash, _)| hash).collect::<Vec<_>>(),
+            "algorithm": "sha512"
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao identificar mods no Modrinth: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "Modrinth retornou {} ao identificar mods.",
+            resposta.status()
+        ));
+    }
+    let encontrados = resposta
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Resposta inválida do Modrinth: {}", e))?;
+    Ok(hashes
+        .into_iter()
+        .filter_map(|(nome, hash, desabilitado)| {
+            encontrados[&hash]["project_id"]
+                .as_str()
+                .map(|id| (nome, id.to_string(), desabilitado))
+        })
+        .collect())
+}
+
+fn fingerprint_curseforge(caminho: &std::path::Path) -> Result<u32, String> {
+    let bytes =
+        std::fs::read(caminho).map_err(|e| format!("Erro ao ler {}: {}", caminho.display(), e))?;
+    let normalizados = bytes
+        .into_iter()
+        .filter(|byte| !matches!(byte, 9 | 10 | 13 | 32))
+        .collect::<Vec<_>>();
+    let mut hash = 1u32 ^ normalizados.len() as u32;
+    let constante = 0x5bd1e995u32;
+    let (blocos, restante) = normalizados.as_chunks::<4>();
+    for bloco in blocos {
+        let mut valor = u32::from_le_bytes(*bloco);
+        valor = valor.wrapping_mul(constante);
+        valor ^= valor >> 24;
+        valor = valor.wrapping_mul(constante);
+        hash = hash.wrapping_mul(constante) ^ valor;
+    }
+    if restante.len() >= 3 {
+        hash ^= (restante[2] as u32) << 16;
+    }
+    if restante.len() >= 2 {
+        hash ^= (restante[1] as u32) << 8;
+    }
+    if let Some(primeiro) = restante.first() {
+        hash ^= *primeiro as u32;
+        hash = hash.wrapping_mul(constante);
+    }
+    hash ^= hash >> 13;
+    hash = hash.wrapping_mul(constante);
+    hash ^= hash >> 15;
+    Ok(hash)
+}
+
+async fn identificar_mods_curseforge(
+    client: &reqwest::Client,
+    mods_dir: &std::path::Path,
+) -> Result<Vec<(String, String, bool)>, String> {
+    if !mods_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let pasta = mods_dir.to_path_buf();
+    let fingerprints = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read_dir(&pasta)
+            .map_err(|e| format!("Erro ao listar mods: {}", e))?
+            .flatten()
+            .filter_map(|entrada| {
+                let nome = entrada.file_name().to_string_lossy().to_string();
+                let minusculo = nome.to_lowercase();
+                (entrada.path().is_file()
+                    && (minusculo.ends_with(".jar") || minusculo.ends_with(".jar.disabled")))
+                .then_some((nome, entrada.path(), minusculo.ends_with(".disabled")))
+            })
+            .map(|(nome, caminho, desabilitado)| {
+                Ok((nome, fingerprint_curseforge(&caminho)?, desabilitado))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })
+    .await
+    .map_err(|e| format!("Falha ao analisar os mods: {}", e))??;
+    if fingerprints.is_empty() {
+        return Ok(Vec::new());
+    }
+    let resposta = super::anexar_headers_curseforge(
+        client
+            .post(format!("{}/fingerprints", super::CURSEFORGE_API_BASE))
+            .json(&serde_json::json!({
+                "fingerprints": fingerprints.iter().map(|(_, valor, _)| valor).collect::<Vec<_>>()
+            })),
+    )?
+    .send()
+    .await
+    .map_err(|e| format!("Erro ao identificar mods no CurseForge: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "CurseForge retornou {} ao identificar mods.",
+            resposta.status()
+        ));
+    }
+    let payload = resposta
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Resposta inválida do CurseForge: {}", e))?;
+    let encontrados = payload["data"]["exactMatches"]
+        .as_array()
+        .ok_or("CurseForge não retornou os resultados de identificação.")?;
+    let projetos = encontrados
+        .iter()
+        .filter_map(|item| {
+            Some((
+                item["id"].as_u64()? as u32,
+                item["file"]["modId"].as_u64()?.to_string(),
+            ))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    Ok(fingerprints
+        .into_iter()
+        .filter_map(|(nome, fingerprint, desabilitado)| {
+            projetos
+                .get(&fingerprint)
+                .cloned()
+                .map(|id| (nome, id, desabilitado))
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) async fn migrar_versao_instancia(
+    state: State<'_, LauncherState>,
+    instance_id: String,
+    version: String,
+    loader_type: String,
+    loader_version: Option<String>,
+) -> Result<ResultadoMigracaoVersao, String> {
+    let mut instancia = obter_instancia_por_id(&state, &instance_id)?;
+    if instancia.path.join("modpack.json").exists() {
+        return Err("Use a troca de versão do modpack para esta instância.".to_string());
+    }
+    let loader = loader_type.trim().to_lowercase();
+    if !matches!(loader.as_str(), "vanilla" | "fabric" | "forge" | "neoforge") {
+        return Err("Loader não suportado para migração.".to_string());
+    }
+    if version.trim().is_empty() {
+        return Err("Selecione uma versão do Minecraft.".to_string());
+    }
+    if loader != "vanilla" && loader_version.as_deref().is_none_or(str::is_empty) {
+        return Err("Selecione uma versão do loader.".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .user_agent("DomeLauncher/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let manifesto = client
+        .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<VersionManifest>()
+        .await
+        .map_err(|e| e.to_string())?;
+    let entrada = manifesto
+        .versions
+        .iter()
+        .find(|item| item.id == version)
+        .ok_or("Versão do Minecraft não encontrada.")?;
+    let detalhes = client
+        .get(&entrada.url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<VersionDetail>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let temporario = instancia
+        .path
+        .with_file_name(format!(".dome-migracao-{}", uuid::Uuid::new_v4()));
+    let origem_copia = instancia.path.clone();
+    let destino_copia = temporario.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(erro) = copiar_diretorio(&origem_copia, &destino_copia) {
+            let _ = std::fs::remove_dir_all(&destino_copia);
+            return Err(erro);
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Falha ao copiar a instância para migração: {}", e))??;
+    let mods_temporarios = temporario.join("mods");
+    if mods_temporarios.exists() {
+        std::fs::remove_dir_all(&mods_temporarios)
+            .map_err(|e| format!("Erro ao preparar a migração dos mods: {}", e))?;
+    }
+    let preparar = async {
+        download_instance_files(&temporario, &detalhes).await?;
+        match loader.as_str() {
+            "fabric" => {
+                install_fabric_loader(&temporario, &version, loader_version.as_deref().unwrap())
+                    .await?
+            }
+            "forge" => {
+                install_forge_loader(&temporario, &version, loader_version.as_deref().unwrap())
+                    .await?
+            }
+            "neoforge" => {
+                install_neoforge_loader(&temporario, &version, loader_version.as_deref().unwrap())
+                    .await?
+            }
+            _ => {}
+        }
+        std::fs::write(
+            temporario.join("version_manifest.json"),
+            serde_json::to_string_pretty(&detalhes).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    }
+    .await;
+    if let Err(erro) = preparar {
+        let _ = std::fs::remove_dir_all(&temporario);
+        return Err(erro);
+    }
+
+    let mods_atuais = instancia.path.join("mods");
+    let mods_identificados = match identificar_mods_modrinth(&client, &mods_atuais).await {
+        Ok(mods) => mods,
+        Err(erro) => {
+            let _ = std::fs::remove_dir_all(&temporario);
+            return Err(erro);
+        }
+    };
+    let mods_curseforge = match identificar_mods_curseforge(&client, &mods_atuais).await {
+        Ok(mods) => mods,
+        Err(erro) => {
+            let _ = std::fs::remove_dir_all(&temporario);
+            return Err(erro);
+        }
+    };
+    let mods_novos = temporario.join("mods");
+    let loader_normalizado = (loader != "vanilla").then(|| loader.clone());
+    let mut migrados = 0usize;
+    let mut nomes_migrados = std::collections::HashSet::new();
+    for (nome, project_id, desabilitado) in mods_identificados {
+        if desabilitado {
+            continue;
+        }
+        if super::mods_conteudo::instalar_mod_modrinth_compativel(
+            &client,
+            &mods_novos,
+            project_id,
+            &version,
+            &loader_normalizado,
+        )
+        .await
+        .is_ok()
+        {
+            migrados += 1;
+            nomes_migrados.insert(nome);
+        }
+    }
+    for (nome, project_id, desabilitado) in mods_curseforge {
+        if desabilitado || nomes_migrados.contains(&nome) {
+            continue;
+        }
+        if super::mods_conteudo::instalar_mod_curseforge_compativel(
+            &client,
+            &mods_novos,
+            project_id,
+            &version,
+            &loader_normalizado,
+        )
+        .await
+        .is_ok()
+        {
+            migrados += 1;
+            nomes_migrados.insert(nome);
+        }
+    }
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let pasta_backups = instancia
+        .path
+        .parent()
+        .ok_or("A instância não possui uma pasta pai válida.")?
+        .join(".dome-backups");
+    std::fs::create_dir_all(&pasta_backups).map_err(|e| e.to_string())?;
+    let backup = pasta_backups.join(format!("{}-versao-{}", instancia.id, timestamp));
+    let mut preservados = Vec::new();
+    if mods_atuais.is_dir() {
+        preservados = std::fs::read_dir(&mods_atuais)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|entrada| entrada.file_name().to_string_lossy().to_string())
+            .filter(|nome| !nomes_migrados.contains(nome))
+            .collect();
+    }
+
+    let versao_anterior = instancia.version.clone();
+    instancia.version = version.clone();
+    instancia.mc_type = if loader == "vanilla" {
+        "Vanilla".into()
+    } else {
+        "Modded".into()
+    };
+    instancia.loader_type = Some(
+        match loader.as_str() {
+            "fabric" => "Fabric",
+            "forge" => "Forge",
+            "neoforge" => "NeoForge",
+            _ => "Vanilla",
+        }
+        .to_string(),
+    );
+    instancia.loader_version = if loader == "vanilla" {
+        None
+    } else {
+        loader_version
+    };
+    std::fs::write(
+        temporario.join("instance.json"),
+        serde_json::to_string_pretty(&instancia).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+
+    std::fs::rename(&instancia.path, &backup).map_err(|e| {
+        format!(
+            "Erro ao ativar a migração e guardar a versão anterior: {}",
+            e
+        )
+    })?;
+    if let Err(erro) = std::fs::rename(&temporario, &instancia.path) {
+        let _ = std::fs::rename(&backup, &instancia.path);
+        return Err(format!(
+            "Erro ao ativar a nova versão; a anterior foi restaurada: {}",
+            erro
+        ));
+    }
+
+    Ok(ResultadoMigracaoVersao {
+        versao_anterior,
+        versao_nova: version,
+        mods_migrados: migrados,
+        mods_preservados_backup: preservados,
+        caminho_backup: backup.to_string_lossy().to_string(),
+    })
 }
 
 pub(super) use super::downloads_instancias::download_instance_files;

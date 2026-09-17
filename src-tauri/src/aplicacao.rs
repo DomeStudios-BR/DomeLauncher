@@ -15,6 +15,7 @@ mod instancias_basicas;
 mod instancias_criacao;
 mod lancamento_jogo;
 mod mods_conteudo;
+mod sincronizacao_instancias;
 
 // Constantes das APIs
 const CURSEFORGE_API_KEY_FALLBACK: &str =

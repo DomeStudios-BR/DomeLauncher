@@ -384,6 +384,7 @@ export default function InstanceManager({
   const [editIcon, setEditIcon] = useState("");
   const [saving, setSaving] = useState(false);
   const [editorIconeAberto, setEditorIconeAberto] = useState(false);
+  const editorIconeAbriuEdicaoRef = useRef(false);
 
   const lastSearch = useRef({ query: "", filter: "", source: "" });
   const carregandoMaisResultadosRef = useRef(false);
@@ -1660,8 +1661,19 @@ export default function InstanceManager({
   };
 
   const editarIconeDiretamente = () => {
+    editorIconeAbriuEdicaoRef.current = !isEditing;
     startEditingInstance();
     setEditorIconeAberto(true);
+  };
+
+  const salvarIconeDiretamente = async (icone: string) => {
+    if (!instanceDetails) return;
+    await invoke("update_instance_icon", { instanceId, icon: icone });
+    setEditIcon(icone);
+    await loadInstanceDetails();
+    onInstanceUpdate?.();
+    if (editorIconeAbriuEdicaoRef.current) setIsEditing(false);
+    editorIconeAbriuEdicaoRef.current = false;
   };
 
   const cancelEditingInstance = () => {
@@ -2898,8 +2910,16 @@ export default function InstanceManager({
         aberto={editorIconeAberto}
         iconeAtual={editIcon || instanceDetails?.icon}
         chavePersistencia={instanceId}
-        aoFechar={() => setEditorIconeAberto(false)}
-        aoSalvar={setEditIcon}
+        aoFechar={() => {
+          if (editorIconeAbriuEdicaoRef.current && instanceDetails) {
+            setEditName(instanceDetails.name);
+            setEditIcon(instanceDetails.icon || "");
+            setIsEditing(false);
+          }
+          editorIconeAbriuEdicaoRef.current = false;
+          setEditorIconeAberto(false);
+        }}
+        aoSalvar={salvarIconeDiretamente}
       />
     </div>
   );

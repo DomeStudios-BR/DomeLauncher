@@ -743,6 +743,82 @@ async fn baixar_e_instalar_arquivos_mod(
     Ok(())
 }
 
+pub(super) async fn instalar_mod_modrinth_compativel(
+    client: &reqwest::Client,
+    mods_dir: &std::path::Path,
+    project_id: String,
+    versao_minecraft: &str,
+    loader: &Option<String>,
+) -> Result<(), String> {
+    let mut etapas = vec![EtapaResolucaoMod::Resolver(
+        ReferenciaModObrigatorio::Modrinth {
+            project_id: Some(project_id),
+            version_id: None,
+        },
+    )];
+    let mut visitados = std::collections::HashSet::new();
+    let mut arquivos = Vec::new();
+
+    while let Some(etapa) = etapas.pop() {
+        match etapa {
+            EtapaResolucaoMod::Resolver(referencia) => {
+                if !visitados.insert(referencia.chave()) {
+                    continue;
+                }
+                let resolvido =
+                    resolver_arquivo_mod_obrigatorio(client, &referencia, versao_minecraft, loader)
+                        .await?;
+                let dependencias = resolvido.dependencias.clone();
+                etapas.push(EtapaResolucaoMod::AgendarDownload(resolvido));
+                for dependencia in dependencias.into_iter().rev() {
+                    etapas.push(EtapaResolucaoMod::Resolver(dependencia));
+                }
+            }
+            EtapaResolucaoMod::AgendarDownload(arquivo) => arquivos.push(arquivo),
+        }
+    }
+
+    baixar_e_instalar_arquivos_mod(client, mods_dir, arquivos).await
+}
+
+pub(super) async fn instalar_mod_curseforge_compativel(
+    client: &reqwest::Client,
+    mods_dir: &std::path::Path,
+    project_id: String,
+    versao_minecraft: &str,
+    loader: &Option<String>,
+) -> Result<(), String> {
+    let mut etapas = vec![EtapaResolucaoMod::Resolver(
+        ReferenciaModObrigatorio::CurseForge {
+            project_id,
+            file_id: None,
+        },
+    )];
+    let mut visitados = std::collections::HashSet::new();
+    let mut arquivos = Vec::new();
+
+    while let Some(etapa) = etapas.pop() {
+        match etapa {
+            EtapaResolucaoMod::Resolver(referencia) => {
+                if !visitados.insert(referencia.chave()) {
+                    continue;
+                }
+                let resolvido =
+                    resolver_arquivo_mod_obrigatorio(client, &referencia, versao_minecraft, loader)
+                        .await?;
+                let dependencias = resolvido.dependencias.clone();
+                etapas.push(EtapaResolucaoMod::AgendarDownload(resolvido));
+                for dependencia in dependencias.into_iter().rev() {
+                    etapas.push(EtapaResolucaoMod::Resolver(dependencia));
+                }
+            }
+            EtapaResolucaoMod::AgendarDownload(arquivo) => arquivos.push(arquivo),
+        }
+    }
+
+    baixar_e_instalar_arquivos_mod(client, mods_dir, arquivos).await
+}
+
 #[tauri::command]
 pub(crate) async fn install_mod(
     instance_id: String,

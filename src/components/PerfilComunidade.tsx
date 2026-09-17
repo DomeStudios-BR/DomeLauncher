@@ -46,6 +46,13 @@ interface ComentarioPerfil {
   autorPerfilId: string;
   autorNome: string;
   autorAvatarUrl?: string | null;
+  emblemaDestaque?: {
+    emblemaId: string;
+    nome: string;
+    descricao: string;
+    imagemUrl: string;
+    concedidoEm: string;
+  } | null;
 }
 
 type SecaoPerfil = "capturas" | "atividade" | "instancias" | "analises";
@@ -80,7 +87,11 @@ function carregarCachePerfil(): CachePerfilComunidade | null {
 }
 
 function salvarCachePerfil(perfil: PerfilSocial, comentarios: ComentarioPerfil[]): void {
-  localStorage.setItem(CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
+  try {
+    localStorage.setItem(CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
+  } catch {
+    localStorage.removeItem(CHAVE_CACHE_PERFIL);
+  }
 }
 
 function identificarCaptura(captura: CapturaPerfil): string {
@@ -92,6 +103,31 @@ function carregarPersonalizacao(): Partial<PersonalizacaoPerfil> {
     return JSON.parse(localStorage.getItem(CHAVE_PERSONALIZACAO) ?? "{}") as Partial<PersonalizacaoPerfil>;
   } catch {
     return {};
+  }
+}
+
+function salvarPersonalizacaoLocal(personalizacao: PersonalizacaoPerfil): void {
+  try {
+    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(personalizacao));
+    return;
+  } catch {
+    localStorage.removeItem(CHAVE_PERSONALIZACAO);
+  }
+
+  const semMidiasIncorporadas = {
+    ...personalizacao,
+    avatarPersonalizado: personalizacao.avatarPersonalizado?.startsWith("data:")
+      ? null
+      : personalizacao.avatarPersonalizado,
+    bannerPersonalizado: personalizacao.bannerPersonalizado?.startsWith("data:")
+      ? null
+      : personalizacao.bannerPersonalizado,
+  };
+
+  try {
+    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(semMidiasIncorporadas));
+  } catch {
+    // O perfil remoto já foi salvo; a indisponibilidade deste cache não deve invalidar a operação.
   }
 }
 
@@ -155,8 +191,10 @@ export default function PerfilComunidade({
   const [totalPaginasCapturas, setTotalPaginasCapturas] = useState(1);
   const [totalCapturas, setTotalCapturas] = useState(0);
   const [carregandoCapturas, setCarregandoCapturas] = useState(false);
+  const [mostrandoTodasCapturas, setMostrandoTodasCapturas] = useState(false);
   const [perfil, setPerfil] = useState<PerfilSocial | null>(perfilId ? null : cacheInicial?.perfil ?? null);
   const [amigos, setAmigos] = useState<AmigoSocial[]>([]);
+  const [amigosDaSessao, setAmigosDaSessao] = useState<AmigoSocial[]>([]);
   const [carregandoPerfil, setCarregandoPerfil] = useState(Boolean(perfilId) || !cacheInicial);
   const [erroCarregamentoPerfil, setErroCarregamentoPerfil] = useState(false);
   const [salvandoPerfil, setSalvandoPerfil] = useState(false);
@@ -186,20 +224,32 @@ export default function PerfilComunidade({
   const [mensagemAmizade, setMensagemAmizade] = useState<string | null>(null);
   const [mensagemCompartilhar, setMensagemCompartilhar] = useState<string | null>(null);
   const arrastoRef = useRef<{ secao: SecaoPerfil; ponteiroId: number; x: number; y: number; ativo: boolean } | null>(null);
+  const encerrarArrastoRef = useRef<(() => void) | null>(null);
   const ehPerfilProprio = !perfilId || perfilId === sessaoSocial?.perfil.perfilId;
   const [abaAtiva, setAbaAtiva] = useState("visao-geral");
-  const atividadesRecentes = useMemo(
-    () =>
-      [...instances]
+  const atividadesRecentes = useMemo(() => {
+    if (!ehPerfilProprio) {
+      return (perfil?.instanciasRecentes ?? []).map((instancia) => ({
+        id: instancia.id,
+        name: instancia.nome,
+        version: instancia.versao,
+        mc_type: instancia.carregador,
+        loader_type: instancia.carregador,
+        icon: instancia.iconeUrl ?? undefined,
+        last_played: instancia.ultimaVez ?? undefined,
+        tempo_total_jogado_segundos: instancia.horasJogadas * 3600,
+        path: "",
+      } satisfies Instance));
+    }
+    return [...instances]
         .filter((instancia) => instancia.last_played)
         .sort(
           (a, b) =>
             new Date(b.last_played!).getTime() -
             new Date(a.last_played!).getTime(),
         )
-        .slice(0, 3),
-    [instances],
-  );
+        .slice(0, 3);
+  }, [ehPerfilProprio, instances, perfil?.instanciasRecentes]);
   const abrirSecao = (secao: string) => {
     setAbaAtiva(secao);
     document
@@ -255,13 +305,20 @@ export default function PerfilComunidade({
           : cacheInicial?.comentarios ?? [];
         setPerfil(perfilCompleto);
         if (resultadoAmigos?.status === "fulfilled" && resultadoAmigos.value) {
-          setAmigos(resultadoAmigos.value.amigos ?? []);
+          const amigosAtuais = resultadoAmigos.value.amigos ?? [];
+          setAmigosDaSessao(amigosAtuais);
+          setAmigos(perfilId ? perfilCompleto.amigos ?? [] : amigosAtuais);
           setPendentesRecebidas(resultadoAmigos.value.pendentesRecebidas ?? []);
           setPendentesEnviadas(resultadoAmigos.value.pendentesEnviadas ?? []);
         }
         setComentarios(comentariosAtualizados);
         if (!perfilId) salvarCachePerfil(perfilCompleto, comentariosAtualizados);
         setBannerPersonalizado(perfilCompleto.bannerPerfilUrl ?? null);
+        setBio(
+          perfilId
+            ? perfilCompleto.bio || "Criando mundos e explorando novas aventuras."
+            : personalizacaoInicial.bio || perfilCompleto.bio || "Criando mundos e explorando novas aventuras.",
+        );
         setCapturasFavoritas(perfilCompleto.capturasFavoritas?.map((captura) => captura.id) ?? []);
         setEmblemasExibidosIds((perfilCompleto.emblemasExibidos ?? perfilCompleto.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
       } finally {
@@ -291,7 +348,7 @@ export default function PerfilComunidade({
     if (editando && ehPerfilProprio) setPaginaCapturas(1);
   }, [editando, ehPerfilProprio]);
   useEffect(() => {
-    if (!editando || !ehPerfilProprio) return;
+    if ((!editando && !mostrandoTodasCapturas) || !ehPerfilProprio) return;
     setCarregandoCapturas(true);
     void invoke<PaginaCapturasPerfil>("listar_capturas_perfil", { pagina: paginaCapturas, tamanhoPagina: 12 })
       .then((resultado) => {
@@ -306,7 +363,7 @@ export default function PerfilComunidade({
       })
       .catch(() => setCapturas([]))
       .finally(() => setCarregandoCapturas(false));
-  }, [assinaturaInstancias, editando, ehPerfilProprio, paginaCapturas]);
+  }, [assinaturaInstancias, editando, ehPerfilProprio, mostrandoTodasCapturas, paginaCapturas]);
   const emblemasDisponiveis = useMemo(
     () => perfil?.emblemas ?? [],
     [perfil?.emblemas],
@@ -332,8 +389,8 @@ export default function PerfilComunidade({
     return emblemasExibidos[0] ?? null;
   }, [editando, emblemasDisponiveis, emblemasExibidos, emblemasExibidosIds]);
   const ehAmigo = useMemo(
-    () => (perfil ? amigos.some((amigo) => amigo.friendProfileId === perfil.perfilId) : false),
-    [amigos, perfil],
+    () => (perfil ? amigosDaSessao.some((amigo) => amigo.friendProfileId === perfil.perfilId) : false),
+    [amigosDaSessao, perfil],
   );
   const solicitacaoEnviadaId = useMemo(
     () => (perfil ? pendentesEnviadas.find((pendente) => pendente.paraPerfilId === perfil.perfilId)?.id ?? null : null),
@@ -347,6 +404,7 @@ export default function PerfilComunidade({
     ? totalCapturas
     : (perfil?.capturasFavoritas?.length ?? capturasFavoritas.length);
   const capturasExibidas = useMemo(() => {
+    if (mostrandoTodasCapturas && ehPerfilProprio) return capturas;
     if (!editando && perfil?.capturasFavoritas) {
       return perfil.capturasFavoritas.map((captura) => ({
         nome: captura.nome,
@@ -361,14 +419,27 @@ export default function PerfilComunidade({
       .map((id) => capturasCarregadas.find((captura) => identificarCaptura(captura) === id))
       .filter((captura): captura is CapturaPerfil => Boolean(captura))
       .slice(0, 3);
-  }, [capturasCarregadas, capturasFavoritas, editando, perfil?.capturasFavoritas]);
+  }, [capturas, capturasCarregadas, capturasFavoritas, editando, ehPerfilProprio, mostrandoTodasCapturas, perfil?.capturasFavoritas]);
   const instanciasExibidas = useMemo(() => {
+    if (!ehPerfilProprio) {
+      return (perfil?.instanciasFavoritas ?? []).map((instancia) => ({
+        id: instancia.id,
+        name: instancia.nome,
+        version: instancia.versao,
+        mc_type: instancia.carregador,
+        loader_type: instancia.carregador,
+        icon: instancia.iconeUrl ?? undefined,
+        last_played: instancia.ultimaVez ?? undefined,
+        tempo_total_jogado_segundos: instancia.horasJogadas * 3600,
+        path: "",
+      } satisfies Instance));
+    }
     if (instanciasFavoritas.length === 0) return instances.slice(0, 3);
     return instanciasFavoritas
       .map((id) => instances.find((instancia) => instancia.id === id))
       .filter((instancia): instancia is Instance => Boolean(instancia))
       .slice(0, 3);
-  }, [instances, instanciasFavoritas]);
+  }, [ehPerfilProprio, instances, instanciasFavoritas, perfil?.instanciasFavoritas]);
   const nomePerfil =
     perfil?.nomeSocial ||
     perfil?.discordGlobalName ||
@@ -376,7 +447,7 @@ export default function PerfilComunidade({
     "Seu perfil";
   const handlePerfil = perfil?.handle || "";
   const uuidAvatar = perfil?.contaMinecraftPrincipalUuid || minecraftUuid;
-  const urlAvatar = avatarPersonalizado || (uuidAvatar
+  const urlAvatar = (ehPerfilProprio ? avatarPersonalizado : null) || (uuidAvatar
     ? `https://mc-heads.net/head/${uuidAvatar}/128`
     : null);
   const perfilAutenticado = sessaoSocial?.perfil;
@@ -540,7 +611,7 @@ export default function PerfilComunidade({
         apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
         accessToken: sessaoSocial.accessToken,
       });
-      setAmigos(dados.amigos ?? []);
+      setAmigosDaSessao(dados.amigos ?? []);
       setPendentesRecebidas(dados.pendentesRecebidas ?? []);
       setPendentesEnviadas(dados.pendentesEnviadas ?? []);
     } catch (erro) {
@@ -568,7 +639,10 @@ export default function PerfilComunidade({
   };
   const iniciarArrastoSecao = (evento: EventoPonteiroReact<HTMLElement>, secao: SecaoPerfil) => {
     if (!editando || evento.button !== 0 || !evento.isPrimary) return;
+    encerrarArrastoRef.current?.();
     arrastoRef.current = { secao, ponteiroId: evento.pointerId, x: evento.clientX, y: evento.clientY, ativo: false };
+    const alca = evento.currentTarget;
+    const ponteiroId = evento.pointerId;
     const mover = (movimento: PointerEvent) => {
       const arrasto = arrastoRef.current;
       if (!arrasto || movimento.pointerId !== arrasto.ponteiroId) return;
@@ -580,19 +654,40 @@ export default function PerfilComunidade({
       if (alvo) moverSecao(arrasto.secao, alvo);
       movimento.preventDefault();
     };
-    const finalizar = (fim: PointerEvent) => {
-      if (fim.pointerId !== arrastoRef.current?.ponteiroId) return;
+    const encerrar = () => {
       arrastoRef.current = null;
       setItemArrastado(null);
       window.removeEventListener("pointermove", mover);
       window.removeEventListener("pointerup", finalizar, true);
       window.removeEventListener("pointercancel", finalizar, true);
+      window.removeEventListener("blur", encerrar);
+      document.removeEventListener("visibilitychange", encerrarAoOcultar);
+      alca.removeEventListener("lostpointercapture", finalizarCaptura);
+      if (alca.hasPointerCapture(ponteiroId)) alca.releasePointerCapture(ponteiroId);
+      if (encerrarArrastoRef.current === encerrar) encerrarArrastoRef.current = null;
     };
+    const finalizar = (fim: PointerEvent) => {
+      if (fim.pointerId !== ponteiroId) return;
+      encerrar();
+    };
+    const finalizarCaptura = (fim: PointerEvent) => finalizar(fim);
+    const encerrarAoOcultar = () => {
+      if (document.hidden) encerrar();
+    };
+    encerrarArrastoRef.current = encerrar;
     window.addEventListener("pointermove", mover, { passive: false });
     window.addEventListener("pointerup", finalizar, true);
     window.addEventListener("pointercancel", finalizar, true);
+    window.addEventListener("blur", encerrar);
+    document.addEventListener("visibilitychange", encerrarAoOcultar);
+    alca.addEventListener("lostpointercapture", finalizarCaptura);
+    alca.setPointerCapture(ponteiroId);
     evento.preventDefault();
   };
+  useEffect(() => {
+    if (!editando) encerrarArrastoRef.current?.();
+  }, [editando]);
+  useEffect(() => () => encerrarArrastoRef.current?.(), []);
   const salvarPersonalizacao = async () => {
     if (!sessaoSocial || salvandoPerfil) {
       setErroSalvarPerfil("A sessão social ainda não está pronta. Tente novamente em instantes.");
@@ -617,9 +712,30 @@ export default function PerfilComunidade({
       const perfilAtualizado = await invoke<PerfilSocial>("save_launcher_profile_presentation", {
         apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
         accessToken: sessaoAtual.accessToken,
-        bannerDadosUrl: bannerPersonalizado,
-        capturas: capturasSelecionadas.map((captura) => ({ ...captura, id: identificarCaptura(captura) })),
-        emblemasExibidosIds,
+        apresentacao: {
+          bannerDadosUrl: bannerPersonalizado,
+          capturas: capturasSelecionadas.map((captura) => ({ ...captura, id: identificarCaptura(captura) })),
+          emblemasExibidosIds,
+          bio,
+          instanciasRecentes: atividadesRecentes.map((instancia) => ({
+            id: instancia.id,
+            nome: instancia.name,
+            versao: instancia.version,
+            carregador: instancia.loader_type || instancia.mc_type,
+            iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
+            horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
+            ultimaVez: instancia.last_played ?? null,
+          })),
+          instanciasFavoritas: instanciasExibidas.map((instancia) => ({
+            id: instancia.id,
+            nome: instancia.name,
+            versao: instancia.version,
+            carregador: instancia.loader_type || instancia.mc_type,
+            iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
+            horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
+            ultimaVez: instancia.last_played ?? null,
+          })),
+        },
       });
       setPerfil(perfilAtualizado);
       setBannerPersonalizado(perfilAtualizado.bannerPerfilUrl ?? null);
@@ -627,14 +743,14 @@ export default function PerfilComunidade({
       window.dispatchEvent(
         new CustomEvent("dome:social-perfil-atualizado", { detail: { perfil: perfilAtualizado } }),
       );
-      localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify({
+      salvarPersonalizacaoLocal({
         bio,
         avatarPersonalizado,
         bannerPersonalizado: perfilAtualizado.bannerPerfilUrl ?? null,
         capturasFavoritas: perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? [],
         instanciasFavoritas,
         ordemSecoes,
-      } satisfies PersonalizacaoPerfil));
+      });
       salvarCachePerfil(perfilAtualizado, comentarios);
       setEditando(false);
     } catch (erro) {
@@ -951,9 +1067,9 @@ export default function PerfilComunidade({
                       />
                       <span>{bio.length} / 140</span>
                     </div>
-                  ) : ehPerfilProprio ? (
+                  ) : (
                     <p className="bio" id="bioPerfil">{bio}</p>
-                  ) : null}
+                  )}
                 </div>
                 <div className="resumo-conta">
                   {editando && ehPerfilProprio ? (
@@ -1114,13 +1230,18 @@ export default function PerfilComunidade({
                       <h2>Capturas favoritas</h2>
                     </div>
                     {editando && <button type="button" className="alca-secao" title="Arrastar seção" onPointerDown={(evento) => iniciarArrastoSecao(evento, "capturas")}>⠿</button>}
-                    <button
-                      className="link-botao"
-                      type="button"
-                      onClick={onAbrirBiblioteca}
-                    >
-                      Ver todas <span>→</span>
-                    </button>
+                    {ehPerfilProprio && (
+                      <button
+                        className="link-botao"
+                        type="button"
+                        onClick={() => {
+                          setPaginaCapturas(1);
+                          setMostrandoTodasCapturas((valor) => !valor);
+                        }}
+                      >
+                        {mostrandoTodasCapturas ? "Ver favoritas" : "Ver todas"} <span>→</span>
+                      </button>
+                    )}
                   </div>
                   {editando && (
                     <div className="seletor-capturas inline">
@@ -1190,8 +1311,17 @@ export default function PerfilComunidade({
                     <div className="estado-vazio-perfil">
                       <strong>Nenhuma captura encontrada</strong>
                       <span>
-                        As imagens salvas na pasta screenshots das suas instâncias aparecerão aqui.
+                        {ehPerfilProprio
+                          ? "As imagens salvas na pasta screenshots das suas instâncias aparecerão aqui."
+                          : "Este jogador ainda não publicou capturas favoritas."}
                       </span>
+                    </div>
+                  )}
+                  {mostrandoTodasCapturas && totalPaginasCapturas > 1 && (
+                    <div className="paginacao-capturas">
+                      <button type="button" disabled={carregandoCapturas || paginaCapturas <= 1} onClick={() => setPaginaCapturas((pagina) => Math.max(1, pagina - 1))}>← Anterior</button>
+                      <span>{paginaCapturas} / {totalPaginasCapturas} · {totalCapturas} capturas</span>
+                      <button type="button" disabled={carregandoCapturas || paginaCapturas >= totalPaginasCapturas} onClick={() => setPaginaCapturas((pagina) => pagina + 1)}>Próxima →</button>
                     </div>
                   )}
                 </section>
@@ -1222,7 +1352,9 @@ export default function PerfilComunidade({
                       <article
                         className="atividade-cartao"
                         key={instancia.id}
-                        onClick={() => onAbrirInstancia(instancia)}
+                        onClick={() => {
+                          if (instancia.path) onAbrirInstancia(instancia);
+                        }}
                       >
                         <div className="atividade-capa">
                           <img
@@ -1284,13 +1416,15 @@ export default function PerfilComunidade({
                       <h2>Instâncias favoritas</h2>
                     </div>
                     {editando && <button type="button" className="alca-secao" title="Arrastar seção" onPointerDown={(evento) => iniciarArrastoSecao(evento, "instancias")}>⠿</button>}
-                    <button
-                      className="link-botao"
-                      type="button"
-                      onClick={onAbrirBiblioteca}
-                    >
-                      Biblioteca <span>→</span>
-                    </button>
+                    {ehPerfilProprio && (
+                      <button
+                        className="link-botao"
+                        type="button"
+                        onClick={onAbrirBiblioteca}
+                      >
+                        Biblioteca <span>→</span>
+                      </button>
+                    )}
                   </div>
                   {editando && (
                     <div className="seletor-instancias inline">
@@ -1355,7 +1489,8 @@ export default function PerfilComunidade({
                         <button
                           className="favoritar ativo"
                           type="button"
-                          aria-label="Remover dos favoritos"
+                          disabled={!ehPerfilProprio || !editando}
+                          aria-label={ehPerfilProprio ? "Instância favorita" : "Favorita deste jogador"}
                         >
                           ♥
                         </button>
@@ -1487,6 +1622,14 @@ export default function PerfilComunidade({
                           <div>
                             <div className="comentario-meta">
                               <strong>{nomeAutor}</strong>
+                              {comentario.emblemaDestaque && (
+                                <img
+                                  className="comentario-emblema-destaque"
+                                  src={comentario.emblemaDestaque.imagemUrl}
+                                  alt={comentario.emblemaDestaque.nome}
+                                  title={comentario.emblemaDestaque.descricao}
+                                />
+                              )}
                               <span>{formatarData(comentario.criadoEm)}</span>
                             </div>
                             <p>{comentario.conteudo}</p>

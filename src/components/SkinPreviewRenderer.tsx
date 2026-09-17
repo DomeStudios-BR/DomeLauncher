@@ -283,7 +283,11 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
     const tratarPerdaContexto = (evento: Event) => {
       evento.preventDefault();
       if (descartado) return;
-      localStorage.setItem("dome-skins-modo-seguro", "true");
+      try {
+        localStorage.setItem("dome-skins-modo-seguro", "true");
+      } catch {
+        // A recuperação em memória não depende da persistência do WebView.
+      }
       setLoading(false);
       setErroModelo(true);
       onFalhaWebgl?.();
