@@ -5,6 +5,7 @@ import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Loader2 } from "../iconesPixelados";
+import { resolverTexturaMinecraft } from "../lib/texturaMinecraft";
 import modeloClassicoRaw from "../assets/models/classic-player.gltf?raw";
 import modeloSlimRaw from "../assets/models/slim-player.gltf?raw";
 
@@ -211,6 +212,13 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
   const [loading, setLoading] = useState(true);
   const [erroModelo, setErroModelo] = useState(false);
   const [tentativa, setTentativa] = useState(0);
+  const [erroTextura, setErroTextura] = useState(false);
+  const [carregandoTextura, setCarregandoTextura] = useState(true);
+  const aoProntoRef = useRef(onReady);
+  aoProntoRef.current = onReady;
+  useEffect(() => {
+    if (!loading && !carregandoTextura && !erroModelo && !erroTextura) aoProntoRef.current?.();
+  }, [loading, carregandoTextura, erroModelo, erroTextura]);
 
   const playAnimationRef = useRef<(name: string, once?: boolean) => void>(
     () => {},
@@ -344,7 +352,6 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
         applyCapeTexture(object, capeTextureRef.current, transparentTexture);
 
         setLoading(false);
-        if (onReady) onReady();
       })
       .catch((error) => {
         if (descartado) return;
@@ -372,6 +379,13 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
       controls.dispose();
       renderer.domElement.removeEventListener("webglcontextlost", tratarPerdaContexto);
       renderer.dispose();
+      renderer.forceContextLoss();
+      scene.traverse((objeto) => {
+        const malha = objeto as THREE.Mesh;
+        if (!malha.isMesh) return;
+        const materiais = Array.isArray(malha.material) ? malha.material : [malha.material];
+        materiais.forEach((material) => material.dispose());
+      });
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
@@ -437,9 +451,11 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
     if (!skinUrl) return;
 
     let descartada = false;
+    setErroTextura(false);
+    setCarregandoTextura(true);
     const textureLoader = new THREE.TextureLoader();
-    textureLoader.load(
-      skinUrl,
+    void resolverTexturaMinecraft(skinUrl).then((url) => textureLoader.load(
+      url,
       (texture) => {
         if (descartada) {
           texture.dispose();
@@ -452,27 +468,28 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
 
         skinTextureRef.current?.dispose();
         skinTextureRef.current = texture;
+        setCarregandoTextura(false);
 
         if (modelRef.current) {
           applyTexture(modelRef.current, texture);
         }
       },
       undefined,
-      (err) => console.error("Erro ao carregar textura da skin:", err),
-    );
+      () => { if (!descartada) { setErroTextura(true); setCarregandoTextura(false); } },
+    )).catch(() => { if (!descartada) { setErroTextura(true); setCarregandoTextura(false); } });
 
     return () => {
       descartada = true;
     };
-  }, [skinUrl]);
+  }, [skinUrl, tentativa]);
 
   // Load Cape Texture
   useEffect(() => {
     if (capeUrl) {
       let descartada = false;
       const textureLoader = new THREE.TextureLoader();
-      textureLoader.load(
-        capeUrl,
+      void resolverTexturaMinecraft(capeUrl).then((url) => textureLoader.load(
+        url,
         (texture) => {
           if (descartada) {
             texture.dispose();
@@ -492,7 +509,7 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
         },
         undefined,
         (err) => console.error("Erro ao carregar textura da capa:", err),
-      );
+      )).catch(() => { if (!descartada) setErroTextura(true); });
 
       return () => {
         descartada = true;
@@ -504,7 +521,7 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
         applyCapeTexture(modelRef.current, null, transparentTexture);
       }
     }
-  }, [capeUrl]);
+  }, [capeUrl, tentativa]);
 
   useEffect(() => {
     return () => {
@@ -527,15 +544,15 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
       {/* Container Dedicado ao Three.js para não conflitar com Loader */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
-      {loading && (
+      {(loading || carregandoTextura) && !erroModelo && !erroTextura && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <Loader2 className="animate-spin text-emerald-500" size={32} />
         </div>
       )}
-      {erroModelo && !loading && (
+      {(erroModelo || erroTextura) && !loading && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 text-center">
           <span className="text-xs text-white/45">
-            Não foi possível carregar o modelo 3D.
+            {erroTextura ? "Não foi possível carregar a textura. Tente novamente." : "Não foi possível carregar o modelo 3D."}
           </span>
           <button
             type="button"

@@ -23,6 +23,7 @@ import {
   Check,
   RefreshCw,
   Globe,
+  Star,
 } from "../iconesPixelados";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
@@ -52,6 +53,7 @@ import {
   EVENTO_PUBLICAR_INSTANCIA_SOCIAL,
   type PublicacaoInstanciaSocial,
 } from "../lib/eventosTransferenciaSocial";
+import ModalAnaliseModpack from "./social/ModalAnaliseModpack";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -274,6 +276,7 @@ export default function LibraryPage({
   );
   const [modpacksPorInstancia, setModpacksPorInstancia] = useState<Record<string, ModpackInstalado>>({});
   const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
+  const [modalAnalise, setModalAnalise] = useState<{ instancia: Instance; modpack: ModpackInstalado } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Salvar estado ao mudar
@@ -1475,6 +1478,14 @@ export default function LibraryPage({
                       Trocar versão do modpack
                     </ItemMenuContextual>
                   )}
+                  {modpack && (
+                    <ItemMenuContextual icone={<Star size={13} />} onClick={() => {
+                      setMenuContexto(null);
+                      setModalAnalise({ instancia, modpack });
+                    }}>
+                      Escrever análise
+                    </ItemMenuContextual>
+                  )}
                   <ItemMenuContextual icone={<Check size={13} />} onClick={() => {
                     const selecionadas = Array.from(idsSelecionados);
                     iniciarSelecaoMultipla(
@@ -1643,6 +1654,26 @@ export default function LibraryPage({
           </MenuContextual>
         )}
       </AnimatePresence>
+
+      {modalAnalise && (
+        <ModalAnaliseModpack
+          modpack={{
+            projectId: modalAnalise.modpack.projectId,
+            source: modalAnalise.modpack.source,
+            name: modalAnalise.modpack.name,
+            author: modalAnalise.modpack.author,
+            icon: modalAnalise.modpack.icon,
+            slug: modalAnalise.modpack.slug,
+            versionId: modalAnalise.modpack.versionId,
+            installedVersion: modalAnalise.modpack.installedVersion,
+          }}
+          instanciaId={modalAnalise.instancia.id}
+          instanciaNome={modalAnalise.instancia.name}
+          horasJogados={(modalAnalise.instancia.tempo_total_jogado_segundos ?? 0) / 3600}
+          onFechar={() => setModalAnalise(null)}
+          onPublicada={() => setModalAnalise(null)}
+        />
+      )}
 
       <AnimatePresence>
         {modalEscolhaImportacaoAberto && (

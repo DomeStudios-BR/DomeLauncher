@@ -1440,6 +1440,7 @@ export default function App() {
                   onAbrirInstancia={abrirGerenciadorInstancia}
                   onAbrirBiblioteca={() => navegarParaAba("instances")}
                   onGerenciarContas={() => setMenuContaAberto(true)}
+                  onAbrirPerfil={abrirPerfilSocial}
                 />
               </motion.div>
             )}

@@ -1,5 +1,14 @@
 # Comunicação do DomeLauncher com a API
 
+## Texturas de skins e capas
+
+As prévias 3D e miniaturas usam `baixar_textura_minecraft` para obter texturas de
+`textures.minecraft.net/texture/` pelo processo nativo. O comando força HTTPS, recusa redirecionamentos,
+limita a resposta a 1 MB e exige PNG, com timeout de 20 segundos. Texturas locais permanecem em Data URLs.
+Falhas na consulta de cosméticos e no download da skin são tratadas separadamente; a prévia usa uma skin
+padrão embutida enquanto não houver textura da conta disponível. O teste `verificar:skins` inclui a seleção
+e os modais com IPC simulado, sem comprovar o carregamento na máquina de um usuário afetado.
+
 ## Escopo e fontes
 
 Contrato conferido no código em 12/09/2026, incluindo as rotas do checkout local de
@@ -21,8 +30,10 @@ A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET
 Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
 PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. Bio e banner
-são personalizações locais e não são expostos a outros jogadores. Comentários e emblemas vêm da DomeAPI;
+são personalizações locais e não são expostos a outros jogadores. Comentários, emblemas e análises vêm da DomeAPI;
 sem sessão ou dados remotos, a tela não injeta identidade, comentários ou emblemas demonstrativos.
+Análises só existem para instâncias com `modpack.json` do Modrinth/CurseForge; instâncias personalizadas
+não oferecem publicação, e a API rejeita qualquer `source` diferente desses dois.
 
 ## Novidades
 
@@ -119,9 +130,14 @@ O normalizador de `discord_social.rs` é menos restritivo e aceita prefixo HTTP 
 | `POST /auth/logout` | `logout_launcher_social` | Sem corpo; retorno IPC `void` após sucesso HTTP |
 | `GET /social/profile/me` | `get_launcher_social_profile` | Perfil direto, sem envelope `perfil` |
 | `PATCH /social/profile/me` | `save_launcher_social_profile` | `{ nomeSocial?, handle?, contaMinecraftPrincipalUuid? }` → `{ sucesso?, perfil? }` |
-| `GET /social/profile/me/comments` | `get_launcher_profile_comments` | `{ comentarios }`, do mais recente ao mais antigo |
-| `POST /social/profile/me/comments` | `post_launcher_profile_comment` | `{ conteudo }` → comentário criado |
-| `DELETE /social/profile/me/comments/:id` | `delete_launcher_profile_comment` | Exclusão autenticada pelo dono do perfil |
+| `GET /social/profile/me/comments` | `get_launcher_profile_comments` | `{ comentarios }`, do mais recente ao mais antigo, com nome e avatar atuais do autor |
+| `POST /social/profile/me/comments` | `post_launcher_profile_comment` | `{ conteudo }` → comentário criado com a identidade real do autor |
+| `DELETE /social/profile/me/comments/:id` | `delete_launcher_profile_comment` | Exclusão autenticada pelo autor do comentário ou dono do perfil |
+| `POST /social/analises` | `publicar_analise_modpack` | `{ source, projectId, projectNome, recomendado, conteudo, ... }` → análise criada/atualizada; só `modrinth`/`curseforge` |
+| `GET /social/analises/projeto?source=&projectId=` | `listar_analises_projeto` | Análises do modpack com autor e curtidas |
+| `GET /social/profile/me/analises` | `listar_analises_perfil` | Análises publicadas pelo perfil |
+| `POST /social/analises/:id/curtir` | `curtir_analise_modpack` | Alterna curtida; não permite curtir a própria |
+| `DELETE /social/analises/:id` | `excluir_analise_modpack` | Exclusão autenticada pelo autor |
 | `PATCH /social/status/me` | `set_launcher_social_status` | `{ statusManual?, aparecerOffline? }` → `{ sucesso?, perfil? }` |
 | `POST /social/minecraft/link` | `link_launcher_minecraft_account` | `{ uuid, nome, minecraftAccessToken }` → `{ sucesso?, perfil? }` |
 | `DELETE /social/minecraft/:uuid` | `unlink_launcher_minecraft_account` | Sem corpo → `{ sucesso?, perfil? }` |

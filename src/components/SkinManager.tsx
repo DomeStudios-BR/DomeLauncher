@@ -116,7 +116,7 @@ export function SkinManager({ user }: SkinManagerProps) {
 
   const previewSkinUrl = useMemo(() => {
     if (!user) return "";
-    return skinAtualDataUrl || skinAtualUrl || `https://visage.surgeplay.com/skin/${user.uuid}?t=${cachePreview}`;
+    return skinAtualDataUrl || skinAtualUrl || SKINS_PADRAO[0].textureUrl;
   }, [cachePreview, skinAtualDataUrl, skinAtualUrl, user]);
   const previewEditorUrl = useMemo(
     () => previewArquivoUrl || previewSkinUrl,
@@ -143,7 +143,7 @@ export function SkinManager({ user }: SkinManagerProps) {
   const carregarCosmeticos = useCallback(async () => {
     if (!user) return;
     try {
-      const [cosmeticos, skinAtual] = await Promise.all([
+      const [resultadoCosmeticos, resultadoSkin] = await Promise.allSettled([
         invoke<CosmeticosSkin>("obter_cosmeticos_skin", {
           accessToken: user.access_token,
         }),
@@ -151,9 +151,23 @@ export function SkinManager({ user }: SkinManagerProps) {
           accessToken: user.access_token,
         }),
       ]);
-      setVariant(cosmeticos.variant);
-      setVariantOriginal(cosmeticos.variant);
-      setSkinAtualUrl(cosmeticos.skinUrl || null);
+      if (resultadoCosmeticos.status === "fulfilled") {
+        const cosmeticos = resultadoCosmeticos.value;
+        setVariant(cosmeticos.variant);
+        setVariantOriginal(cosmeticos.variant);
+        setSkinAtualUrl(cosmeticos.skinUrl || null);
+        setCapas(cosmeticos.capes || []);
+        const capaAtiva = cosmeticos.capes.find((capa) => capa.state.toLowerCase() === "active");
+        setCapaSelecionadaId(capaAtiva?.id || null);
+        setCapaOriginalId(capaAtiva?.id || null);
+      }
+      if (resultadoSkin.status === "rejected") {
+        setErroStatus("Não foi possível baixar sua skin. A prévia usa a textura disponível; tente reabrir a aba.");
+        return;
+      }
+      const skinAtual = resultadoSkin.value;
+      setVariant(skinAtual.variant);
+      setVariantOriginal(skinAtual.variant);
       setSkinAtualDataUrl(bytesParaDataUrl(skinAtual.bytes));
       const idAtual = identificarSkin(skinAtual.bytes, skinAtual.variant);
       setSkinAtualId(idAtual);
@@ -170,10 +184,6 @@ export function SkinManager({ user }: SkinManagerProps) {
         localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(lista));
         return lista;
       });
-      setCapas(cosmeticos.capes || []);
-      const capaAtiva = cosmeticos.capes.find((capa) => capa.state.toLowerCase() === "active");
-      setCapaSelecionadaId(capaAtiva?.id || null);
-      setCapaOriginalId(capaAtiva?.id || null);
     } catch (erro) {
       console.warn("Não foi possível carregar skins e capas:", erro);
     }

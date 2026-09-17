@@ -3,7 +3,15 @@ import type { FormEvent, PointerEvent as EventoPonteiroReact } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Instance } from "../hooks/useLauncher";
 import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
-import type { AmigoSocial, PerfilSocial, RespostaAmigosApi, RespostaSessaoRefresh, SessaoSocial } from "./social/tiposSocial";
+import type {
+  AmigoSocial,
+  AnaliseModpack,
+  PerfilSocial,
+  RespostaAmigosApi,
+  RespostaSessaoRefresh,
+  SessaoSocial,
+  StatusPresenca,
+} from "./social/tiposSocial";
 import "./PerfilComunidade.css";
 
 interface PerfilComunidadeProps {
@@ -13,6 +21,7 @@ interface PerfilComunidadeProps {
   onAbrirInstancia: (instancia: Instance) => void;
   onAbrirBiblioteca: () => void;
   onGerenciarContas: () => void;
+  onAbrirPerfil: (perfilId: string) => void;
 }
 
 interface CapturaPerfil {
@@ -36,6 +45,7 @@ interface ComentarioPerfil {
   criadoEm: string;
   autorPerfilId: string;
   autorNome: string;
+  autorAvatarUrl?: string | null;
 }
 
 type SecaoPerfil = "capturas" | "atividade" | "instancias" | "analises";
@@ -103,6 +113,22 @@ function formatarData(data: string | null | undefined): string {
   }).format(valor);
 }
 
+function obterStatusPresenca(dados: {
+  online: boolean;
+  status?: StatusPresenca;
+  aparecerOffline?: boolean;
+}): StatusPresenca {
+  if (dados.aparecerOffline || !dados.online) return "offline";
+  if (dados.status === "ausente") return "ausente";
+  return "online";
+}
+
+function rotuloStatusPresenca(status: StatusPresenca): string {
+  if (status === "ausente") return "AUSENTE";
+  if (status === "offline") return "OFFLINE";
+  return "ON-LINE";
+}
+
 export default function PerfilComunidade({
   instances,
   minecraftUuid,
@@ -110,6 +136,7 @@ export default function PerfilComunidade({
   onAbrirInstancia,
   onAbrirBiblioteca,
   onGerenciarContas,
+  onAbrirPerfil,
 }: PerfilComunidadeProps) {
   const personalizacaoInicial = useMemo(carregarPersonalizacao, []);
   const cacheInicial = useMemo(carregarCachePerfil, []);
@@ -118,6 +145,7 @@ export default function PerfilComunidade({
     [instances],
   );
   const [editando, setEditando] = useState(false);
+  const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
   const [bio, setBio] = useState(personalizacaoInicial.bio ?? "Criando mundos e explorando novas aventuras.");
   const [comentarios, setComentarios] = useState<ComentarioPerfil[]>(perfilId ? [] : cacheInicial?.comentarios ?? []);
   const [sessaoSocial, setSessaoSocial] = useState<SessaoSocial | null>(null);
@@ -244,6 +272,22 @@ export default function PerfilComunidade({
     return () => { ativo = false; };
   }, [minecraftUuid, perfilId]);
   useEffect(() => {
+    if (!sessaoSocial) return;
+    let ativo = true;
+    void invoke<AnaliseModpack[]>("listar_analises_perfil", {
+      apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+      accessToken: sessaoSocial.accessToken,
+      perfilId,
+    })
+      .then((lista) => {
+        if (ativo) setAnalises(Array.isArray(lista) ? lista : []);
+      })
+      .catch(() => {
+        if (ativo) setAnalises([]);
+      });
+    return () => { ativo = false; };
+  }, [sessaoSocial, perfilId]);
+  useEffect(() => {
     if (editando && ehPerfilProprio) setPaginaCapturas(1);
   }, [editando, ehPerfilProprio]);
   useEffect(() => {
@@ -335,6 +379,14 @@ export default function PerfilComunidade({
   const urlAvatar = avatarPersonalizado || (uuidAvatar
     ? `https://mc-heads.net/head/${uuidAvatar}/128`
     : null);
+  const perfilAutenticado = sessaoSocial?.perfil;
+  const statusPresenca = perfil ? obterStatusPresenca(perfil) : "offline";
+  const uuidAvatarAutor = perfilAutenticado?.contaMinecraftPrincipalUuid || minecraftUuid;
+  const urlAvatarAutor = uuidAvatarAutor
+    ? `https://mc-heads.net/head/${uuidAvatarAutor}/128`
+    : perfilAutenticado?.discordAvatar
+      ? `https://cdn.discordapp.com/avatars/${perfilAutenticado.discordId}/${perfilAutenticado.discordAvatar}.png?size=128`
+      : null;
   const lerImagem = (
     arquivo: File | undefined,
     concluir: (dados: string) => void,
@@ -349,12 +401,21 @@ export default function PerfilComunidade({
     const dados = new FormData(evento.currentTarget);
     const texto = String(dados.get("comentario") ?? "").trim();
     if (!texto || !sessaoSocial) return;
-    const comentario = await invoke<ComentarioPerfil>("post_launcher_profile_comment", {
+    const comentarioRecebido = await invoke<ComentarioPerfil>("post_launcher_profile_comment", {
       apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
       accessToken: sessaoSocial.accessToken,
       conteudo: texto,
       perfilId,
     });
+    const comentario = comentarioRecebido.autorPerfilId === perfilAutenticado?.perfilId
+      ? {
+          ...comentarioRecebido,
+          autorNome: perfilAutenticado.nomeSocial
+            || perfilAutenticado.discordGlobalName
+            || perfilAutenticado.discordUsername,
+          autorAvatarUrl: comentarioRecebido.autorAvatarUrl || urlAvatarAutor,
+        }
+      : comentarioRecebido;
     setComentarios((atuais) => {
       const atualizados = [comentario, ...atuais];
       if (perfil) salvarCachePerfil(perfil, atualizados);
@@ -374,6 +435,19 @@ export default function PerfilComunidade({
       if (perfil) salvarCachePerfil(perfil, atualizados);
       return atualizados;
     });
+  };
+  const excluirAnalise = async (analiseId: string) => {
+    if (!sessaoSocial || !confirm("Excluir esta análise?")) return;
+    try {
+      await invoke("excluir_analise_modpack", {
+        apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+        accessToken: sessaoSocial.accessToken,
+        analiseId,
+      });
+      setAnalises((atuais) => atuais.filter((analise) => analise.id !== analiseId));
+    } catch {
+      alert("Não foi possível excluir a análise.");
+    }
   };
   const alternarEmblemaExibido = (emblemaId: string) => {
     setEmblemasExibidosIds((atuais) => {
@@ -728,7 +802,10 @@ export default function PerfilComunidade({
                 />
               </div>
               <div className="perfil-cabecalho">
-                <div className="avatar-moldura preset-rubi" id="avatarMoldura">
+                <div
+                  className={`avatar-moldura preset-rubi status-${statusPresenca}`}
+                  id="avatarMoldura"
+                >
                   {avatarPersonalizado ? (
                     <img
                       id="avatarCustomizado"
@@ -830,7 +907,10 @@ export default function PerfilComunidade({
                       />
                     </svg>
                   )}
-                  <span className="avatar-online" title="On-line" />
+                  <span
+                    className={`avatar-status status-${statusPresenca}`}
+                    title={rotuloStatusPresenca(statusPresenca)}
+                  />
                   {editando && (
                     <label className="editar-imagem editar-avatar" htmlFor="arquivoAvatar">
                       Trocar
@@ -855,7 +935,9 @@ export default function PerfilComunidade({
                         title={`${emblemaDestaque.nome} — ${emblemaDestaque.descricao}`}
                       />
                     )}
-                    {perfil?.online && <span className="estado-online">ON-LINE</span>}
+                    <span className={`estado-presenca status-${statusPresenca}`}>
+                      {rotuloStatusPresenca(statusPresenca)}
+                    </span>
                   </div>
                   {handlePerfil && <p className="arroba">@{handlePerfil}</p>}
                   {editando ? (
@@ -1001,7 +1083,7 @@ export default function PerfilComunidade({
                 type="button"
                 onClick={() => abrirSecao("analises")}
               >
-                ANÁLISES <span>4</span>
+                ANÁLISES <span>{analises.length}</span>
               </button>
             </nav>
             {editando && (
@@ -1299,34 +1381,58 @@ export default function PerfilComunidade({
                       <h2>Análises</h2>
                     </div>
                     {editando && <button type="button" className="alca-secao" title="Arrastar seção" onPointerDown={(evento) => iniciarArrastoSecao(evento, "analises")}>⠿</button>}
-                    <button className="link-botao" type="button">
-                      Ver 4 análises <span>→</span>
+                    <button className="link-botao" type="button" onClick={() => abrirSecao("analises")}>
+                      Ver {analises.length} {analises.length === 1 ? "análise" : "análises"} <span>→</span>
                     </button>
                   </div>
-                  <article className="analise-card">
-                    <div className="analise-icone">
-                      <img
-                        src="/perfil-comunidade/assets/icons/campfire.png"
-                        alt=""
-                      />
+                  {analises.length > 0 ? (
+                    <div className="lista-analises">
+                      {analises.map((analise) => (
+                        <article className="analise-card" key={analise.id}>
+                          <div className="analise-icone">
+                            <img
+                              src={analise.projectIcon || "/perfil-comunidade/assets/icons/campfire.png"}
+                              alt=""
+                            />
+                          </div>
+                          <div className="analise-corpo">
+                            <div>
+                              <span className={analise.recomendado ? "recomendado" : "nao-recomendado"}>
+                                {analise.recomendado ? "◆ RECOMENDADO" : "◆ NÃO RECOMENDADO"}
+                              </span>
+                              {typeof analise.horasRegistradas === "number" && (
+                                <span className="horas-analise">
+                                  {analise.horasRegistradas.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h registradas
+                                </span>
+                              )}
+                            </div>
+                            <h3>{analise.projectNome}</h3>
+                            <p>“{analise.conteudo}”</p>
+                            <small>
+                              Publicada em {formatarData(analise.criadoEm)} · {analise.totalCurtidas} {analise.totalCurtidas === 1 ? "pessoa achou útil" : "pessoas acharam útil"}
+                              {ehPerfilProprio && (
+                                <>
+                                  {" · "}
+                                  <button type="button" className="link-excluir-analise" onClick={() => void excluirAnalise(analise.id)}>
+                                    Excluir
+                                  </button>
+                                </>
+                              )}
+                            </small>
+                          </div>
+                        </article>
+                      ))}
                     </div>
-                    <div className="analise-corpo">
-                      <div>
-                        <span className="recomendado">◆ RECOMENDADO</span>
-                        <span className="horas-analise">
-                          84,1 h registradas
-                        </span>
-                      </div>
-                      <h3>Prominence II RPG</h3>
-                      <p>
-                        “A progressão realmente recompensa explorar. Só precisa
-                        explicar melhor a primeira árvore de talentos.”
-                      </p>
-                      <small>
-                        Publicada em 26 de agosto · 18 pessoas acharam útil
-                      </small>
+                  ) : (
+                    <div className="estado-vazio-perfil compacto">
+                      <strong>Nenhuma análise publicada</strong>
+                      <span>
+                        {ehPerfilProprio
+                          ? "Clique com o botão direito em uma instância de modpack para escrever sua primeira análise."
+                          : "Este perfil ainda não publicou análises de modpacks."}
+                      </span>
                     </div>
-                  </article>
+                  )}
                 </section>
                 <section className="secao comentarios" id="comentarios" style={{ order: 999 }}>
                   <div className="secao-titulo">
@@ -1342,7 +1448,13 @@ export default function PerfilComunidade({
                     id="formComentario"
                     onSubmit={publicarComentario}
                   >
-                    {urlAvatar && <img className="comentario-avatar imagem" src={urlAvatar} alt="" />}
+                    {urlAvatarAutor ? (
+                      <img className="comentario-avatar imagem" src={urlAvatarAutor} alt="" />
+                    ) : (
+                      <span className="comentario-avatar eu">
+                        {(perfilAutenticado?.nomeSocial || perfilAutenticado?.discordUsername || "V").charAt(0).toUpperCase()}
+                      </span>
+                    )}
                     <label className="sr-only" htmlFor="campoComentario">
                       Comentar no perfil
                     </label>
@@ -1357,26 +1469,34 @@ export default function PerfilComunidade({
                     </button>
                   </form>
                   <div className="lista-comentarios" id="listaComentarios">
-                    {comentarios.map((comentario) => (
-                      <article
-                        className="comentario"
-                        key={comentario.id}
-                      >
-                        {comentario.autorPerfilId === perfil.perfilId && urlAvatar ? (
-                          <img className="comentario-avatar imagem" src={urlAvatar} alt="" />
-                        ) : (
-                          <span className="comentario-avatar eu">{comentario.autorNome.charAt(0).toUpperCase()}</span>
-                        )}
-                        <div>
-                          <div className="comentario-meta">
-                            <strong>{comentario.autorNome}</strong>
-                            <span>{formatarData(comentario.criadoEm)}</span>
+                    {comentarios.map((comentario) => {
+                      const comentarioDoUsuario = comentario.autorPerfilId === perfilAutenticado?.perfilId;
+                      const nomeAutor = comentarioDoUsuario
+                        ? perfilAutenticado.nomeSocial
+                          || perfilAutenticado.discordGlobalName
+                          || perfilAutenticado.discordUsername
+                        : comentario.autorNome;
+                      const avatarAutor = comentario.autorAvatarUrl || (comentarioDoUsuario ? urlAvatarAutor : null);
+                      return (
+                        <article className="comentario" key={comentario.id}>
+                          {avatarAutor ? (
+                            <img className="comentario-avatar imagem" src={avatarAutor} alt="" />
+                          ) : (
+                            <span className="comentario-avatar eu">{nomeAutor.charAt(0).toUpperCase()}</span>
+                          )}
+                          <div>
+                            <div className="comentario-meta">
+                              <strong>{nomeAutor}</strong>
+                              <span>{formatarData(comentario.criadoEm)}</span>
+                            </div>
+                            <p>{comentario.conteudo}</p>
+                            {(ehPerfilProprio || comentarioDoUsuario) && (
+                              <button type="button" onClick={() => void excluirComentario(comentario.id)}>Excluir</button>
+                            )}
                           </div>
-                          <p>{comentario.conteudo}</p>
-                          {ehPerfilProprio && <button type="button" onClick={() => void excluirComentario(comentario.id)}>Excluir</button>}
-                        </div>
-                      </article>
-                    ))}
+                        </article>
+                      );
+                    })}
                     {comentarios.length === 0 && (
                       <div className="estado-vazio-perfil compacto">Nenhum comentário ainda.</div>
                     )}
@@ -1390,20 +1510,52 @@ export default function PerfilComunidade({
                     <span>{amigos.length}</span>
                   </div>
                   <div className="lista-amigos-perfil">
-                    {amigos.slice(0, 8).map((amigo) => (
-                      <article key={amigo.friendProfileId} className="amigo-perfil-item">
-                        {amigo.avatarUrl ? <img src={amigo.avatarUrl} alt="" /> : <span>{amigo.nome.charAt(0)}</span>}
-                        <div><strong className="nome-com-emblema"><span>{amigo.nome}</span>{amigo.emblemaDestaque && <img className="mini-emblema" src={amigo.emblemaDestaque.imagemUrl} alt={amigo.emblemaDestaque.nome} title={amigo.emblemaDestaque.nome} />}</strong><small>{amigo.online ? "On-line" : "Offline"}</small></div>
-                      </article>
-                    ))}
+                    {amigos.slice(0, 8).map((amigo) => {
+                      const estaOnline = obterStatusPresenca(amigo) === "online";
+                      const instanciaAtual = amigo.atividadeAtual?.tipo !== "launcher"
+                        ? amigo.atividadeAtual?.modpackNome || amigo.atividadeAtual?.instanciaNome
+                        : null;
+
+                      return (
+                        <button
+                          key={amigo.friendProfileId}
+                          type="button"
+                          className="amigo-perfil-item"
+                          onClick={() => onAbrirPerfil(amigo.friendProfileId)}
+                          aria-label={`Abrir perfil de ${amigo.nome}`}
+                        >
+                          {amigo.avatarUrl
+                            ? <img src={amigo.avatarUrl} alt="" />
+                            : <span>{amigo.nome.charAt(0)}</span>}
+                          <div>
+                            <strong className="nome-com-emblema">
+                              <span>{amigo.nome}</span>
+                              {estaOnline && <i className="presenca-amigo-online" title="On-line" />}
+                              {amigo.emblemaDestaque && (
+                                <img
+                                  className="mini-emblema"
+                                  src={amigo.emblemaDestaque.imagemUrl}
+                                  alt={amigo.emblemaDestaque.nome}
+                                  title={amigo.emblemaDestaque.nome}
+                                />
+                              )}
+                            </strong>
+                            {instanciaAtual && <small>{instanciaAtual}</small>}
+                          </div>
+                        </button>
+                      );
+                    })}
                     {amigos.length === 0 && <p className="opcoes-vazias">Nenhum amigo para mostrar.</p>}
                   </div>
                 </section>
                 <section className="painel-lateral">
                   <div className="painel-titulo">
-                    <h2>Grupos</h2>
-                    <span>5</span>
+                    <div className="painel-titulo-com-pill">
+                      <h2>Grupos</h2>
+                      <span className="pill-em-breve">em breve</span>
+                    </div>
                   </div>
+                  {/* Mock de grupos temporariamente oculto
                   <div className="lista-grupos">
                     <article className="grupo-item">
                       <div className="grupo-icone oficina">
@@ -1445,6 +1597,7 @@ export default function PerfilComunidade({
                   <button className="botao-largura" type="button">
                     Ver todos os grupos
                   </button>
+                  */}
                 </section>
               </aside>
             </div>

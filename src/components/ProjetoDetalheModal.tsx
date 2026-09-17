@@ -14,6 +14,8 @@ import {
 } from "../iconesPixelados";
 import { cn } from "../lib/utils";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
+import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
+import type { AnaliseModpack, SessaoSocial } from "./social/tiposSocial";
 import type { Instance } from "../hooks/useLauncher";
 import { addFavorite, isFavorite, removeFavorite, type FavoriteItem } from "./Favorites";
 import {
@@ -32,7 +34,7 @@ export type AbaOrigemProjeto =
   | "favorites"
   | "instances"
   | "instance-manager";
-type AbaConteudoProjeto = "descricao" | "versoes" | "galeria";
+type AbaConteudoProjeto = "descricao" | "versoes" | "galeria" | "analises";
 
 interface ImagemGaleriaProjeto {
   url: string;
@@ -494,6 +496,11 @@ export default function ProjetoDetalheModal({
   const [sucesso, setSucesso] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [favorito, setFavorito] = useState(() => isFavorite(projeto.id));
+  const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
+  const [carregandoAnalises, setCarregandoAnalises] = useState(false);
+  const [erroAnalises, setErroAnalises] = useState<string | null>(null);
+  const [tokenSocial, setTokenSocial] = useState<string | null | undefined>(undefined);
+  const [curtindoId, setCurtindoId] = useState<string | null>(null);
 
   useEffect(() => {
     const voltarComEscape = (evento: KeyboardEvent) => {
@@ -543,6 +550,78 @@ export default function ProjetoDetalheModal({
       cancelado = true;
     };
   }, [instanciaInicialId, projeto.id, projeto.source, projeto.versaoInicialId]);
+
+  useEffect(() => {
+    setAnalises([]);
+    setErroAnalises(null);
+    setTokenSocial(undefined);
+  }, [projeto.id, projeto.source]);
+
+  useEffect(() => {
+    if (abaConteudo !== "analises" || projeto.project_type !== "modpack") return;
+    let cancelado = false;
+    setCarregandoAnalises(true);
+    setErroAnalises(null);
+    const carregar = async () => {
+      try {
+        let token: string | null = null;
+        try {
+          const conteudo = await invoke<string | null>("carregar_sessao_social_local");
+          token = conteudo ? ((JSON.parse(conteudo) as SessaoSocial).accessToken ?? null) : null;
+        } catch {
+          token = null;
+        }
+        if (!cancelado) setTokenSocial(token);
+        if (!token) {
+          if (!cancelado) {
+            setErroAnalises("Conecte o Discord na aba social para ver as análises dos seus amigos.");
+          }
+          return;
+        }
+        const lista = await invoke<AnaliseModpack[]>("listar_analises_projeto", {
+          apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+          accessToken: token,
+          source: projeto.source,
+          projectId: projeto.id,
+        });
+        if (!cancelado) setAnalises(Array.isArray(lista) ? lista : []);
+      } catch (e) {
+        if (!cancelado) setErroAnalises(extrairMensagemErro(e, "Não foi possível carregar as análises."));
+      } finally {
+        if (!cancelado) setCarregandoAnalises(false);
+      }
+    };
+    void carregar();
+    return () => {
+      cancelado = true;
+    };
+  }, [abaConteudo, projeto.id, projeto.source, projeto.project_type]);
+
+  const curtirAnalise = async (analise: AnaliseModpack) => {
+    if (!tokenSocial || curtindoId) return;
+    setCurtindoId(analise.id);
+    try {
+      const resposta = await invoke<{ curtido: boolean; totalCurtidas: number }>(
+        "curtir_analise_modpack",
+        {
+          apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+          accessToken: tokenSocial,
+          analiseId: analise.id,
+        }
+      );
+      setAnalises((atuais) =>
+        atuais.map((item) =>
+          item.id === analise.id
+            ? { ...item, curtidoPorMim: resposta.curtido, totalCurtidas: resposta.totalCurtidas }
+            : item
+        )
+      );
+    } catch (e) {
+      setErroAnalises(extrairMensagemErro(e, "Não foi possível curtir a análise."));
+    } finally {
+      setCurtindoId(null);
+    }
+  };
 
   const instanciaSelecionada = useMemo(
     () =>
@@ -1301,6 +1380,19 @@ export default function ProjetoDetalheModal({
             >
               Galeria
             </button>
+            {projeto.project_type === "modpack" && (
+              <button
+                onClick={() => setAbaConteudo("analises")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
+                  abaConteudo === "analises"
+                    ? "bg-emerald-500 text-black"
+                    : "text-white/60 hover:text-white"
+                )}
+              >
+                Análises
+              </button>
+            )}
           </div>
         </div>
 
@@ -1473,6 +1565,67 @@ export default function ProjetoDetalheModal({
                   ))}
                 </div>
               ))}
+
+            {abaConteudo === "analises" && projeto.project_type === "modpack" && (
+              <div className="mx-auto w-full max-w-3xl space-y-3">
+                {carregandoAnalises && analises.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-white/50">
+                    <Loader2 size={14} className="animate-spin" />
+                    Carregando análises...
+                  </div>
+                )}
+                {erroAnalises && <p className="text-xs text-orange-200">{erroAnalises}</p>}
+                {!carregandoAnalises && !erroAnalises && analises.length === 0 && (
+                  <p className="text-sm text-white/55">
+                    Nenhum amigo publicou análise deste modpack ainda. Clique com o botão direito
+                    na instância, na biblioteca, para escrever a primeira.
+                  </p>
+                )}
+                {analises.map((analise) => (
+                  <article
+                    key={analise.id}
+                    className="rounded-2xl border border-white/10 bg-black/25 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-bold text-white/90">
+                          {analise.autorNome}
+                          {analise.autorHandle && (
+                            <span className="ml-1 font-normal text-white/40">@{analise.autorHandle}</span>
+                          )}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-white/40">
+                          <span className={analise.recomendado ? "font-bold text-emerald-300" : "font-bold text-red-300"}>
+                            {analise.recomendado ? "◆ Recomendo" : "◆ Não recomendo"}
+                          </span>
+                          {typeof analise.horasRegistradas === "number" && (
+                            <span>
+                              {" "}· {analise.horasRegistradas.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h registradas
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void curtirAnalise(analise)}
+                        disabled={!tokenSocial || curtindoId === analise.id}
+                        title={analise.curtidoPorMim ? "Remover curtida" : "Achar útil"}
+                        className={cn(
+                          "inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-colors disabled:opacity-40",
+                          analise.curtidoPorMim
+                            ? "border-pink-400/50 bg-pink-500/15 text-pink-300"
+                            : "border-white/10 bg-white/5 text-white/55 hover:text-white"
+                        )}
+                      >
+                        <Heart size={12} fill={analise.curtidoPorMim ? "currentColor" : "none"} />
+                        {analise.totalCurtidas}
+                      </button>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-white/80">“{analise.conteudo}”</p>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
 
           {abaConteudo === "versoes" && projeto.project_type !== "modpack" && (

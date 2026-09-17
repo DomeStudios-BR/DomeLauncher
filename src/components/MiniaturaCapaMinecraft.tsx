@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { resolverTexturaMinecraft } from "../lib/texturaMinecraft";
 
 interface MiniaturaCapaMinecraftProps {
     capaUrl: string;
@@ -35,7 +36,11 @@ export function MiniaturaCapaMinecraft({ capaUrl, className }: MiniaturaCapaMine
                 canvas.height,
             );
         };
-        imagem.src = capaUrl;
+        void resolverTexturaMinecraft(capaUrl).then((url) => {
+            if (ativa) imagem.src = url;
+        }).catch(() => {
+            if (ativa) canvas.setAttribute("aria-label", "Não foi possível carregar a capa");
+        });
 
         return () => {
             ativa = false;

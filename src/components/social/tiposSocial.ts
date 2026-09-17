@@ -215,6 +215,29 @@ export interface InstanciaResumo {
   name: string;
 }
 
+export interface AnaliseModpack {
+  id: string;
+  autorPerfilId: string;
+  autorNome: string;
+  autorHandle?: string | null;
+  source: "modrinth" | "curseforge";
+  projectId: string;
+  projectNome: string;
+  projectIcon?: string | null;
+  projectAuthor?: string | null;
+  slug?: string | null;
+  versionId?: string | null;
+  installedVersion?: string | null;
+  instanciaNome?: string | null;
+  horasRegistradas?: number | null;
+  recomendado: boolean;
+  conteudo: string;
+  totalCurtidas: number;
+  curtidoPorMim: boolean;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
 export interface SocialSidebarProps {
   usuarioMinecraft: ContaMinecraft | null;
   iconeAtividadeLocal?: string | null;

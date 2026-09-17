@@ -208,6 +208,7 @@ pub struct ComentarioPerfilLauncherApi {
     pub criado_em: String,
     pub autor_perfil_id: String,
     pub autor_nome: String,
+    pub autor_avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1599,6 +1600,182 @@ fn normalizar_token_social(access_token: &str) -> Result<String, String> {
     }
 
     Ok(token)
+}
+
+/// Publica (ou atualiza, caso já exista uma do autor para o projeto) a análise
+/// de um modpack do Modrinth/CurseForge. Instâncias personalizadas não possuem
+/// `source`/`projectId` e são recusadas pela API.
+#[tauri::command]
+pub async fn publicar_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    dados: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let fonte = dados
+        .get("source")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if fonte != "modrinth" && fonte != "curseforge" {
+        return Err(
+            "Análises só podem ser publicadas para modpacks do Modrinth ou CurseForge.".to_string(),
+        );
+    }
+    if dados
+        .get("projectId")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err("Projeto do modpack inválido.".to_string());
+    }
+    if dados
+        .get("conteudo")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err("Escreva sua análise antes de publicar.".to_string());
+    }
+    let resposta = criar_cliente_http_launcher()?
+        .post(format!(
+            "{}/api/launcher/social/analises",
+            normalizar_api_base_url(&api_base_url)?
+        ))
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .json(&dados)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao publicar análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao publicar análise.").await);
+    }
+    let dados_resposta: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    dados_resposta
+        .get("analise")
+        .cloned()
+        .ok_or("A API não retornou a análise publicada.".into())
+}
+
+#[tauri::command]
+pub async fn listar_analises_perfil(
+    api_base_url: String,
+    access_token: String,
+    perfil_id: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/{}/analises",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&destino)
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .get(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao carregar análises: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao carregar análises.").await);
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(dados.get("analises").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn listar_analises_projeto(
+    api_base_url: String,
+    access_token: String,
+    source: String,
+    project_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let fonte = source.trim().to_lowercase();
+    if fonte != "modrinth" && fonte != "curseforge" {
+        return Err("Fonte do projeto inválida.".to_string());
+    }
+    if project_id.trim().is_empty() {
+        return Err("Projeto inválido.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/projeto?source={}&projectId={}",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&fonte),
+        urlencoding::encode(project_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .get(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao carregar análises do projeto: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Falha ao carregar análises do projeto.",
+        )
+        .await);
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(dados.get("analises").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn curtir_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    analise_id: String,
+) -> Result<serde_json::Value, String> {
+    if analise_id.trim().is_empty() {
+        return Err("Análise inválida.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/{}/curtir",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(analise_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .post(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao curtir análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao curtir análise.").await);
+    }
+    resposta.json().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn excluir_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    analise_id: String,
+) -> Result<(), String> {
+    if analise_id.trim().is_empty() {
+        return Err("Análise inválida.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/{}",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(analise_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .delete(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao excluir análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao excluir análise.").await);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

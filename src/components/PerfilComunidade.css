@@ -461,6 +461,16 @@
     border-color 250ms ease;
 }
 
+.perfil-comunidade .avatar-moldura.status-ausente {
+  border-color: #ffc04e;
+  background: linear-gradient(135deg, #ffc04e, #6b4810 49%, #171717 50%);
+}
+
+.perfil-comunidade .avatar-moldura.status-offline {
+  border-color: #555;
+  background: linear-gradient(135deg, #666, #2c2c2c 49%, #171717 50%);
+}
+
 .perfil-comunidade .avatar-moldura.preset-vale {
   border-color: #55886f;
   background: linear-gradient(135deg, #64c48f, #193e2d 49%, #171717 50%);
@@ -485,14 +495,22 @@
   display: none;
 }
 
-.perfil-comunidade .avatar-online {
+.perfil-comunidade .avatar-status {
   position: absolute;
   right: 8px;
   bottom: 8px;
   width: 18px;
   height: 18px;
   border: 4px solid #101010;
+  background: #666;
+}
+
+.perfil-comunidade .avatar-status.status-online {
   background: var(--verde);
+}
+
+.perfil-comunidade .avatar-status.status-ausente {
+  background: #ffc04e;
 }
 
 .perfil-comunidade .identidade {
@@ -562,14 +580,29 @@
   font-weight: 500;
 }
 
-.perfil-comunidade .estado-online {
+.perfil-comunidade .estado-presenca {
   padding: 4px 7px;
-  color: var(--verde);
-  border: 1px solid rgba(97, 212, 142, 0.35);
-  background: rgba(97, 212, 142, 0.08);
   font-family: "MinecraftSeven", monospace;
   font-size: 9px;
   letter-spacing: 0.08em;
+}
+
+.perfil-comunidade .estado-presenca.status-online {
+  color: var(--verde);
+  border: 1px solid rgba(97, 212, 142, 0.35);
+  background: rgba(97, 212, 142, 0.08);
+}
+
+.perfil-comunidade .estado-presenca.status-ausente {
+  color: #ffc04e;
+  border: 1px solid rgba(255, 192, 78, 0.35);
+  background: rgba(255, 192, 78, 0.08);
+}
+
+.perfil-comunidade .estado-presenca.status-offline {
+  color: #888;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .perfil-comunidade .arroba {
@@ -1442,6 +1475,31 @@
   font-size: 9px;
 }
 
+.perfil-comunidade .lista-analises {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perfil-comunidade .nao-recomendado {
+  color: #e0685c;
+  font-family: "MinecraftSeven", monospace;
+  font-size: 9px;
+}
+
+.perfil-comunidade .link-excluir-analise {
+  cursor: pointer;
+  padding: 0;
+  color: #8a8a88;
+  background: transparent;
+  font-size: 9px;
+  text-decoration: underline;
+}
+
+.perfil-comunidade .link-excluir-analise:hover {
+  color: var(--vermelho);
+}
+
 .perfil-comunidade .contador-titulo {
   margin-left: 3px;
   color: var(--texto-fraco);
@@ -1560,6 +1618,32 @@
 
 .perfil-comunidade .painel-titulo {
   margin-bottom: 15px;
+}
+
+.perfil-comunidade .painel-lateral .painel-titulo:last-child {
+  margin-bottom: 0;
+}
+
+.perfil-comunidade .painel-titulo-com-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.perfil-comunidade .pill-em-breve {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-fraco);
+  background: var(--cartao-alto);
+  border: 1px solid var(--borda);
+  border-radius: 2px;
 }
 
 .perfil-comunidade .painel-titulo h2 {
@@ -2064,7 +2148,20 @@
 .perfil-comunidade .acoes-editar-banner { position: absolute; right: 24px; top: 24px; z-index: 5; display: flex; gap: 8px; }
 .perfil-comunidade .acoes-editar-banner .editar-banner { position: static; }
 .perfil-comunidade .acoes-editar-banner button { border: 1px solid #ffffff22; background: #111d; color: #ddd; padding: 8px 12px; }
-.perfil-comunidade .amigo-perfil-item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.perfil-comunidade .amigo-perfil-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.perfil-comunidade .amigo-perfil-item:hover strong { color: var(--cor-acento-300); }
 .perfil-comunidade .amigo-perfil-item > img,
 .perfil-comunidade .amigo-perfil-item > span {
   width: 34px; height: 34px; object-fit: contain; display: grid; place-items: center;
@@ -2072,7 +2169,20 @@
 }
 .perfil-comunidade .amigo-perfil-item div { display: grid; min-width: 0; }
 .perfil-comunidade .amigo-perfil-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.perfil-comunidade .amigo-perfil-item small { color: #777; font-size: 10px; }
+.perfil-comunidade .amigo-perfil-item small {
+  overflow: hidden;
+  color: var(--cor-acento-300);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.perfil-comunidade .presenca-amigo-online {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  background: var(--verde);
+  box-shadow: 0 0 7px rgba(97, 212, 142, 0.35);
+}
 
 /* Perfis de terceiros nunca herdam dados locais do dono do Launcher. */
 .perfil-comunidade.perfil-alheio .abas-perfil [data-alvo="atividade"],
