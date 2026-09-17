@@ -80,7 +80,11 @@ function carregarCachePerfil(): CachePerfilComunidade | null {
 }
 
 function salvarCachePerfil(perfil: PerfilSocial, comentarios: ComentarioPerfil[]): void {
-  localStorage.setItem(CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
+  try {
+    localStorage.setItem(CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
+  } catch {
+    localStorage.removeItem(CHAVE_CACHE_PERFIL);
+  }
 }
 
 function identificarCaptura(captura: CapturaPerfil): string {
@@ -92,6 +96,31 @@ function carregarPersonalizacao(): Partial<PersonalizacaoPerfil> {
     return JSON.parse(localStorage.getItem(CHAVE_PERSONALIZACAO) ?? "{}") as Partial<PersonalizacaoPerfil>;
   } catch {
     return {};
+  }
+}
+
+function salvarPersonalizacaoLocal(personalizacao: PersonalizacaoPerfil): void {
+  try {
+    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(personalizacao));
+    return;
+  } catch {
+    localStorage.removeItem(CHAVE_PERSONALIZACAO);
+  }
+
+  const semMidiasIncorporadas = {
+    ...personalizacao,
+    avatarPersonalizado: personalizacao.avatarPersonalizado?.startsWith("data:")
+      ? null
+      : personalizacao.avatarPersonalizado,
+    bannerPersonalizado: personalizacao.bannerPersonalizado?.startsWith("data:")
+      ? null
+      : personalizacao.bannerPersonalizado,
+  };
+
+  try {
+    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(semMidiasIncorporadas));
+  } catch {
+    // O perfil remoto já foi salvo; a indisponibilidade deste cache não deve invalidar a operação.
   }
 }
 
@@ -186,6 +215,7 @@ export default function PerfilComunidade({
   const [mensagemAmizade, setMensagemAmizade] = useState<string | null>(null);
   const [mensagemCompartilhar, setMensagemCompartilhar] = useState<string | null>(null);
   const arrastoRef = useRef<{ secao: SecaoPerfil; ponteiroId: number; x: number; y: number; ativo: boolean } | null>(null);
+  const encerrarArrastoRef = useRef<(() => void) | null>(null);
   const ehPerfilProprio = !perfilId || perfilId === sessaoSocial?.perfil.perfilId;
   const [abaAtiva, setAbaAtiva] = useState("visao-geral");
   const atividadesRecentes = useMemo(
@@ -568,7 +598,10 @@ export default function PerfilComunidade({
   };
   const iniciarArrastoSecao = (evento: EventoPonteiroReact<HTMLElement>, secao: SecaoPerfil) => {
     if (!editando || evento.button !== 0 || !evento.isPrimary) return;
+    encerrarArrastoRef.current?.();
     arrastoRef.current = { secao, ponteiroId: evento.pointerId, x: evento.clientX, y: evento.clientY, ativo: false };
+    const alca = evento.currentTarget;
+    const ponteiroId = evento.pointerId;
     const mover = (movimento: PointerEvent) => {
       const arrasto = arrastoRef.current;
       if (!arrasto || movimento.pointerId !== arrasto.ponteiroId) return;
@@ -580,19 +613,40 @@ export default function PerfilComunidade({
       if (alvo) moverSecao(arrasto.secao, alvo);
       movimento.preventDefault();
     };
-    const finalizar = (fim: PointerEvent) => {
-      if (fim.pointerId !== arrastoRef.current?.ponteiroId) return;
+    const encerrar = () => {
       arrastoRef.current = null;
       setItemArrastado(null);
       window.removeEventListener("pointermove", mover);
       window.removeEventListener("pointerup", finalizar, true);
       window.removeEventListener("pointercancel", finalizar, true);
+      window.removeEventListener("blur", encerrar);
+      document.removeEventListener("visibilitychange", encerrarAoOcultar);
+      alca.removeEventListener("lostpointercapture", finalizarCaptura);
+      if (alca.hasPointerCapture(ponteiroId)) alca.releasePointerCapture(ponteiroId);
+      if (encerrarArrastoRef.current === encerrar) encerrarArrastoRef.current = null;
     };
+    const finalizar = (fim: PointerEvent) => {
+      if (fim.pointerId !== ponteiroId) return;
+      encerrar();
+    };
+    const finalizarCaptura = (fim: PointerEvent) => finalizar(fim);
+    const encerrarAoOcultar = () => {
+      if (document.hidden) encerrar();
+    };
+    encerrarArrastoRef.current = encerrar;
     window.addEventListener("pointermove", mover, { passive: false });
     window.addEventListener("pointerup", finalizar, true);
     window.addEventListener("pointercancel", finalizar, true);
+    window.addEventListener("blur", encerrar);
+    document.addEventListener("visibilitychange", encerrarAoOcultar);
+    alca.addEventListener("lostpointercapture", finalizarCaptura);
+    alca.setPointerCapture(ponteiroId);
     evento.preventDefault();
   };
+  useEffect(() => {
+    if (!editando) encerrarArrastoRef.current?.();
+  }, [editando]);
+  useEffect(() => () => encerrarArrastoRef.current?.(), []);
   const salvarPersonalizacao = async () => {
     if (!sessaoSocial || salvandoPerfil) {
       setErroSalvarPerfil("A sessão social ainda não está pronta. Tente novamente em instantes.");
@@ -627,14 +681,14 @@ export default function PerfilComunidade({
       window.dispatchEvent(
         new CustomEvent("dome:social-perfil-atualizado", { detail: { perfil: perfilAtualizado } }),
       );
-      localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify({
+      salvarPersonalizacaoLocal({
         bio,
         avatarPersonalizado,
         bannerPersonalizado: perfilAtualizado.bannerPerfilUrl ?? null,
         capturasFavoritas: perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? [],
         instanciasFavoritas,
         ordemSecoes,
-      } satisfies PersonalizacaoPerfil));
+      });
       salvarCachePerfil(perfilAtualizado, comentarios);
       setEditando(false);
     } catch (erro) {

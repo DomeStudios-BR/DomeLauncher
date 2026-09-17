@@ -29,8 +29,10 @@ Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, es
 A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET /api/launcher/friends`.
 Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
-PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. Bio e banner
-são personalizações locais e não são expostos a outros jogadores. Comentários, emblemas e análises vêm da DomeAPI;
+PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O banner,
+as capturas favoritas e os emblemas exibidos são salvos na DomeAPI. Se a cota do armazenamento local acabar,
+o cache de preferências descarta imagens incorporadas em base64 sem invalidar o salvamento remoto. Comentários,
+emblemas e análises vêm da DomeAPI;
 sem sessão ou dados remotos, a tela não injeta identidade, comentários ou emblemas demonstrativos.
 Análises só existem para instâncias com `modpack.json` do Modrinth/CurseForge; instâncias personalizadas
 não oferecem publicação, e a API rejeita qualquer `source` diferente desses dois.
