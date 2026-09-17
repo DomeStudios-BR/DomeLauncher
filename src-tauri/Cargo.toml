@@ -1,6 +1,6 @@
 [package]
 name = "dome-launcher"
-version = "0.2.6"
+version = "0.3.0"
 description = "Launcher desktop da Dome Studios para Minecraft"
 authors = ["Dome Studios"]
 edition = "2021"

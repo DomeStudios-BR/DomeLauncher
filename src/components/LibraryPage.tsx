@@ -23,6 +23,7 @@ import {
   Check,
   RefreshCw,
   Globe,
+  Star,
 } from "../iconesPixelados";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
@@ -44,10 +45,15 @@ import {
   obterImportacoesEmAndamento,
 } from "../stores/importacoesInstancias";
 import {
+  getCreatingInstances,
+  subscribeToCreating,
+} from "../stores/creatingInstances";
+import {
   EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS,
   EVENTO_PUBLICAR_INSTANCIA_SOCIAL,
   type PublicacaoInstanciaSocial,
 } from "../lib/eventosTransferenciaSocial";
+import ModalAnaliseModpack from "./social/ModalAnaliseModpack";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -248,6 +254,14 @@ export default function LibraryPage({
     obterImportacoesEmAndamento,
     obterImportacoesEmAndamento
   );
+  const [transferenciasSociaisEmAndamento, setTransferenciasSociaisEmAndamento] = useState(() =>
+    getCreatingInstances().filter((instancia) => instancia.id.startsWith("recebimento-social:"))
+  );
+  useEffect(() => subscribeToCreating(() => {
+    setTransferenciasSociaisEmAndamento(
+      getCreatingInstances().filter((instancia) => instancia.id.startsWith("recebimento-social:"))
+    );
+  }), []);
   const importandoInstancias = instanciasEmImportacao.length > 0;
   const [pastasAdicionaisImportacao, setPastasAdicionaisImportacao] = useState<string[]>([]);
   const [idsSelecionadosImportacao, setIdsSelecionadosImportacao] = useState<Set<string>>(
@@ -262,6 +276,7 @@ export default function LibraryPage({
   );
   const [modpacksPorInstancia, setModpacksPorInstancia] = useState<Record<string, ModpackInstalado>>({});
   const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
+  const [modalAnalise, setModalAnalise] = useState<{ instancia: Instance; modpack: ModpackInstalado } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Salvar estado ao mudar
@@ -1160,7 +1175,9 @@ export default function LibraryPage({
       </AnimatePresence>
 
       {/* Grupos e instâncias */}
-      {instances.length === 0 && instanciasEmImportacao.length === 0 ? (
+      {instances.length === 0
+        && instanciasEmImportacao.length === 0
+        && transferenciasSociaisEmAndamento.length === 0 ? (
         <div
           className="py-20 flex flex-col items-center justify-center text-white/20 border-2 border-dashed border-white/5 rounded-2xl"
           onContextMenu={abrirMenuContextoVazio}
@@ -1198,6 +1215,21 @@ export default function LibraryPage({
             <SecaoImportacoesEmAndamento
               instancias={instanciasEmImportacao}
               viewMode={state.viewMode}
+            />
+          )}
+          {transferenciasSociaisEmAndamento.length > 0 && (
+            <SecaoImportacoesEmAndamento
+              instancias={transferenciasSociaisEmAndamento.map((instancia) => ({
+                idExterno: instancia.id,
+                launcher: "Dome Social",
+                nome: instancia.name,
+                versaoMinecraft: instancia.version,
+                loaderType: instancia.type,
+                caminhoOrigem: "",
+                caminhoJogo: "",
+              }))}
+              viewMode={state.viewMode}
+              mensagem="Recebendo arquivos..."
             />
           )}
           {state.groups.map((grupo) => {
@@ -1446,6 +1478,14 @@ export default function LibraryPage({
                       Trocar versão do modpack
                     </ItemMenuContextual>
                   )}
+                  {modpack && (
+                    <ItemMenuContextual icone={<Star size={13} />} onClick={() => {
+                      setMenuContexto(null);
+                      setModalAnalise({ instancia, modpack });
+                    }}>
+                      Escrever análise
+                    </ItemMenuContextual>
+                  )}
                   <ItemMenuContextual icone={<Check size={13} />} onClick={() => {
                     const selecionadas = Array.from(idsSelecionados);
                     iniciarSelecaoMultipla(
@@ -1614,6 +1654,26 @@ export default function LibraryPage({
           </MenuContextual>
         )}
       </AnimatePresence>
+
+      {modalAnalise && (
+        <ModalAnaliseModpack
+          modpack={{
+            projectId: modalAnalise.modpack.projectId,
+            source: modalAnalise.modpack.source,
+            name: modalAnalise.modpack.name,
+            author: modalAnalise.modpack.author,
+            icon: modalAnalise.modpack.icon,
+            slug: modalAnalise.modpack.slug,
+            versionId: modalAnalise.modpack.versionId,
+            installedVersion: modalAnalise.modpack.installedVersion,
+          }}
+          instanciaId={modalAnalise.instancia.id}
+          instanciaNome={modalAnalise.instancia.name}
+          horasJogados={(modalAnalise.instancia.tempo_total_jogado_segundos ?? 0) / 3600}
+          onFechar={() => setModalAnalise(null)}
+          onPublicada={() => setModalAnalise(null)}
+        />
+      )}
 
       <AnimatePresence>
         {modalEscolhaImportacaoAberto && (
@@ -1897,9 +1957,11 @@ export default function LibraryPage({
 function SecaoImportacoesEmAndamento({
   instancias,
   viewMode,
+  mensagem = "Migrando arquivos...",
 }: {
   instancias: InstanciaImportavelExterna[];
   viewMode: ViewMode;
+  mensagem?: string;
 }) {
   return (
     <section className="mb-5" aria-live="polite" aria-label="Importações em andamento">
@@ -1941,7 +2003,7 @@ function SecaoImportacoesEmAndamento({
               </p>
               <p className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300">
                 <Loader2 size={10} className="animate-spin" />
-                Migrando arquivos...
+                {mensagem}
               </p>
             </div>
           </div>
@@ -2408,12 +2470,12 @@ function CardGrid({
       )}
       {/* Ícone grande */}
       <div className="mb-2 h-16 w-16">
-        <div className="w-full h-full rounded-xl bg-[#151516] border border-white/10 p-2 overflow-hidden">
+        <div className="w-full h-full rounded-xl bg-[#151516] border border-white/10 overflow-hidden">
           <img
             src={instance.icon}
             alt={instance.name}
             draggable={false}
-            className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-200"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
           />
         </div>
 
@@ -2527,12 +2589,12 @@ function CardList({
       )}
       {/* Ícone */}
       <div className="shrink-0">
-        <div className="w-9 h-9 rounded-lg bg-[#151516] border border-white/10 p-1 overflow-hidden">
+        <div className="w-9 h-9 rounded-lg bg-[#151516] border border-white/10 overflow-hidden">
           <img
             src={instance.icon}
             alt={instance.name}
             draggable={false}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-cover"
           />
         </div>
       </div>

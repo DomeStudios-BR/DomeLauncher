@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { gerarIconeAleatorio } from "../components/editor-icone/EditorIconeModal";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { EVENTO_INSTANCIAS_ATUALIZADAS } from "../lib/eventosTransferenciaSocial";
 
@@ -26,6 +27,32 @@ interface ConfiguracoesGlobais {
   close_on_launch?: boolean;
 }
 
+const migracoesIconesEmAndamento = new Set<string>();
+
+function usaGeradorAntigo(icone: string | null | undefined): boolean {
+  return Boolean(icone?.toLowerCase().includes("api.dicebear.com"));
+}
+
+async function migrarIconesDoGeradorAntigo(instancias: Instance[]): Promise<Instance[]> {
+  return Promise.all(instancias.map(async (instancia) => {
+    if (!usaGeradorAntigo(instancia.icon) || migracoesIconesEmAndamento.has(instancia.id)) {
+      return instancia;
+    }
+
+    migracoesIconesEmAndamento.add(instancia.id);
+    try {
+      const icon = await gerarIconeAleatorio();
+      await invoke("update_instance_icon", { instanceId: instancia.id, icon });
+      return { ...instancia, icon };
+    } catch (erro) {
+      console.error(`Falha ao migrar o ícone antigo da instância ${instancia.id}:`, erro);
+      return instancia;
+    } finally {
+      migracoesIconesEmAndamento.delete(instancia.id);
+    }
+  }));
+}
+
 export function useLauncher() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [account, setAccount] = useState<MinecraftAccount | null>(null);
@@ -50,7 +77,7 @@ export function useLauncher() {
           inst.session_started_at ??
           inst.sessionStartedAt,
       })) as Instance[];
-      setInstances(normalizadas);
+      setInstances(await migrarIconesDoGeradorAntigo(normalizadas));
     } catch (error) {
       console.error("Erro ao buscar instâncias:", error);
     }

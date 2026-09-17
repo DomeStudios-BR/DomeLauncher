@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { resolverTexturaMinecraft } from "../lib/texturaMinecraft";
 
 interface MiniaturaSkinMinecraftProps {
   skinUrl: string;
@@ -91,9 +92,15 @@ export function MiniaturaSkinMinecraft({
       mangas.forEach((parte) => desenharParte(contexto, imagem, parte, 2));
       CAMADAS_EXTERNAS.forEach((parte) => desenharParte(contexto, imagem, parte, 2));
     };
-    imagem.src = skinUrl;
+    let ativa = true;
+    void resolverTexturaMinecraft(skinUrl).then((url) => {
+      if (ativa) imagem.src = url;
+    }).catch(() => {
+      if (ativa) canvas.setAttribute("aria-label", "Não foi possível carregar a skin");
+    });
 
     return () => {
+      ativa = false;
       imagem.onload = null;
     };
   }, [modelo, skinUrl]);

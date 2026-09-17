@@ -5,7 +5,6 @@ import {
   Avatar,
   Heart,
   Home,
-  Library,
   Loader2,
   LogIn,
   Play,
@@ -48,6 +47,7 @@ const carregarSkinManager = () =>
 const carregarProjetoDetalheModal = () => import("./components/ProjetoDetalheModal");
 const SkinManager = lazy(carregarSkinManager);
 const ProjetoDetalheModal = lazy(carregarProjetoDetalheModal);
+const PerfilComunidade = lazy(() => import("./components/PerfilComunidade"));
 
 export interface MinecraftAccount {
   uuid: string;
@@ -172,13 +172,14 @@ const CHAVE_ULTIMA_NOVIDADE_EXIBIDA = "dome:ultima-novidade-exibida";
 const INTERVALO_VERIFICACAO_INSTANCIAS_MS = 20 * 1000;
 const LIMITE_HISTORICO_NAVEGACAO = 50;
 type TipoExplorePresence = "modpack" | "mod" | "resourcepack" | "shader";
-type FonteExplorePresence = "modrinth" | "curseforge";
+type FonteExplorePresence = "modrinth" | "curseforge" | "ambas";
 const TITULOS_ABA: Record<string, string> = {
   home: "Início",
   instances: "Biblioteca",
   explore: "Explorar",
   favorites: "Favoritos",
   skins: "Skins",
+  profile: "Perfil",
   settings: "Configurações",
   "instance-manager": "Instância",
   "project-detail": "Projeto",
@@ -187,6 +188,7 @@ const TITULOS_ABA: Record<string, string> = {
 export default function App() {
   const { instances, launch, launchServer, remove, fetchInstances } = useLauncher();
   const [activeTab, setActiveTab] = useState("home");
+  const [perfilVisualizadoId, setPerfilVisualizadoId] = useState<string | null>(null);
   const [historicoNavegacao, setHistoricoNavegacao] = useState<{
     anteriores: string[];
     proximas: string[];
@@ -197,6 +199,7 @@ export default function App() {
   const [managedInstanceId, setManagedInstanceId] = useState<string>("");
   const [user, setUser] = useState<MinecraftAccount | null>(null);
   const [mapaExecucao, setMapaExecucao] = useState<Record<string, boolean>>({});
+  const [instanciaSendoEncerrada, setInstanciaSendoEncerrada] = useState<string | null>(null);
   const [servidorPorInstancia, setServidorPorInstancia] = useState<Record<string, string>>({});
   const [publicacoesPorInstancia, setPublicacoesPorInstancia] = useState<Record<string, string>>({});
   const [contextoExplore, setContextoExplore] = useState<{
@@ -297,7 +300,7 @@ export default function App() {
   }, [avancarNavegacao, historicoNavegacao, voltarNavegacao]);
 
   useEffect(() => {
-    if (activeTab === "instances") {
+    if (activeTab === "home" || activeTab === "instances") {
       void fetchInstances();
     }
   }, [activeTab, fetchInstances]);
@@ -530,6 +533,14 @@ export default function App() {
     setInstalandoAtualizacao(true);
     setProgressoAtualizacao(null);
 
+    const novidadesPendentes: NovidadesVersao = {
+      versao: atualizacaoDisponivel.version.replace(/^v/i, ""),
+      conteudo: atualizacaoDisponivel.body?.trim() ||
+        "Melhorias gerais e correções para deixar sua experiência mais estável.",
+    };
+    localStorage.setItem(CHAVE_NOVIDADES_PENDENTES, JSON.stringify(novidadesPendentes));
+    let atualizacaoInstalada = false;
+
     try {
       await atualizacaoDisponivel.downloadAndInstall((evento) => {
         if (evento.event === "Started") {
@@ -548,14 +559,12 @@ export default function App() {
         }
       });
 
-      const novidadesPendentes: NovidadesVersao = {
-        versao: atualizacaoDisponivel.version.replace(/^v/i, ""),
-        conteudo: atualizacaoDisponivel.body?.trim() ||
-          "Melhorias gerais e correções para deixar sua experiência mais estável.",
-      };
-      localStorage.setItem(CHAVE_NOVIDADES_PENDENTES, JSON.stringify(novidadesPendentes));
+      atualizacaoInstalada = true;
       await invoke("reiniciar_aplicativo");
     } catch (erro) {
+      if (!atualizacaoInstalada) {
+        localStorage.removeItem(CHAVE_NOVIDADES_PENDENTES);
+      }
       setErroAtualizacao(
         erro instanceof Error
           ? erro.message
@@ -714,7 +723,9 @@ export default function App() {
                 : "shader";
         return {
           detalhes: `Vendo ${prefixoTipo} ${contextoExplore.titulo}`,
-          estado: `Fonte: ${contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
+          estado: contextoExplore.fonte === "ambas"
+            ? "Fontes: Modrinth e CurseForge"
+            : `Fonte: ${contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
         };
       }
       return { detalhes: "Explorando conteúdo", estado: "Mods, modpacks e shaders" };
@@ -777,6 +788,24 @@ export default function App() {
     },
     [launch, instances, atualizarPresenceDiscord, verificarInstanciasEmExecucao]
   );
+
+  const encerrarInstancia = useCallback(async (id: string) => {
+    if (instanciaSendoEncerrada) return;
+
+    setInstanciaSendoEncerrada(id);
+    try {
+      await invoke("kill_instance", { instanceId: id });
+      setMapaExecucao((anterior) => ({ ...anterior, [id]: false }));
+      await fetchInstances();
+      await verificarInstanciasEmExecucao();
+    } catch (erro) {
+      console.error("Falha ao encerrar a instância:", erro);
+      alert(`Não foi possível encerrar o Minecraft: ${erro}`);
+      await verificarInstanciasEmExecucao();
+    } finally {
+      setInstanciaSendoEncerrada(null);
+    }
+  }, [fetchInstances, instanciaSendoEncerrada, verificarInstanciasEmExecucao]);
 
   const iniciarInstanciaServidor = useCallback(
     async (id: string, address: string) => {
@@ -909,8 +938,16 @@ export default function App() {
   }, []);
 
   const handleProfileClick = () => {
-    setMenuContaAberto((atual) => !atual);
+    setMenuContaAberto(false);
+    setPerfilVisualizadoId(null);
+    navegarParaAba("profile");
   };
+
+  const abrirPerfilSocial = useCallback((perfilId: string) => {
+    setPerfilVisualizadoId(perfilId);
+    setSocialDrawerAberto(false);
+    navegarParaAba("profile");
+  }, [navegarParaAba]);
 
   const abrirProjeto = useCallback((origem: AbaOrigemProjeto, projeto: ProjetoConteudo) => {
     setAbaOrigemProjeto(origem);
@@ -920,7 +957,7 @@ export default function App() {
   }, [navegarParaAba]);
 
   const abrirTrocaVersaoModpack = useCallback((instancia: Instance, projeto: ProjetoConteudo) => {
-    setAbaOrigemProjeto("instances");
+    setAbaOrigemProjeto("home");
     setAtividadeSocialDetalhe(null);
     setManagedInstanceId(instancia.id);
     setProjetoDetalhe(projeto);
@@ -975,7 +1012,6 @@ export default function App() {
 
   const menuItems = [
     { id: "home", icon: Home, label: "Início" },
-    { id: "instances", icon: Library, label: "Biblioteca" },
     { id: "explore", icon: Search, label: "Explorar" },
     { id: "favorites", icon: Heart, label: "Favoritos" },
     { id: "skins", icon: Avatar, label: "Skins" },
@@ -983,7 +1019,10 @@ export default function App() {
   const ocultarTopbar = activeTab === "instance-manager";
 
   return (
-    <div className="app-shell launcher-shell relative flex h-screen w-full overflow-hidden text-white">
+    <div className={cn(
+      "app-shell launcher-shell relative flex h-screen w-full overflow-hidden text-white",
+      activeTab === "profile" && "perfil-comunidade-ativa"
+    )}>
       <aside className="launcher-side-menu relative z-20 flex w-[81px] shrink-0 flex-col">
         <div className="absolute inset-x-0 top-0 flex h-[50px] items-center justify-center gap-1">
           <button
@@ -1060,11 +1099,13 @@ export default function App() {
               onClick={handleProfileClick}
               className={cn(
                 "flex h-11 w-11 items-center justify-center border transition-colors",
-                user
+                activeTab === "profile"
+                  ? "border-emerald-400/45 bg-emerald-500/12"
+                  : user
                   ? "border-emerald-400/40 bg-[#171717]"
                   : "border-white/15 bg-[#171717] hover:border-white/30"
               )}
-              title={user ? user.name : "Contas Minecraft"}
+              title="Abrir perfil da comunidade"
             >
               {user ? (
                 <img
@@ -1291,7 +1332,7 @@ export default function App() {
           className={cn(
             "flex-1 overflow-y-auto scrollbar-hide",
             !ocultarTopbar && "launcher-painel-conteudo",
-            activeTab === "instance-manager" ? "" : "px-6 pb-24 pt-6"
+            activeTab === "instance-manager" || activeTab === "profile" ? "" : "px-6 pb-24 pt-6"
           )}
         >
           <Suspense fallback={<EsqueletoAba />}>
@@ -1327,8 +1368,27 @@ export default function App() {
                     iniciarInstanciaServidor(id, address);
                   }}
                   onLogin={() => setIsLoginOpen(true)}
-                  onExplore={() => navegarParaAba("explore")}
-                  onAbrirProjeto={(projeto) => abrirProjeto("home", projeto)}
+                  biblioteca={(
+                    <LibraryPage
+                      instances={instances}
+                      instanciaAtivaId={instanciaAtiva?.id ?? null}
+                      onSelectInstance={(instance) => {
+                        setSelectedInstance(instance);
+                      }}
+                      onDesselecionarInstancia={() => {
+                        setSelectedInstance(null);
+                      }}
+                      onAbrirGerenciadorInstancia={abrirGerenciadorInstancia}
+                      onLaunch={(id) => iniciarInstancia(id)}
+                      onDelete={(id) => remove(id)}
+                      onCreateNew={() => setIsCreateOpen(true)}
+                      onAtualizarInstancias={fetchInstances}
+                      onTrocarVersaoModpack={abrirTrocaVersaoModpack}
+                      publicacoesSociais={publicacoesPorInstancia}
+                      user={user}
+                      onLogin={() => setIsLoginOpen(true)}
+                    />
+                  )}
                 />
               </motion.div>
             )}
@@ -1360,6 +1420,27 @@ export default function App() {
                   publicacoesSociais={publicacoesPorInstancia}
                   user={user}
                   onLogin={() => setIsLoginOpen(true)}
+                />
+              </motion.div>
+            )}
+
+            {activeTab === "profile" && (
+              <motion.div
+                key="profile"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="min-h-full"
+              >
+                <PerfilComunidade
+                  key={perfilVisualizadoId ?? "me"}
+                  instances={instances}
+                  minecraftUuid={user?.uuid}
+                  perfilId={perfilVisualizadoId}
+                  onAbrirInstancia={abrirGerenciadorInstancia}
+                  onAbrirBiblioteca={() => navegarParaAba("instances")}
+                  onGerenciarContas={() => setMenuContaAberto(true)}
+                  onAbrirPerfil={abrirPerfilSocial}
                 />
               </motion.div>
             )}
@@ -1402,14 +1483,20 @@ export default function App() {
                   projeto={projetoDetalhe}
                   instancias={instances}
                   instanciaInicialId={
-                    abaOrigemProjeto === "instance-manager" || abaOrigemProjeto === "instances"
+                    abaOrigemProjeto === "home" ||
+                    abaOrigemProjeto === "instance-manager" ||
+                    abaOrigemProjeto === "instances"
                       ? managedInstanceId
                       : undefined
                   }
                   usuarioLogado={Boolean(user)}
                   onSolicitarLogin={() => setIsLoginOpen(true)}
                   onInstanciaCriada={() => void fetchInstances()}
-                  rotuloAcao={abaOrigemProjeto === "instances" ? "Baixar" : "Instalar"}
+                  rotuloAcao={
+                    abaOrigemProjeto === "home" || abaOrigemProjeto === "instances"
+                      ? "Baixar"
+                      : "Instalar"
+                  }
                   onVoltar={() => {
                     navegarParaAba(abaOrigemProjeto);
                     setProjetoDetalhe(null);
@@ -1457,7 +1544,7 @@ export default function App() {
                   rotuloAcao="Baixar"
                   onVoltar={() => {
                     setProjetoDetalhe(null);
-                    navegarParaAba("instances");
+                    navegarParaAba("home");
                   }}
                 />
               </motion.div>
@@ -1476,7 +1563,7 @@ export default function App() {
                   onAbrirBiblioteca={() => {
                     setAtividadeSocialDetalhe(null);
                     void fetchInstances();
-                    navegarParaAba("instances");
+                    navegarParaAba("home");
                   }}
                 />
               </motion.div>
@@ -1495,7 +1582,7 @@ export default function App() {
               >
                 <InstanceManager
                   instanceId={managedInstanceId}
-                  onBack={() => navegarParaAba("instances")}
+                  onBack={() => navegarParaAba("home")}
                   onAbrirSocial={() => setSocialDrawerAberto(true)}
                   onAbrirProjeto={(projeto) => abrirProjeto("instance-manager", projeto)}
                   onInstanceUpdate={(novoId) => {
@@ -1512,7 +1599,6 @@ export default function App() {
         <AnimatePresence>
           {instanciaBarra &&
             activeTab !== "instance-manager" &&
-            activeTab !== "home" &&
             activeTab !== "project-detail" && (
             <motion.footer
               initial={{ y: 80, opacity: 0 }}
@@ -1520,7 +1606,9 @@ export default function App() {
               exit={{ y: 80, opacity: 0 }}
               className={cn(
                 "absolute bottom-0 left-0 right-0 p-6 transition-[padding]",
-                activeTab === "instances" ? "pointer-events-auto" : "pointer-events-none",
+                activeTab === "instances" || activeTab === "home"
+                  ? "pointer-events-auto"
+                  : "pointer-events-none",
                 ehTelaXl && chatSocialAberto && "pr-[384px]"
               )}
             >
@@ -1541,23 +1629,30 @@ export default function App() {
 
                   <button
                     onClick={() => {
+                      if (instanciaBarraEmExecucao) {
+                        void encerrarInstancia(instanciaBarra.id);
+                        return;
+                      }
                       if (!user) {
                         setIsLoginOpen(true);
                         return;
                       }
-                      if (!instanciaBarraEmExecucao) iniciarInstancia(instanciaBarra.id);
+                      iniciarInstancia(instanciaBarra.id);
                     }}
-                    disabled={instanciaBarraEmExecucao}
+                    disabled={instanciaSendoEncerrada === instanciaBarra.id}
+                    title={instanciaBarraEmExecucao ? "Encerrar o Minecraft" : undefined}
                     className={cn(
-                      "group flex items-center gap-3 border px-5 py-2.5 text-sm font-black transition-colors",
+                      "group flex items-center gap-3 border px-5 py-2.5 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-60",
                       instanciaBarraEmExecucao
-                        ? "cursor-default border-emerald-400/25 bg-emerald-400/10 text-emerald-300"
+                        ? "cursor-pointer border-emerald-400/25 bg-emerald-400/10 text-emerald-300 hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300"
                         : user
                         ? "border-emerald-400 bg-emerald-500 text-[#07120a] hover:bg-emerald-400"
                         : "border-white/15 bg-[#1b1b1b] text-white hover:bg-[#252525]"
                     )}
                   >
-                    {instanciaBarraEmExecucao ? (
+                    {instanciaSendoEncerrada === instanciaBarra.id ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : instanciaBarraEmExecucao ? (
                       <span className="h-2 w-2 bg-emerald-400" />
                     ) : !user ? (
                       <LogIn size={18} />
@@ -1568,7 +1663,15 @@ export default function App() {
                         className="transition-transform group-hover:translate-x-0.5"
                       />
                     )}
-                    <span>{instanciaBarraEmExecucao ? "EM EXECUÇÃO" : !user ? "LOGIN" : "JOGAR"}</span>
+                    <span>
+                      {instanciaSendoEncerrada === instanciaBarra.id
+                        ? "ENCERRANDO"
+                        : instanciaBarraEmExecucao
+                          ? "ENCERRAR"
+                          : !user
+                            ? "LOGIN"
+                            : "JOGAR"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1620,6 +1723,7 @@ export default function App() {
               }
               onAlterarChatAberto={setChatSocialAberto}
               onAbrirAtividadeAmigo={abrirAtividadeAmigo}
+              onAbrirPerfil={abrirPerfilSocial}
               recuado={ehTelaXl && painelSocialRecuado}
               onAlternarRecuo={
                 ehTelaXl ? () => setPainelSocialRecuado((anterior) => !anterior) : undefined

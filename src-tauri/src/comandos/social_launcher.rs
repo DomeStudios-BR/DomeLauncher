@@ -5,6 +5,7 @@ pub(crate) mod pacotes_sociais;
 #[path = "vinculos_sociais.rs"]
 pub(crate) mod vinculos_sociais;
 use crate::launcher::LauncherState;
+use base64::Engine;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -135,6 +136,8 @@ pub struct AmigoLauncherApi {
     pub status: Option<String>,
     pub atividade_atual: Option<AtividadeSocialLauncherApi>,
     pub ultimo_seen_em: Option<String>,
+    #[serde(default)]
+    pub emblema_destaque: Option<EmblemaSocialLauncherApi>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -179,6 +182,37 @@ pub struct ContaMinecraftSocialLauncherApi {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct EmblemaSocialLauncherApi {
+    pub emblema_id: String,
+    pub nome: String,
+    pub descricao: String,
+    pub imagem_url: String,
+    pub concedido_em: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturaFavoritaPerfilLauncherApi {
+    pub id: String,
+    pub nome: String,
+    pub instancia_nome: String,
+    pub criada_em: Option<String>,
+    pub imagem_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ComentarioPerfilLauncherApi {
+    pub id: String,
+    pub conteudo: String,
+    pub criado_em: String,
+    pub autor_perfil_id: String,
+    pub autor_nome: String,
+    pub autor_avatar_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PerfilSocialLauncherApi {
     pub perfil_id: String,
     pub discord_id: String,
@@ -196,6 +230,13 @@ pub struct PerfilSocialLauncherApi {
     pub em_jogo: Option<bool>,
     pub atividade_atual: Option<AtividadeSocialLauncherApi>,
     pub ultimo_seen_em: Option<String>,
+    #[serde(default)]
+    pub emblemas: Vec<EmblemaSocialLauncherApi>,
+    #[serde(default)]
+    pub emblemas_exibidos: Vec<EmblemaSocialLauncherApi>,
+    pub banner_perfil_url: Option<String>,
+    #[serde(default)]
+    pub capturas_favoritas: Vec<CapturaFavoritaPerfilLauncherApi>,
     pub criado_em: String,
     pub atualizado_em: String,
 }
@@ -438,10 +479,18 @@ pub async fn search_launcher_friend_by_handle(
 pub async fn get_launcher_social_profile(
     api_base_url: String,
     access_token: String,
+    perfil_id: Option<String>,
 ) -> Result<PerfilSocialLauncherApi, String> {
     let api_base = normalizar_api_base_url(&api_base_url)?;
     let token = normalizar_token_social(&access_token)?;
-    let endpoint = format!("{}/api/launcher/social/profile/me", api_base);
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/{}",
+        api_base,
+        urlencoding::encode(&destino)
+    );
 
     let client = criar_cliente_http_launcher()?;
     let resposta = client
@@ -469,6 +518,198 @@ pub async fn get_launcher_social_profile(
             .unwrap_or(serde_json::Value::Null),
     )
     .map_err(|e| format!("Resposta sem perfil social válido: {}", e))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturaApresentacaoLauncherApi {
+    pub id: String,
+    pub nome: String,
+    pub instancia_nome: String,
+    pub criada_em: Option<String>,
+    pub dados_url: String,
+}
+
+fn decodificar_imagem_dados(dados_url: &str) -> Result<(String, Vec<u8>), String> {
+    let (cabecalho, conteudo) = dados_url.split_once(',').ok_or("Imagem inválida.")?;
+    let tipo = cabecalho
+        .strip_prefix("data:")
+        .and_then(|valor| valor.split(';').next())
+        .filter(|valor| matches!(*valor, "image/png" | "image/jpeg" | "image/webp"))
+        .ok_or("Formato de imagem não suportado.")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(conteudo)
+        .map_err(|_| "Não foi possível ler a imagem.".to_string())?;
+    Ok((tipo.to_string(), bytes))
+}
+
+async fn enviar_midia_perfil(
+    cliente: &reqwest::Client,
+    api_base: &str,
+    token: &str,
+    dados_url: &str,
+) -> Result<String, String> {
+    if dados_url.starts_with("http://") || dados_url.starts_with("https://") {
+        return Ok(dados_url.to_string());
+    }
+    let (tipo, bytes) = decodificar_imagem_dados(dados_url)?;
+    let resposta = cliente
+        .post(format!("{api_base}/api/launcher/social/profile/me/media"))
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, tipo)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao enviar mídia do perfil: {e}"))?;
+    if !resposta.status().is_success() {
+        return Err(
+            extrair_mensagem_erro_launcher(resposta, "Falha ao enviar mídia do perfil.").await,
+        );
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    dados
+        .get("imagemUrl")
+        .and_then(|valor| valor.as_str())
+        .map(str::to_string)
+        .ok_or("A API não retornou a URL da mídia.".into())
+}
+
+#[tauri::command]
+pub async fn save_launcher_profile_presentation(
+    api_base_url: String,
+    access_token: String,
+    banner_dados_url: Option<String>,
+    capturas: Vec<CapturaApresentacaoLauncherApi>,
+    emblemas_exibidos_ids: Vec<String>,
+) -> Result<PerfilSocialLauncherApi, String> {
+    let api_base = normalizar_api_base_url(&api_base_url)?;
+    let token = normalizar_token_social(&access_token)?;
+    let cliente = criar_cliente_http_launcher()?;
+    let banner_perfil_url = match banner_dados_url.filter(|valor| !valor.is_empty()) {
+        Some(valor) => Some(enviar_midia_perfil(&cliente, &api_base, &token, &valor).await?),
+        None => None,
+    };
+    let mut capturas_favoritas = Vec::new();
+    for captura in capturas.into_iter().take(3) {
+        let imagem_url =
+            enviar_midia_perfil(&cliente, &api_base, &token, &captura.dados_url).await?;
+        capturas_favoritas.push(serde_json::json!({
+            "id": captura.id, "nome": captura.nome, "instanciaNome": captura.instancia_nome,
+            "criadaEm": captura.criada_em, "imagemUrl": imagem_url
+        }));
+    }
+    let resposta = cliente
+        .put(format!(
+            "{api_base}/api/launcher/social/profile/me/presentation"
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "bannerPerfilUrl": banner_perfil_url,
+            "capturasFavoritas": capturas_favoritas,
+            "emblemasExibidosIds": emblemas_exibidos_ids
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao salvar apresentação do perfil: {e}"))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Falha ao salvar apresentação do perfil.",
+        )
+        .await);
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(dados.get("perfil").cloned().unwrap_or_default())
+        .map_err(|e| format!("Resposta inválida ao salvar perfil: {e}"))
+}
+
+#[tauri::command]
+pub async fn get_launcher_profile_comments(
+    api_base_url: String,
+    access_token: String,
+    perfil_id: Option<String>,
+) -> Result<Vec<ComentarioPerfilLauncherApi>, String> {
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/{}/comments",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&destino)
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .get(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao carregar comentários: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(
+            extrair_mensagem_erro_launcher(resposta, "Falha ao carregar comentários.").await,
+        );
+    }
+    let dados = resposta
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Resposta inválida de comentários: {}", e))?;
+    serde_json::from_value(dados.get("comentarios").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn post_launcher_profile_comment(
+    api_base_url: String,
+    access_token: String,
+    conteudo: String,
+    perfil_id: Option<String>,
+) -> Result<ComentarioPerfilLauncherApi, String> {
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/{}/comments",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&destino)
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .post(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .json(&serde_json::json!({ "conteudo": conteudo }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao comentar: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(
+            extrair_mensagem_erro_launcher(resposta, "Falha ao publicar comentário.").await,
+        );
+    }
+    resposta
+        .json()
+        .await
+        .map_err(|e| format!("Resposta inválida ao comentar: {}", e))
+}
+
+#[tauri::command]
+pub async fn delete_launcher_profile_comment(
+    api_base_url: String,
+    access_token: String,
+    comentario_id: String,
+) -> Result<(), String> {
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/me/comments/{}",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&comentario_id)
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .delete(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao excluir comentário: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao excluir comentário.").await);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1359,6 +1600,182 @@ fn normalizar_token_social(access_token: &str) -> Result<String, String> {
     }
 
     Ok(token)
+}
+
+/// Publica (ou atualiza, caso já exista uma do autor para o projeto) a análise
+/// de um modpack do Modrinth/CurseForge. Instâncias personalizadas não possuem
+/// `source`/`projectId` e são recusadas pela API.
+#[tauri::command]
+pub async fn publicar_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    dados: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let fonte = dados
+        .get("source")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if fonte != "modrinth" && fonte != "curseforge" {
+        return Err(
+            "Análises só podem ser publicadas para modpacks do Modrinth ou CurseForge.".to_string(),
+        );
+    }
+    if dados
+        .get("projectId")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err("Projeto do modpack inválido.".to_string());
+    }
+    if dados
+        .get("conteudo")
+        .and_then(|valor| valor.as_str())
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err("Escreva sua análise antes de publicar.".to_string());
+    }
+    let resposta = criar_cliente_http_launcher()?
+        .post(format!(
+            "{}/api/launcher/social/analises",
+            normalizar_api_base_url(&api_base_url)?
+        ))
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .json(&dados)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao publicar análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao publicar análise.").await);
+    }
+    let dados_resposta: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    dados_resposta
+        .get("analise")
+        .cloned()
+        .ok_or("A API não retornou a análise publicada.".into())
+}
+
+#[tauri::command]
+pub async fn listar_analises_perfil(
+    api_base_url: String,
+    access_token: String,
+    perfil_id: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
+    let endpoint = format!(
+        "{}/api/launcher/social/profile/{}/analises",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&destino)
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .get(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao carregar análises: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao carregar análises.").await);
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(dados.get("analises").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn listar_analises_projeto(
+    api_base_url: String,
+    access_token: String,
+    source: String,
+    project_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let fonte = source.trim().to_lowercase();
+    if fonte != "modrinth" && fonte != "curseforge" {
+        return Err("Fonte do projeto inválida.".to_string());
+    }
+    if project_id.trim().is_empty() {
+        return Err("Projeto inválido.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/projeto?source={}&projectId={}",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&fonte),
+        urlencoding::encode(project_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .get(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao carregar análises do projeto: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Falha ao carregar análises do projeto.",
+        )
+        .await);
+    }
+    let dados: serde_json::Value = resposta.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(dados.get("analises").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn curtir_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    analise_id: String,
+) -> Result<serde_json::Value, String> {
+    if analise_id.trim().is_empty() {
+        return Err("Análise inválida.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/{}/curtir",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(analise_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .post(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao curtir análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao curtir análise.").await);
+    }
+    resposta.json().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn excluir_analise_modpack(
+    api_base_url: String,
+    access_token: String,
+    analise_id: String,
+) -> Result<(), String> {
+    if analise_id.trim().is_empty() {
+        return Err("Análise inválida.".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/launcher/social/analises/{}",
+        normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(analise_id.trim())
+    );
+    let resposta = criar_cliente_http_launcher()?
+        .delete(endpoint)
+        .bearer_auth(normalizar_token_social(&access_token)?)
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao excluir análise: {}", e))?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao excluir análise.").await);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -91,6 +91,32 @@ try {
             const destinoImagem = process.env.DOME_CAPTURA_SKINS;
             if (destinoImagem) await pagina.screenshot({ path: destinoImagem });
             console.log("Validado: modelos clássico e slim carregados com bundle minificado e CSP de produção.");
+            await pagina.goto(`${url}gerenciador`);
+            await pagina.getByText("Não foi possível baixar sua skin.", { exact: false }).waitFor();
+            await pagina.waitForFunction(() => {
+                const miniaturas = [...document.querySelectorAll('canvas[aria-label="Prévia da skin"]')];
+                return miniaturas.length >= 9 && miniaturas.every((canvas) => {
+                    const contexto = (canvas as HTMLCanvasElement).getContext("2d");
+                    return contexto && contexto.getImageData(32, 16, 1, 1).data[3] > 0;
+                });
+            });
+            await pagina.getByRole("button", { name: "Trocar capa", exact: true }).click();
+            await pagina.getByRole("heading", { name: "Escolher capa" }).waitFor();
+            await pagina.waitForFunction(() => {
+                const canvas = document.querySelector('canvas[aria-label="Prévia da capa"]') as HTMLCanvasElement;
+                return canvas?.getContext("2d")?.getImageData(30, 40, 1, 1).data[3] === 255;
+            });
+            if (await pagina.getByText("Não foi possível carregar a textura.", { exact: false }).count()) {
+                throw new Error("Textura oficial falhou no modal.");
+            }
+            console.log("Validado: seleção de skins e modal de capas com falha parcial da conta e textura HTTP via IPC.");
+            await pagina.goto(`${url}gerenciador`);
+            await pagina.getByRole("button", { name: "Abrir ações de Skin teste" }).click();
+            await pagina.getByText("Editar", { exact: true }).click();
+            await pagina.getByRole("heading", { name: "Editar skin salva" }).waitFor();
+            await pagina.waitForFunction(() => document.querySelectorAll("canvas").length >= 12);
+            if (erros.length) throw new Error(erros.join("; "));
+            console.log("Validado: editor da skin salva aberto sem erros de execução.");
         } finally {
             await navegador.close();
         }

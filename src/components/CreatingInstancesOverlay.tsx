@@ -31,9 +31,9 @@ export default function CreatingInstancesOverlay() {
         {creating.map((instance) => (
           <motion.div
             key={instance.id}
-            initial={{ opacity: 0, x: 100, scale: 0.9 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 100, scale: 0.9 }}
+            initial={{ opacity: 0, x: 100 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 100 }}
             className="w-full bg-[#161618] border border-white/10 rounded-2xl p-4 shadow-xl backdrop-blur-xl"
           >
             <div className="flex items-center gap-3">

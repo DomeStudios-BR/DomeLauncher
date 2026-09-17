@@ -2,6 +2,40 @@ use super::*;
 use base64::Engine as _;
 
 const LIMITE_ICONE_INSTANCIA_BYTES: usize = 1024 * 1024;
+const LIMITE_CAPTURA_PERFIL_BYTES: u64 = 8 * 1024 * 1024;
+const LIMITE_CAPTURAS_PERFIL: usize = 240;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CapturaPerfil {
+    nome: String,
+    instancia_id: String,
+    instancia_nome: String,
+    criada_em: Option<String>,
+    dados_url: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PaginaCapturasPerfil {
+    capturas: Vec<CapturaPerfil>,
+    total: usize,
+    pagina: usize,
+    total_paginas: usize,
+}
+
+fn mime_captura(caminho: &std::path::Path) -> Option<&'static str> {
+    match caminho
+        .extension()?
+        .to_string_lossy()
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        _ => None,
+    }
+}
 
 pub(crate) fn validar_icone_instancia(icone: &str) -> Result<(), String> {
     let dados_base64 = icone
@@ -39,6 +73,81 @@ pub(crate) async fn get_minecraft_versions() -> Result<VersionManifest, String> 
 #[tauri::command]
 pub(crate) fn get_instances(state: State<LauncherState>) -> Result<Vec<Instance>, String> {
     state.get_instances().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn listar_capturas_perfil(
+    state: State<LauncherState>,
+    pagina: Option<usize>,
+    tamanho_pagina: Option<usize>,
+) -> Result<PaginaCapturasPerfil, String> {
+    let instancias = state.get_instances().map_err(|e| e.to_string())?;
+    let mut arquivos = Vec::new();
+
+    for instancia in instancias {
+        let pasta = instancia.path.join("screenshots");
+        let Ok(entradas) = std::fs::read_dir(pasta) else {
+            continue;
+        };
+
+        for entrada in entradas.flatten() {
+            let caminho = entrada.path();
+            let Some(mime) = mime_captura(&caminho) else {
+                continue;
+            };
+            let Ok(metadados) = entrada.metadata() else {
+                continue;
+            };
+            if !metadados.is_file() || metadados.len() > LIMITE_CAPTURA_PERFIL_BYTES {
+                continue;
+            }
+
+            arquivos.push((
+                metadados.modified().ok(),
+                caminho,
+                mime,
+                instancia.id.clone(),
+                instancia.name.clone(),
+            ));
+        }
+    }
+
+    arquivos.sort_by_key(|arquivo| std::cmp::Reverse(arquivo.0));
+    arquivos.truncate(LIMITE_CAPTURAS_PERFIL);
+    let total = arquivos.len();
+    let tamanho = tamanho_pagina.unwrap_or(12).clamp(1, 24);
+    let pagina_atual = pagina.unwrap_or(1).max(1);
+    let inicio = (pagina_atual - 1).saturating_mul(tamanho).min(total);
+    let fim = (inicio + tamanho).min(total);
+    let total_paginas = total.div_ceil(tamanho).max(1);
+
+    let capturas = arquivos
+        .into_iter()
+        .skip(inicio)
+        .take(fim - inicio)
+        .filter_map(
+            |(modificada_em, caminho, mime, instancia_id, instancia_nome)| {
+                let bytes = std::fs::read(&caminho).ok()?;
+                let conteudo = base64::engine::general_purpose::STANDARD.encode(bytes);
+                let criada_em = modificada_em
+                    .map(chrono::DateTime::<chrono::Utc>::from)
+                    .map(|data| data.to_rfc3339());
+                Some(CapturaPerfil {
+                    nome: caminho.file_stem()?.to_string_lossy().to_string(),
+                    instancia_id,
+                    instancia_nome,
+                    criada_em,
+                    dados_url: format!("data:{mime};base64,{conteudo}"),
+                })
+            },
+        )
+        .collect();
+    Ok(PaginaCapturasPerfil {
+        capturas,
+        total,
+        pagina: pagina_atual,
+        total_paginas,
+    })
 }
 
 #[tauri::command]

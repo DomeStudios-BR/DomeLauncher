@@ -3,6 +3,47 @@ use reqwest::Client;
 use std::borrow::Cow;
 use tauri::command;
 
+#[command]
+pub async fn baixar_textura_minecraft(url: String) -> Result<Vec<u8>, String> {
+    let mut endereco =
+        reqwest::Url::parse(&url).map_err(|_| "URL de textura inválida.".to_string())?;
+    if !matches!(endereco.scheme(), "http" | "https")
+        || endereco.host_str() != Some("textures.minecraft.net")
+        || endereco.port().is_some()
+        || !endereco.username().is_empty()
+        || endereco.password().is_some()
+        || !endereco.path().starts_with("/texture/")
+    {
+        return Err("Origem de textura não permitida.".to_string());
+    }
+    endereco
+        .set_scheme("https")
+        .map_err(|_| "Protocolo inválido.".to_string())?;
+    let cliente = Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|erro| erro.to_string())?;
+    let mut resposta = cliente
+        .get(endereco)
+        .send()
+        .await
+        .map_err(|erro| erro.to_string())?
+        .error_for_status()
+        .map_err(|erro| erro.to_string())?;
+    let mut bytes = Vec::new();
+    while let Some(parte) = resposta.chunk().await.map_err(|erro| erro.to_string())? {
+        if bytes.len() + parte.len() > 1_048_576 {
+            return Err("A textura ultrapassa o limite de 1 MB.".to_string());
+        }
+        bytes.extend_from_slice(&parte);
+    }
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("A textura recebida não é PNG.".to_string());
+    }
+    Ok(bytes)
+}
+
 #[derive(serde::Deserialize)]
 struct PerfilSkinMinecraft {
     #[serde(default)]

@@ -1547,19 +1547,102 @@ fn normalizar_tipo_conteudo(tipo: Option<String>) -> String {
     }
 }
 
+fn normalizar_ordenacao_busca(ordenacao: Option<String>) -> String {
+    match ordenacao
+        .unwrap_or_else(|| "relevancia".to_string())
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "popularidade" => "popularidade".to_string(),
+        "downloads" => "downloads".to_string(),
+        "atualizados" => "atualizados".to_string(),
+        "recentes" => "recentes".to_string(),
+        _ => "relevancia".to_string(),
+    }
+}
+
+fn ordenacao_curseforge(ordenacao: &str) -> u8 {
+    match ordenacao {
+        "downloads" => 6,
+        "atualizados" => 3,
+        "recentes" => 11,
+        _ => 2,
+    }
+}
+
+fn ordenacao_modrinth(ordenacao: &str) -> &'static str {
+    match ordenacao {
+        "popularidade" => "follows",
+        "downloads" => "downloads",
+        "atualizados" => "updated",
+        "recentes" => "newest",
+        _ => "relevance",
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FiltrosBuscaOnline {
+    game_version: Option<String>,
+    loader: Option<String>,
+    sort: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+}
+
+struct ParametrosBuscaOnline<'a> {
+    query: &'a str,
+    tipo_conteudo: &'a str,
+    game_version: Option<&'a str>,
+    loader: Option<&'a str>,
+    ordenacao: &'a str,
+    offset: u32,
+    limit: u32,
+}
+
+#[cfg(test)]
+mod testes_filtros_busca {
+    use super::*;
+
+    #[test]
+    fn converte_ordenacoes_para_as_duas_plataformas() {
+        assert_eq!(ordenacao_curseforge("downloads"), 6);
+        assert_eq!(ordenacao_curseforge("atualizados"), 3);
+        assert_eq!(ordenacao_modrinth("popularidade"), "follows");
+        assert_eq!(ordenacao_modrinth("recentes"), "newest");
+    }
+
+    #[test]
+    fn usa_relevancia_quando_ordenacao_for_desconhecida() {
+        assert_eq!(
+            normalizar_ordenacao_busca(Some("invalida".to_string())),
+            "relevancia"
+        );
+        assert_eq!(ordenacao_curseforge("relevancia"), 2);
+        assert_eq!(ordenacao_modrinth("relevancia"), "relevance");
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn search_mods_online(
     query: String,
     platform: Option<ModPlatform>,
     content_type: Option<String>,
-    game_version: Option<String>,
-    loader: Option<String>,
-    offset: Option<u32>,
-    limit: Option<u32>,
+    filtros: Option<FiltrosBuscaOnline>,
 ) -> Result<Vec<ModSearchResult>, String> {
     let tipo_conteudo = normalizar_tipo_conteudo(content_type);
-    let offset = offset.unwrap_or(0);
-    let limit = limit.unwrap_or(20).clamp(1, 50);
+    let filtros = filtros.unwrap_or_default();
+    let ordenacao = normalizar_ordenacao_busca(filtros.sort);
+    let parametros = ParametrosBuscaOnline {
+        query: &query,
+        tipo_conteudo: &tipo_conteudo,
+        game_version: filtros.game_version.as_deref(),
+        loader: filtros.loader.as_deref(),
+        ordenacao: &ordenacao,
+        offset: filtros.offset.unwrap_or(0),
+        limit: filtros.limit.unwrap_or(20).clamp(1, 50),
+    };
     let client = reqwest::Client::new();
     let mut results = Vec::new();
     let mut erros = Vec::new();
@@ -1573,17 +1656,7 @@ pub(crate) async fn search_mods_online(
     for platform in platforms_to_search {
         match platform {
             ModPlatform::CurseForge => {
-                match search_curseforge_conteudo(
-                    &client,
-                    &query,
-                    &tipo_conteudo,
-                    game_version.as_deref(),
-                    loader.as_deref(),
-                    offset,
-                    limit,
-                )
-                .await
-                {
+                match search_curseforge_conteudo(&client, &parametros).await {
                     Ok(mut curseforge_results) => results.append(&mut curseforge_results),
                     Err(e) => {
                         eprintln!("Erro ao buscar no CurseForge: {}", e);
@@ -1591,38 +1664,19 @@ pub(crate) async fn search_mods_online(
                     }
                 }
             }
-            ModPlatform::Modrinth => {
-                match search_modrinth_conteudo(
-                    &client,
-                    &query,
-                    &tipo_conteudo,
-                    game_version.as_deref(),
-                    loader.as_deref(),
-                    offset,
-                    limit,
-                )
-                .await
-                {
-                    Ok(mut modrinth_results) => results.append(&mut modrinth_results),
-                    Err(e) => {
-                        eprintln!("Erro ao buscar no Modrinth: {}", e);
-                        erros.push(format!("Modrinth: {}", e));
-                    }
+            ModPlatform::Modrinth => match search_modrinth_conteudo(&client, &parametros).await {
+                Ok(mut modrinth_results) => results.append(&mut modrinth_results),
+                Err(e) => {
+                    eprintln!("Erro ao buscar no Modrinth: {}", e);
+                    erros.push(format!("Modrinth: {}", e));
                 }
-            }
+            },
             ModPlatform::Ftb => {
                 // FTB pode ser implementado futuramente
                 continue;
             }
         }
     }
-
-    // Ordenar por popularidade (downloads)
-    results.sort_by(|a, b| {
-        let a_downloads = a.download_count.unwrap_or(0);
-        let b_downloads = b.download_count.unwrap_or(0);
-        b_downloads.cmp(&a_downloads)
-    });
 
     if results.is_empty() && !erros.is_empty() {
         return Err(erros.join(" | "));
@@ -1633,23 +1687,21 @@ pub(crate) async fn search_mods_online(
 
 async fn search_curseforge_conteudo(
     client: &reqwest::Client,
-    query: &str,
-    tipo_conteudo: &str,
-    game_version: Option<&str>,
-    loader: Option<&str>,
-    offset: u32,
-    limit: u32,
+    parametros: &ParametrosBuscaOnline<'_>,
 ) -> Result<Vec<ModSearchResult>, String> {
-    let class_id = class_id_por_tipo_conteudo(tipo_conteudo);
+    let class_id = class_id_por_tipo_conteudo(parametros.tipo_conteudo);
+    let campo_ordenacao = ordenacao_curseforge(parametros.ordenacao);
     let mut search_url = format!(
-        "{}/mods/search?gameId=432&searchFilter={}&classId={}&index={}&pageSize={}&sortField=2&sortOrder=desc",
+        "{}/mods/search?gameId=432&searchFilter={}&classId={}&index={}&pageSize={}&sortField={}&sortOrder=desc",
         CURSEFORGE_API_BASE,
-        urlencoding::encode(query),
+        urlencoding::encode(parametros.query),
         class_id,
-        offset,
-        limit,
+        parametros.offset,
+        parametros.limit,
+        campo_ordenacao,
     );
-    let game_version = game_version
+    let game_version = parametros
+        .game_version
         .map(str::trim)
         .filter(|valor| !valor.is_empty());
     if let Some(game_version) = game_version {
@@ -1657,8 +1709,8 @@ async fn search_curseforge_conteudo(
             "&gameVersion={}",
             urlencoding::encode(game_version)
         ));
-        if tipo_conteudo == "mod" {
-            if let Some(loader_id) = loader.and_then(id_loader_curseforge) {
+        if matches!(parametros.tipo_conteudo, "mod" | "modpack") {
+            if let Some(loader_id) = parametros.loader.and_then(id_loader_curseforge) {
                 search_url.push_str(&format!("&modLoaderType={}", loader_id));
             }
         }
@@ -1722,7 +1774,7 @@ async fn search_curseforge_conteudo(
                 .as_str()
                 .unwrap_or(&format!(
                     "https://www.curseforge.com/minecraft/{}/{}",
-                    rota_curseforge_por_tipo_conteudo(tipo_conteudo),
+                    rota_curseforge_por_tipo_conteudo(parametros.tipo_conteudo),
                     id,
                 ))
                 .to_string();
@@ -1742,7 +1794,7 @@ async fn search_curseforge_conteudo(
                 project_url: website_url,
                 latest_version: None, // CurseForge não retorna versão na busca básica
                 slug,
-                project_type: Some(tipo_conteudo.to_string()),
+                project_type: Some(parametros.tipo_conteudo.to_string()),
                 file_name: None,
             });
         }
@@ -1752,34 +1804,36 @@ async fn search_curseforge_conteudo(
 
 async fn search_modrinth_conteudo(
     client: &reqwest::Client,
-    query: &str,
-    tipo_conteudo: &str,
-    game_version: Option<&str>,
-    loader: Option<&str>,
-    offset: u32,
-    limit: u32,
+    parametros: &ParametrosBuscaOnline<'_>,
 ) -> Result<Vec<ModSearchResult>, String> {
-    let mut facets = vec![vec![format!("project_type:{}", tipo_conteudo)]];
-    if let Some(game_version) = game_version
+    let mut facets = vec![vec![format!("project_type:{}", parametros.tipo_conteudo)]];
+    if let Some(game_version) = parametros
+        .game_version
         .map(str::trim)
         .filter(|valor| !valor.is_empty())
     {
         facets.push(vec![format!("versions:{}", game_version)]);
     }
-    if tipo_conteudo == "mod" {
-        if let Some(loader) = loader.map(str::trim).filter(|valor| !valor.is_empty()) {
+    if matches!(parametros.tipo_conteudo, "mod" | "modpack") {
+        if let Some(loader) = parametros
+            .loader
+            .map(str::trim)
+            .filter(|valor| !valor.is_empty())
+        {
             facets.push(vec![format!("categories:{}", loader.to_lowercase())]);
         }
     }
     let facets = serde_json::to_string(&facets)
         .map_err(|e| format!("Erro ao preparar filtros do Modrinth: {}", e))?;
+    let indice_ordenacao = ordenacao_modrinth(parametros.ordenacao);
     let search_url = format!(
-        "{}/search?query={}&facets={}&offset={}&limit={}",
+        "{}/search?query={}&facets={}&index={}&offset={}&limit={}",
         MODRINTH_API_BASE,
-        urlencoding::encode(query),
+        urlencoding::encode(parametros.query),
         urlencoding::encode(&facets),
-        offset,
-        limit,
+        indice_ordenacao,
+        parametros.offset,
+        parametros.limit,
     );
 
     let response = client
@@ -1811,9 +1865,9 @@ async fn search_modrinth_conteudo(
             let download_count = hit["downloads"].as_u64();
             let icon_url = hit["icon_url"].as_str().map(|s| s.to_string());
             let project_url = if let Some(slug) = &slug {
-                format!("https://modrinth.com/{}/{}", tipo_conteudo, slug)
+                format!("https://modrinth.com/{}/{}", parametros.tipo_conteudo, slug)
             } else {
-                format!("https://modrinth.com/{}/{}", tipo_conteudo, id)
+                format!("https://modrinth.com/{}/{}", parametros.tipo_conteudo, id)
             };
 
             results.push(ModSearchResult {
@@ -1830,7 +1884,7 @@ async fn search_modrinth_conteudo(
                 project_type: Some(
                     hit["project_type"]
                         .as_str()
-                        .unwrap_or(tipo_conteudo)
+                        .unwrap_or(parametros.tipo_conteudo)
                         .to_string(),
                 ),
                 file_name: None,

@@ -72,6 +72,7 @@ export function PerfilSocialPainel({
   onRecuar,
 }: PerfilSocialPainelProps) {
   const nomeAtividade = atividadeAtual?.modpackNome || atividadeAtual?.instanciaNome || 'Minecraft';
+  const emblemaDestaque = (perfil?.emblemasExibidos ?? perfil?.emblemas)?.[0] ?? null;
   const detalhesAtividade = [
     atividadeAtual?.servidor ? `Servidor ${atividadeAtual.servidor}` : null,
     atividadeAtual?.loader,
@@ -145,6 +146,7 @@ export function PerfilSocialPainel({
                 aparecerOffline={aparecerOffline}
                 salvando={salvandoStatus}
                 onAtualizar={onAtualizarStatus}
+                emblemaDestaque={emblemaDestaque}
               />
               <p className="mt-1 truncate text-[10px] text-white/40">@{handleExibicaoAtual}</p>
             </div>

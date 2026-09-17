@@ -60,6 +60,7 @@ interface ListaAmigosAgrupadaProps {
     amigoSelecionadoPerfilId: string | null;
     onAbrirChat: (friendProfileId: string) => void;
     onAbrirAtividade?: (amigo: AmigoSocial) => void;
+    onAbrirPerfil?: (friendProfileId: string) => void;
     onRemoverAmigo: (friendProfileId: string) => void;
     formatarTempoRelativo: (data: string | null | undefined) => string;
     rotuloStatus: (status?: StatusPresenca) => string;
@@ -86,6 +87,7 @@ function LinhaAmigo({
     naoLidas,
     onAbrirChat,
     onAbrirMenuContexto,
+    onAbrirPerfil,
     formatarTempoRelativo,
     rotuloStatus,
 }: {
@@ -94,22 +96,27 @@ function LinhaAmigo({
     naoLidas: number;
     onAbrirChat: (friendProfileId: string) => void;
     onAbrirMenuContexto: (evento: React.MouseEvent, amigo: AmigoSocial) => void;
+    onAbrirPerfil?: (friendProfileId: string) => void;
     formatarTempoRelativo: (data: string | null | undefined) => string;
     rotuloStatus: (status?: StatusPresenca) => string;
 }) {
     return (
-        <button
-            type="button"
-            onClick={() => onAbrirChat(amigo.friendProfileId)}
+        <article
             onContextMenu={(evento) => onAbrirMenuContexto(evento, amigo)}
             className={cn(
-                'flex w-full items-center gap-3 border px-2.5 py-2 text-left transition-colors',
+                'flex w-full items-center border text-left transition-colors',
                 selecionado
                     ? 'border-emerald-400/25 bg-emerald-400/[0.05]'
                     : 'border-white/[0.07] bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.04]'
             )}
         >
-            <div className="relative h-8 w-8 shrink-0">
+            <button
+                type="button"
+                onClick={() => onAbrirPerfil?.(amigo.friendProfileId)}
+                aria-label={`Abrir perfil de ${amigo.nome}`}
+                title={`Abrir perfil de ${amigo.nome}`}
+                className="relative ml-2.5 h-8 w-8 shrink-0 transition-opacity hover:opacity-80"
+            >
                 {amigo.avatarUrl ? (
                     <img
                         src={amigo.avatarUrl}
@@ -127,24 +134,43 @@ function LinhaAmigo({
                 <span className="absolute -bottom-1 -right-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-[#151515]">
                     <IndicadorStatusSocial status={amigo.status ?? 'offline'} className="h-2.5 w-2.5" />
                 </span>
-            </div>
-            <div className="min-w-0 flex-1">
-                <p className="truncate text-[12px] font-semibold text-white/85">{amigo.nome}</p>
-                <p className={cn('truncate text-[9px]', classeStatus(amigo.status))}>
-                    {amigo.status === 'offline'
-                        ? `Visto ${formatarTempoRelativo(amigo.ultimoSeenEm)}`
-                        : `${rotuloStatus(amigo.status)}${amigo.handle ? ` · @${amigo.handle}` : ''}`}
-                </p>
-                {amigo.atividadeAtual?.modpackNome && (
-                    <p className="mt-0.5 truncate text-[9px] text-white/35">{amigo.atividadeAtual.modpackNome}</p>
-                )}
-            </div>
-            {naoLidas > 0 && (
-                <span className="inline-flex min-w-4 items-center justify-center bg-emerald-400 px-1 text-[9px] font-black leading-4 text-[#07120d]">
-                    {naoLidas > 99 ? '99+' : naoLidas}
+            </button>
+            <button
+                type="button"
+                onClick={() => onAbrirChat(amigo.friendProfileId)}
+                aria-label={`Abrir conversa com ${amigo.nome}`}
+                className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 pr-2.5 text-left"
+            >
+                <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1 text-[12px] font-semibold text-white/85">
+                        <span className="truncate">{amigo.nome}</span>
+                        {amigo.emblemaDestaque && (
+                            <img
+                                src={amigo.emblemaDestaque.imagemUrl}
+                                alt={`Destaque: ${amigo.emblemaDestaque.nome}`}
+                                title={`${amigo.emblemaDestaque.nome} — ${amigo.emblemaDestaque.descricao}`}
+                                className="h-4 w-4 shrink-0 object-contain"
+                            />
+                        )}
+                    </span>
+                    <span className={cn('block truncate text-[9px]', classeStatus(amigo.status))}>
+                        {amigo.status === 'offline'
+                            ? `Visto ${formatarTempoRelativo(amigo.ultimoSeenEm)}`
+                            : `${rotuloStatus(amigo.status)}${amigo.handle ? ` · @${amigo.handle}` : ''}`}
+                    </span>
+                    {amigo.atividadeAtual?.modpackNome && (
+                        <span className="mt-0.5 block truncate text-[9px] text-white/35">
+                            {amigo.atividadeAtual.modpackNome}
+                        </span>
+                    )}
                 </span>
-            )}
-        </button>
+                {naoLidas > 0 && (
+                    <span className="inline-flex min-w-4 items-center justify-center bg-emerald-400 px-1 text-[9px] font-black leading-4 text-[#07120d]">
+                        {naoLidas > 99 ? '99+' : naoLidas}
+                    </span>
+                )}
+            </button>
+        </article>
     );
 }
 
@@ -155,6 +181,7 @@ function LinhaAmigoJogando({
     onAbrirAtividade,
     onAbrirChat,
     onAbrirMenuContexto,
+    onAbrirPerfil,
 }: {
     amigo: AmigoSocial;
     selecionado: boolean;
@@ -162,6 +189,7 @@ function LinhaAmigoJogando({
     onAbrirAtividade?: (amigo: AmigoSocial) => void;
     onAbrirChat: (friendProfileId: string) => void;
     onAbrirMenuContexto: (evento: React.MouseEvent, amigo: AmigoSocial) => void;
+    onAbrirPerfil?: (friendProfileId: string) => void;
 }) {
     const atividade = amigo.atividadeAtual;
     const podeAbrirAtividade = Boolean(atividade && atividade.tipo !== 'launcher' && onAbrirAtividade);
@@ -188,9 +216,9 @@ function LinhaAmigoJogando({
         >
             <button
                 type="button"
-                onClick={abrirChat}
-                aria-label={`Abrir conversa com ${amigo.nome}`}
-                title={`Conversar com ${amigo.nome}`}
+                onClick={() => onAbrirPerfil?.(amigo.friendProfileId)}
+                aria-label={`Abrir perfil de ${amigo.nome}`}
+                title={`Abrir perfil de ${amigo.nome}`}
                 className="relative h-7 w-7 shrink-0 transition-opacity hover:opacity-80"
             >
                 {amigo.avatarUrl ? (
@@ -226,9 +254,17 @@ function LinhaAmigoJogando({
                 <button
                     type="button"
                     onClick={abrirChat}
-                    className="block max-w-full truncate text-[11px] font-bold text-white/80 hover:text-white"
+                    className="flex max-w-full items-center gap-1 text-[11px] font-bold text-white/80 hover:text-white"
                 >
-                    {amigo.nome}
+                    <span className="truncate">{amigo.nome}</span>
+                    {amigo.emblemaDestaque && (
+                        <img
+                            src={amigo.emblemaDestaque.imagemUrl}
+                            alt={`Destaque: ${amigo.emblemaDestaque.nome}`}
+                            title={`${amigo.emblemaDestaque.nome} — ${amigo.emblemaDestaque.descricao}`}
+                            className="h-4 w-4 shrink-0 object-contain"
+                        />
+                    )}
                 </button>
                 <button
                     type="button"
@@ -288,6 +324,7 @@ export function ListaAmigosAgrupada({
     amigoSelecionadoPerfilId,
     onAbrirChat,
     onAbrirAtividade,
+    onAbrirPerfil,
     onRemoverAmigo,
     formatarTempoRelativo,
     rotuloStatus,
@@ -428,6 +465,7 @@ export function ListaAmigosAgrupada({
                                             naoLidas={naoLidasPorAmigo[amigo.friendProfileId] ?? 0}
                                             onAbrirAtividade={onAbrirAtividade}
                                             onAbrirChat={onAbrirChat}
+                                            onAbrirPerfil={onAbrirPerfil}
                                             onAbrirMenuContexto={abrirMenuContexto}
                                         />
                                     ))}
@@ -455,6 +493,7 @@ export function ListaAmigosAgrupada({
                                             selecionado={amigoSelecionadoPerfilId === amigo.friendProfileId}
                                             naoLidas={naoLidasPorAmigo[amigo.friendProfileId] ?? 0}
                                             onAbrirChat={onAbrirChat}
+                                            onAbrirPerfil={onAbrirPerfil}
                                             onAbrirMenuContexto={abrirMenuContexto}
                                             formatarTempoRelativo={formatarTempoRelativo}
                                             rotuloStatus={rotuloStatus}
@@ -484,6 +523,7 @@ export function ListaAmigosAgrupada({
                                             selecionado={amigoSelecionadoPerfilId === amigo.friendProfileId}
                                             naoLidas={naoLidasPorAmigo[amigo.friendProfileId] ?? 0}
                                             onAbrirChat={onAbrirChat}
+                                            onAbrirPerfil={onAbrirPerfil}
                                             onAbrirMenuContexto={abrirMenuContexto}
                                             formatarTempoRelativo={formatarTempoRelativo}
                                             rotuloStatus={rotuloStatus}
@@ -607,6 +647,12 @@ export function ListaAmigosAgrupada({
                             setMenuContexto(null);
                         }}>
                             Conversar
+                        </ItemMenuContextual>
+                        <ItemMenuContextual icone={<Users size={12} />} onClick={() => {
+                            onAbrirPerfil?.(menuContexto.amigo.friendProfileId);
+                            setMenuContexto(null);
+                        }}>
+                            Abrir perfil
                         </ItemMenuContextual>
                         {menuContexto.amigo.atividadeAtual?.tipo !== 'launcher' &&
                             menuContexto.amigo.atividadeAtual && onAbrirAtividade && (

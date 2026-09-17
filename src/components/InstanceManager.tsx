@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Play,
-  ArrowLeft,
   Search,
   Plus,
   RefreshCw,
@@ -29,12 +28,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn } from "../lib/utils";
 import { ICONE_DOME_LAUNCHER } from "../lib/imagemProjeto";
 import { arquivoPodePertencerAoProjeto } from "../lib/conteudoInstalado";
-import {
-  EXTENSOES_IMAGEM_INSTANCIA,
-  prepararIconeInstancia,
-} from "../lib/iconeInstancia";
 import Configuracao from "../pages/instance/Configuracao";
 import type { ProjetoConteudo } from "./ProjetoDetalheModal";
+import EditorIconeModal from "./editor-icone/EditorIconeModal";
 import {
   CabecalhoMenuContextual,
   ItemMenuContextual,
@@ -351,6 +347,8 @@ export default function InstanceManager({
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [carregandoMaisResultados, setCarregandoMaisResultados] = useState(false);
+  const [temMaisResultados, setTemMaisResultados] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
   const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [logs, setLogs] = useState<LogFile[]>([]);
@@ -385,10 +383,12 @@ export default function InstanceManager({
   const [editName, setEditName] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editorIconeAberto, setEditorIconeAberto] = useState(false);
 
   const lastSearch = useRef({ query: "", filter: "", source: "" });
+  const carregandoMaisResultadosRef = useRef(false);
   const listaConteudoRef = useRef<HTMLDivElement | null>(null);
-  const iconInputRef = useRef<HTMLInputElement | null>(null);
+  const nomeInstanciaRef = useRef<HTMLInputElement | null>(null);
   const arrasteIndicadorRef = useRef<{
     ponteiroId: number;
     inicioY: number;
@@ -681,6 +681,7 @@ export default function InstanceManager({
               query: termoBusca,
               platform: "modrinth",
               contentType: projectType,
+              filtros: null,
             });
 
             for (const resultado of resultadosBusca) {
@@ -966,10 +967,18 @@ export default function InstanceManager({
     return match ? match[0] : "";
   };
 
-  const searchContent = async (query: string) => {
+  const searchContent = async (query: string, acumular = false) => {
     if (!instanceDetails) return;
-    lastSearch.current = { query, filter: activeFilter, source: browseSource };
-    setSearching(true);
+    if (acumular && carregandoMaisResultadosRef.current) return;
+    const assinaturaBusca = { query, filter: activeFilter, source: browseSource };
+    lastSearch.current = assinaturaBusca;
+    if (acumular) {
+      carregandoMaisResultadosRef.current = true;
+      setCarregandoMaisResultados(true);
+    } else {
+      setSearching(true);
+      setTemMaisResultados(true);
+    }
     try {
       const typeMap: Record<ContentFilter, string> = {
         mods: "mod",
@@ -984,12 +993,15 @@ export default function InstanceManager({
         query,
         platform: plataforma,
         contentType: tipoConteudo,
-        gameVersion: instanceDetails.version,
-        loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
+        filtros: {
+          gameVersion: instanceDetails.version,
+          loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
+          offset: acumular ? searchResults.length : 0,
+          limit: 20,
+        },
       });
 
-      setSearchResults(
-        resultados.map((item: any) => ({
+      const pagina = resultados.map((item: any) => ({
           id: String(item.id || ""),
           title: String(item.name || item.title || "Sem nome"),
           description: String(item.description || ""),
@@ -1007,13 +1019,28 @@ export default function InstanceManager({
           project_type: String(item.projectType || item.project_type || tipoConteudo),
           latest_version: item.latestVersion || item.latest_version || undefined,
           file_name: item.fileName || item.file_name || undefined,
-        }))
-      );
+        }));
+      if (lastSearch.current.query !== assinaturaBusca.query
+          || lastSearch.current.filter !== assinaturaBusca.filter
+          || lastSearch.current.source !== assinaturaBusca.source) {
+        return;
+      }
+      setTemMaisResultados(resultados.length === 20);
+      setSearchResults((atuais) => {
+        if (!acumular) return pagina;
+        const idsExistentes = new Set(atuais.map((item) => item.id));
+        return [...atuais, ...pagina.filter((item) => !idsExistentes.has(item.id))];
+      });
     } catch (error) {
       console.error("Erro ao buscar:", error);
-      setSearchResults([]);
+      if (!acumular) setSearchResults([]);
     } finally {
-      setSearching(false);
+      if (acumular) {
+        carregandoMaisResultadosRef.current = false;
+        setCarregandoMaisResultados(false);
+      } else {
+        setSearching(false);
+      }
     }
   };
 
@@ -1624,24 +1651,25 @@ export default function InstanceManager({
     setIsEditing(true);
   };
 
+  const editarNomeDiretamente = () => {
+    startEditingInstance();
+    requestAnimationFrame(() => {
+      nomeInstanciaRef.current?.focus();
+      nomeInstanciaRef.current?.select();
+    });
+  };
+
+  const editarIconeDiretamente = () => {
+    startEditingInstance();
+    setEditorIconeAberto(true);
+  };
+
   const cancelEditingInstance = () => {
     if (instanceDetails) {
       setEditName(instanceDetails.name);
       setEditIcon(instanceDetails.icon || "");
     }
     setIsEditing(false);
-  };
-
-  const handleInstanceIconChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    try {
-      setEditIcon(await prepararIconeInstancia(file));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível preparar a imagem.");
-    }
   };
 
   const openInstanceFolder = async () => {
@@ -1717,6 +1745,19 @@ export default function InstanceManager({
     const topo = (scrollTop / (scrollHeight - clientHeight)) * topoMaximo;
     setIndicadorRolagem({ altura, topo, visivel: true });
   }, []);
+
+  const aoRolarListaConteudo = () => {
+    sincronizarIndicadorRolagem();
+    const lista = listaConteudoRef.current;
+    if (!lista || viewMode !== "browse" || searching || carregandoMaisResultados || !temMaisResultados) {
+      return;
+    }
+
+    const distanciaDoFim = lista.scrollHeight - lista.scrollTop - lista.clientHeight;
+    if (distanciaDoFim <= 240) {
+      void searchContent(lastSearch.current.query, true);
+    }
+  };
 
   const rolarAoClicarTrilho = useCallback((evento: React.MouseEvent<HTMLDivElement>) => {
     if (evento.target !== evento.currentTarget) return;
@@ -1851,45 +1892,30 @@ export default function InstanceManager({
       <div className="bg-[#121214] border-b border-white/5 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <button
-              onClick={onBack}
-              className="p-2 rounded-lg hover:bg-white/5 transition-colors text-white/60 hover:text-white"
-            >
-              <ArrowLeft size={20} />
-            </button>
-
             {/* Ícone editável */}
-            <div className="relative group">
-              <input
-                ref={iconInputRef}
-                type="file"
-                accept={EXTENSOES_IMAGEM_INSTANCIA}
-                onChange={(event) => void handleInstanceIconChange(event)}
-                className="hidden"
-              />
+            <button
+              type="button"
+              onClick={editarIconeDiretamente}
+              aria-label="Editar ícone da instância"
+              title="Editar ícone"
+              className="relative group shrink-0 rounded-xl text-left"
+            >
               <div className="w-14 h-14 rounded-xl bg-[#1a1a1c] border border-white/10 overflow-hidden flex items-center justify-center">
                 <img
                   src={(isEditing ? editIcon : instanceDetails.icon) || ICONE_DOME_LAUNCHER}
                   alt=""
-                  className="w-full h-full object-contain p-1"
+                  className="w-full h-full object-cover"
                 />
               </div>
-              {isEditing && (
-                <button
-                  type="button"
-                  onClick={() => iconInputRef.current?.click()}
-                  aria-label="Alterar imagem da instância"
-                  title="Alterar imagem"
-                  className="absolute inset-0 bg-black/60 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                >
-                  <Pencil size={16} className="text-white" />
-                </button>
-              )}
-            </div>
+              <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                <Pencil size={16} className="text-white" />
+              </span>
+            </button>
 
             <div className="min-w-0">
               {isEditing ? (
                 <input
+                  ref={nomeInstanciaRef}
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
@@ -1898,9 +1924,16 @@ export default function InstanceManager({
                 />
               ) : (
                 <div className="flex min-w-0 items-center gap-2">
-                  <h1 className="truncate text-xl font-bold text-white">{instanceDetails.name}</h1>
+                  <button
+                    type="button"
+                    onClick={editarNomeDiretamente}
+                    title="Editar nome"
+                    className="min-w-0 cursor-text text-left"
+                  >
+                    <h1 className="truncate text-xl font-bold text-white">{instanceDetails.name}</h1>
+                  </button>
                   <button 
-                    onClick={startEditingInstance}
+                    onClick={editarNomeDiretamente}
                     className="p-1 rounded hover:bg-white/10 text-white/30 hover:text-white transition-colors"
                   >
                     <Pencil size={14} />
@@ -2206,7 +2239,7 @@ export default function InstanceManager({
               <div
                 id="lista-conteudo-instancia"
                 ref={listaConteudoRef}
-                onScroll={sincronizarIndicadorRolagem}
+                onScroll={aoRolarListaConteudo}
                 className="h-full overflow-y-auto scrollbar-hide"
               >
               {viewMode === "installed" ? (
@@ -2459,6 +2492,12 @@ export default function InstanceManager({
                         </div>
                       </div>
                     ))}
+                    {carregandoMaisResultados && (
+                      <div className="flex items-center justify-center gap-2 py-5 text-sm text-white/45">
+                        <Loader2 size={17} className="animate-spin text-emerald-400" />
+                        Carregando mais resultados...
+                      </div>
+                    )}
                   </div>
                 )
               )}
@@ -2855,6 +2894,13 @@ export default function InstanceManager({
           </div>
         </div>
       )}
+      <EditorIconeModal
+        aberto={editorIconeAberto}
+        iconeAtual={editIcon || instanceDetails?.icon}
+        chavePersistencia={instanceId}
+        aoFechar={() => setEditorIconeAberto(false)}
+        aoSalvar={setEditIcon}
+      />
     </div>
   );
 }
