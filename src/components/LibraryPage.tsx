@@ -341,6 +341,8 @@ export default function LibraryPage({
 
   // Garantir que todas as instâncias estejam em algum grupo
   useEffect(() => {
+    if (instances.length === 0) return;
+
     const idsUnicosInstancias = deduplicarIds(instances.map((i) => i.id));
     const idsNosGrupos = new Set(
       state.groups.flatMap((g) => deduplicarIds(g.instanceIds))

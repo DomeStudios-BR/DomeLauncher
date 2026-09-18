@@ -269,6 +269,12 @@ pub struct PayloadSalvarPerfilSocialLauncherApi {
     pub nome_social: Option<String>,
     pub handle: Option<String>,
     pub conta_minecraft_principal_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instancias_recentes: Option<Vec<InstanciaPublicaPerfilLauncherApi>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instancias_favoritas: Option<Vec<InstanciaPublicaPerfilLauncherApi>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

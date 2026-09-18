@@ -618,6 +618,10 @@
   color: #c7c7c3;
 }
 
+.perfil-comunidade .bio:empty {
+  display: none;
+}
+
 .perfil-comunidade .cabecalho-acoes {
   display: flex;
   flex-wrap: wrap;
@@ -2191,28 +2195,9 @@
   box-shadow: 0 0 7px rgba(97, 212, 142, 0.35);
 }
 
-/* Perfis de terceiros nunca herdam dados locais do dono do Launcher. */
-.perfil-comunidade.perfil-alheio .abas-perfil [data-alvo="atividade"],
-.perfil-comunidade.perfil-alheio .abas-perfil [data-alvo="instancias"],
-.perfil-comunidade.perfil-alheio .abas-perfil [data-alvo="analises"],
-.perfil-comunidade.perfil-alheio #atividade,
-.perfil-comunidade.perfil-alheio #instancias,
-.perfil-comunidade.perfil-alheio #analises,
-.perfil-comunidade.perfil-alheio .coluna-lateral {
-  display: none;
-}
-
-.perfil-comunidade.perfil-alheio.sem-capturas-publicas .abas-perfil [data-alvo="capturas"],
-.perfil-comunidade.perfil-alheio.sem-capturas-publicas #capturas {
-  display: none;
-}
-
-.perfil-comunidade.perfil-alheio .layout-perfil {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.perfil-comunidade.perfil-alheio .banner:not(:has(.banner-customizado.visivel)) .mundo-isometrico {
-  visibility: hidden;
+.perfil-comunidade.perfil-alheio .atividade-cartao,
+.perfil-comunidade.perfil-alheio .instancia-card {
+  cursor: default;
 }
 
 .perfil-comunidade .seletor-capturas.inline,
