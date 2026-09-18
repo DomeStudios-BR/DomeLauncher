@@ -123,11 +123,7 @@ fn obter_mapa_instancias_em_execucao(
             continue;
         }
 
-        if state.obter_pid_instancia(instance_id).is_some() {
-            resultados.insert(instance_id.clone(), true);
-            continue;
-        }
-
+        let tinha_pid_registrado = state.obter_pid_instancia(instance_id).is_some();
         let instance_path_normalizado = normalizar_caminho_processo(&instance_path);
         let caminho_canonico_normalizado = instance_path
             .canonicalize()
@@ -157,6 +153,15 @@ fn obter_mapa_instancias_em_execucao(
             continue;
         }
 
+        if tinha_pid_registrado {
+            state.remover_pid_instancia(instance_id);
+            if let Err(erro) = state.finalizar_tempo_jogado_instancia(instance_id) {
+                eprintln!(
+                    "[Instâncias] Aviso: falha ao finalizar sessão obsoleta da instância {}: {}",
+                    instance_id, erro
+                );
+            }
+        }
         resultados.insert(instance_id.clone(), false);
     }
 
@@ -240,15 +245,18 @@ pub fn kill_instance(instance_id: String, state: State<LauncherState>) -> Result
         }
     }
 
-    if finalizados == 0 {
-        return Err("Nenhum processo do Minecraft foi encontrado para essa instância.".to_string());
-    }
-
     state.remover_pid_instancia(&instance_id);
     if let Err(erro) = state.finalizar_tempo_jogado_instancia(&instance_id) {
         eprintln!(
             "[Instâncias] Aviso: falha ao finalizar tempo jogado da instância {}: {}",
             instance_id, erro
+        );
+    }
+
+    if finalizados == 0 {
+        println!(
+            "[Instâncias] A instância {} já estava encerrada; o estado obsoleto foi removido.",
+            instance_id
         );
     }
     Ok(())

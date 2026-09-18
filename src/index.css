@@ -180,7 +180,7 @@ svg {
 
 .launcher-social {
   position: relative;
-  padding: calc(var(--altura-topbar) + 12px) 14px 14px;
+  padding: 14px;
   background: #101010;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.035);

@@ -94,6 +94,12 @@ function salvarCachePerfil(perfil: PerfilSocial, comentarios: ComentarioPerfil[]
   }
 }
 
+function sanitizarBio(texto?: string | null): string {
+  if (!texto) return "";
+  const limpo = texto.trim();
+  return limpo === "Criando mundos e explorando novas aventuras." ? "" : limpo;
+}
+
 function identificarCaptura(captura: CapturaPerfil): string {
   return `${captura.instanciaId}:${captura.nome}`;
 }
@@ -182,7 +188,7 @@ export default function PerfilComunidade({
   );
   const [editando, setEditando] = useState(false);
   const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
-  const [bio, setBio] = useState(personalizacaoInicial.bio ?? "Criando mundos e explorando novas aventuras.");
+  const [bio, setBio] = useState(() => sanitizarBio(personalizacaoInicial.bio));
   const [comentarios, setComentarios] = useState<ComentarioPerfil[]>(perfilId ? [] : cacheInicial?.comentarios ?? []);
   const [sessaoSocial, setSessaoSocial] = useState<SessaoSocial | null>(null);
   const [capturas, setCapturas] = useState<CapturaPerfil[]>([]);
@@ -304,23 +310,30 @@ export default function PerfilComunidade({
           ? resultadoComentarios.value
           : cacheInicial?.comentarios ?? [];
         setPerfil(perfilCompleto);
+        const amigosDoPerfil = perfilId ? (perfilCompleto.amigos ?? []) : [];
         if (resultadoAmigos?.status === "fulfilled" && resultadoAmigos.value) {
           const amigosAtuais = resultadoAmigos.value.amigos ?? [];
           setAmigosDaSessao(amigosAtuais);
-          setAmigos(perfilId ? perfilCompleto.amigos ?? [] : amigosAtuais);
+          setAmigos(perfilId ? amigosDoPerfil : amigosAtuais);
           setPendentesRecebidas(resultadoAmigos.value.pendentesRecebidas ?? []);
           setPendentesEnviadas(resultadoAmigos.value.pendentesEnviadas ?? []);
+        } else if (perfilId) {
+          setAmigos(amigosDoPerfil);
         }
         setComentarios(comentariosAtualizados);
         if (!perfilId) salvarCachePerfil(perfilCompleto, comentariosAtualizados);
         setBannerPersonalizado(perfilCompleto.bannerPerfilUrl ?? null);
         setBio(
-          perfilId
-            ? perfilCompleto.bio || "Criando mundos e explorando novas aventuras."
-            : personalizacaoInicial.bio || perfilCompleto.bio || "Criando mundos e explorando novas aventuras.",
+          sanitizarBio(
+            perfilId
+              ? perfilCompleto.bio
+              : (personalizacaoInicial.bio ?? perfilCompleto.bio),
+          ),
         );
         setCapturasFavoritas(perfilCompleto.capturasFavoritas?.map((captura) => captura.id) ?? []);
+        setInstanciasFavoritas(perfilCompleto.instanciasFavoritas?.map((instancia) => instancia.id) ?? []);
         setEmblemasExibidosIds((perfilCompleto.emblemasExibidos ?? perfilCompleto.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
+
       } finally {
         if (ativo) setCarregandoPerfil(false);
       }
@@ -328,6 +341,49 @@ export default function PerfilComunidade({
     void carregar();
     return () => { ativo = false; };
   }, [minecraftUuid, perfilId]);
+  useEffect(() => {
+    if (!ehPerfilProprio || !sessaoSocial || !perfil || instances.length === 0) return;
+
+    const recentesLocais = [...instances]
+      .filter((instancia) => instancia.last_played)
+      .sort(
+        (a, b) =>
+          new Date(b.last_played!).getTime() -
+          new Date(a.last_played!).getTime(),
+      )
+      .slice(0, 3)
+      .map((instancia) => ({
+        id: instancia.id,
+        nome: instancia.name,
+        versao: instancia.version,
+        carregador: instancia.loader_type || instancia.mc_type,
+        iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
+        horasJogadas: Math.round(((instancia.tempo_total_jogado_segundos ?? 0) / 3600) * 10) / 10,
+        ultimaVez: instancia.last_played ?? null,
+      }));
+
+    if (recentesLocais.length === 0) return;
+    if (JSON.stringify(recentesLocais) === JSON.stringify(perfil.instanciasRecentes ?? [])) return;
+
+    let ativo = true;
+    void invoke<{ perfil?: PerfilSocial | null }>("save_launcher_social_profile", {
+      apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+      accessToken: sessaoSocial.accessToken,
+      payload: { instanciasRecentes: recentesLocais },
+    })
+      .then((resposta) => {
+        if (!ativo || !resposta.perfil) return;
+        setPerfil(resposta.perfil);
+        salvarCachePerfil(resposta.perfil, comentarios);
+      })
+      .catch((erro) => {
+        console.error("Não foi possível sincronizar as atividades recentes do perfil:", erro);
+      });
+
+    return () => {
+      ativo = false;
+    };
+  }, [assinaturaInstancias, comentarios, ehPerfilProprio, instances, perfil, sessaoSocial]);
   useEffect(() => {
     if (!sessaoSocial) return;
     let ativo = true;
@@ -400,12 +456,21 @@ export default function PerfilComunidade({
     () => (perfil ? pendentesRecebidas.find((pendente) => pendente.dePerfilId === perfil.perfilId)?.id ?? null : null),
     [pendentesRecebidas, perfil],
   );
-  const totalCapturasAba = editando && ehPerfilProprio && totalCapturas > 0
-    ? totalCapturas
-    : (perfil?.capturasFavoritas?.length ?? capturasFavoritas.length);
+  const totalCapturasAba = ehPerfilProprio
+    ? (editando && totalCapturas > 0 ? totalCapturas : (perfil?.capturasFavoritas?.length ?? capturasFavoritas.length))
+    : (perfil?.capturasFavoritas?.length ?? 0);
   const capturasExibidas = useMemo(() => {
-    if (mostrandoTodasCapturas && ehPerfilProprio) return capturas;
-    if (!editando && perfil?.capturasFavoritas) {
+    if (!ehPerfilProprio) {
+      return (perfil?.capturasFavoritas ?? []).map((captura) => ({
+        nome: captura.nome,
+        instanciaId: captura.id,
+        instanciaNome: captura.instanciaNome,
+        criadaEm: captura.criadaEm ?? null,
+        dadosUrl: captura.imagemUrl,
+      }));
+    }
+    if (mostrandoTodasCapturas) return capturas;
+    if (!editando && perfil?.capturasFavoritas && perfil.capturasFavoritas.length > 0) {
       return perfil.capturasFavoritas.map((captura) => ({
         nome: captura.nome,
         instanciaId: captura.id,
@@ -434,7 +499,7 @@ export default function PerfilComunidade({
         path: "",
       } satisfies Instance));
     }
-    if (instanciasFavoritas.length === 0) return instances.slice(0, 3);
+    if (instanciasFavoritas.length === 0) return [];
     return instanciasFavoritas
       .map((id) => instances.find((instancia) => instancia.id === id))
       .filter((instancia): instancia is Instance => Boolean(instancia))
@@ -627,7 +692,11 @@ export default function PerfilComunidade({
       new CustomEvent("dome:social-abrir-chat", { detail: { friendProfileId: perfil.perfilId } }),
     );
   };
-  const ordemDaSecao = (secao: SecaoPerfil) => ordemSecoes.indexOf(secao);
+  const ordemDaSecao = (secao: SecaoPerfil) => {
+    if (!ehPerfilProprio) return ORDEM_PADRAO.indexOf(secao);
+    const indice = ordemSecoes.indexOf(secao);
+    return indice >= 0 ? indice : ORDEM_PADRAO.indexOf(secao);
+  };
   const moverSecao = (origem: SecaoPerfil, destino: SecaoPerfil) => {
     if (origem === destino) return;
     setOrdemSecoes((ordemAtual) => {
@@ -739,6 +808,8 @@ export default function PerfilComunidade({
       });
       setPerfil(perfilAtualizado);
       setBannerPersonalizado(perfilAtualizado.bannerPerfilUrl ?? null);
+      setCapturasFavoritas(perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? []);
+      setInstanciasFavoritas(perfilAtualizado.instanciasFavoritas?.map((instancia) => instancia.id) ?? []);
       setEmblemasExibidosIds((perfilAtualizado.emblemasExibidos ?? perfilAtualizado.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
       window.dispatchEvent(
         new CustomEvent("dome:social-perfil-atualizado", { detail: { perfil: perfilAtualizado } }),
@@ -762,7 +833,7 @@ export default function PerfilComunidade({
   };
   const cancelarEdicao = () => {
     const salva = carregarPersonalizacao();
-    setBio(salva.bio ?? "Criando mundos e explorando novas aventuras.");
+    setBio(sanitizarBio(salva.bio ?? perfil?.bio));
     setAvatarPersonalizado(salva.avatarPersonalizado ?? null);
     setBannerPersonalizado(perfil?.bannerPerfilUrl ?? null);
     setCapturasFavoritas(perfil?.capturasFavoritas?.map((captura) => captura.id) ?? []);
@@ -783,7 +854,7 @@ export default function PerfilComunidade({
     );
   }
   return (
-    <div className={`perfil-comunidade ${ehPerfilProprio ? "perfil-proprio" : "perfil-alheio"} ${!ehPerfilProprio && !perfil.capturasFavoritas?.length ? "sem-capturas-publicas" : ""}`}>
+    <div className={`perfil-comunidade ${ehPerfilProprio ? "perfil-proprio" : "perfil-alheio"}`}>
       <main id="topo">
             <section className="hero" aria-labelledby="nome-perfil">
               <div className="banner" id="bannerPerfil">
@@ -1063,12 +1134,13 @@ export default function PerfilComunidade({
                         maxLength={140}
                         rows={3}
                         value={bio}
+                        placeholder="Escreva algo sobre você..."
                         onChange={(evento) => setBio(evento.target.value)}
                       />
                       <span>{bio.length} / 140</span>
                     </div>
                   ) : (
-                    <p className="bio" id="bioPerfil">{bio}</p>
+                    bio ? <p className="bio" id="bioPerfil">{bio}</p> : null
                   )}
                 </div>
                 <div className="resumo-conta">
@@ -1169,38 +1241,46 @@ export default function PerfilComunidade({
               >
                 VISÃO GERAL
               </button>
-              <button
-                className={`aba ${abaAtiva === "atividade" ? "ativa" : ""}`}
-                data-alvo="atividade"
-                type="button"
-                onClick={() => abrirSecao("atividade")}
-              >
-                ATIVIDADE
-              </button>
-              <button
-                className={`aba ${abaAtiva === "instancias" ? "ativa" : ""}`}
-                data-alvo="instancias"
-                type="button"
-                onClick={() => abrirSecao("instancias")}
-              >
-                INSTÂNCIAS <span>{instances.length}</span>
-              </button>
-              <button
-                className={`aba ${abaAtiva === "capturas" ? "ativa" : ""}`}
-                data-alvo="capturas"
-                type="button"
-                onClick={() => abrirSecao("capturas")}
-              >
-                CAPTURAS <span>{totalCapturasAba}</span>
-              </button>
-              <button
-                className={`aba ${abaAtiva === "analises" ? "ativa" : ""}`}
-                data-alvo="analises"
-                type="button"
-                onClick={() => abrirSecao("analises")}
-              >
-                ANÁLISES <span>{analises.length}</span>
-              </button>
+              {(ehPerfilProprio || atividadesRecentes.length > 0) && (
+                <button
+                  className={`aba ${abaAtiva === "atividade" ? "ativa" : ""}`}
+                  data-alvo="atividade"
+                  type="button"
+                  onClick={() => abrirSecao("atividade")}
+                >
+                  ATIVIDADE
+                </button>
+              )}
+              {(ehPerfilProprio || instanciasExibidas.length > 0) && (
+                <button
+                  className={`aba ${abaAtiva === "instancias" ? "ativa" : ""}`}
+                  data-alvo="instancias"
+                  type="button"
+                  onClick={() => abrirSecao("instancias")}
+                >
+                  INSTÂNCIAS <span>{ehPerfilProprio ? instances.length : instanciasExibidas.length}</span>
+                </button>
+              )}
+              {(ehPerfilProprio || capturasExibidas.length > 0) && (
+                <button
+                  className={`aba ${abaAtiva === "capturas" ? "ativa" : ""}`}
+                  data-alvo="capturas"
+                  type="button"
+                  onClick={() => abrirSecao("capturas")}
+                >
+                  CAPTURAS <span>{totalCapturasAba}</span>
+                </button>
+              )}
+              {(ehPerfilProprio || analises.length > 0) && (
+                <button
+                  className={`aba ${abaAtiva === "analises" ? "ativa" : ""}`}
+                  data-alvo="analises"
+                  type="button"
+                  onClick={() => abrirSecao("analises")}
+                >
+                  ANÁLISES <span>{analises.length}</span>
+                </button>
+              )}
             </nav>
             {editando && (
               <div className="barra-edicao-inline" role="status">
@@ -1218,12 +1298,13 @@ export default function PerfilComunidade({
             )}
             <div className="layout-perfil" id="visao-geral">
               <div className="coluna-principal">
-                <section
-                  className={`secao capturas-destaque ${editando ? "secao-editavel" : ""} ${itemArrastado === "capturas" ? "arrastando" : ""}`}
-                  id="capturas"
-                  data-secao-perfil="capturas"
-                  style={{ order: ordemDaSecao("capturas") }}
-                >
+                {(ehPerfilProprio || capturasExibidas.length > 0) && (
+                  <section
+                    className={`secao capturas-destaque ${editando ? "secao-editavel" : ""} ${itemArrastado === "capturas" ? "arrastando" : ""}`}
+                    id="capturas"
+                    data-secao-perfil="capturas"
+                    style={{ order: ordemDaSecao("capturas") }}
+                  >
                   <div className="secao-titulo">
                     <div>
                       <span className="sobretitulo">GALERIA PESSOAL</span>
@@ -1324,13 +1405,15 @@ export default function PerfilComunidade({
                       <button type="button" disabled={carregandoCapturas || paginaCapturas >= totalPaginasCapturas} onClick={() => setPaginaCapturas((pagina) => pagina + 1)}>Próxima →</button>
                     </div>
                   )}
-                </section>
-                <section
-                  className={`secao ${editando ? "secao-editavel" : ""}`}
-                  id="atividade"
-                  data-secao-perfil="atividade"
-                  style={{ order: ordemDaSecao("atividade") }}
-                >
+                  </section>
+                )}
+                {(ehPerfilProprio || atividadesRecentes.length > 0) && (
+                  <section
+                    className={`secao ${editando ? "secao-editavel" : ""}`}
+                    id="atividade"
+                    data-secao-perfil="atividade"
+                    style={{ order: ordemDaSecao("atividade") }}
+                  >
                   <div className="secao-titulo">
                     <div>
                       <span className="sobretitulo">ÚLTIMAS 2 SEMANAS</span>
@@ -1399,17 +1482,23 @@ export default function PerfilComunidade({
                     {atividadesRecentes.length === 0 && (
                       <div className="estado-vazio-perfil compacto">
                         <strong>Nenhuma atividade recente</strong>
-                        <span>As instâncias jogadas aparecerão aqui.</span>
+                        <span>
+                          {ehPerfilProprio
+                            ? "As instâncias jogadas aparecerão aqui."
+                            : "Este jogador ainda não possui atividades registradas recentemente."}
+                        </span>
                       </div>
                     )}
                   </div>
-                </section>
-                <section
-                  className={`secao ${editando ? "secao-editavel" : ""}`}
-                  id="instancias"
-                  data-secao-perfil="instancias"
-                  style={{ order: ordemDaSecao("instancias") }}
-                >
+                  </section>
+                )}
+                {(ehPerfilProprio || instanciasExibidas.length > 0) && (
+                  <section
+                    className={`secao ${editando ? "secao-editavel" : ""}`}
+                    id="instancias"
+                    data-secao-perfil="instancias"
+                    style={{ order: ordemDaSecao("instancias") }}
+                  >
                   <div className="secao-titulo">
                     <div>
                       <span className="sobretitulo">COLEÇÃO CURADA</span>
@@ -1499,17 +1588,23 @@ export default function PerfilComunidade({
                     {instanciasExibidas.length === 0 && (
                       <div className="estado-vazio-perfil compacto">
                         <strong>Nenhuma instância favorita</strong>
-                        <span>Escolha até três instâncias ao editar o perfil.</span>
+                        <span>
+                          {ehPerfilProprio
+                            ? "Escolha até três instâncias ao editar o perfil."
+                            : "Este jogador ainda não destacou instâncias favoritas."}
+                        </span>
                       </div>
                     )}
                   </div>
-                </section>
-                <section
-                  className={`secao ${editando ? "secao-editavel" : ""}`}
-                  id="analises"
-                  data-secao-perfil="analises"
-                  style={{ order: ordemDaSecao("analises") }}
-                >
+                  </section>
+                )}
+                {(ehPerfilProprio || analises.length > 0) && (
+                  <section
+                    className={`secao ${editando ? "secao-editavel" : ""}`}
+                    id="analises"
+                    data-secao-perfil="analises"
+                    style={{ order: ordemDaSecao("analises") }}
+                  >
                   <div className="secao-titulo">
                     <div>
                       <span className="sobretitulo">OPINIÕES PUBLICADAS</span>
@@ -1568,7 +1663,8 @@ export default function PerfilComunidade({
                       </span>
                     </div>
                   )}
-                </section>
+                  </section>
+                )}
                 <section className="secao comentarios" id="comentarios" style={{ order: 999 }}>
                   <div className="secao-titulo">
                     <div>

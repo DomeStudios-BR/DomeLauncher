@@ -38,6 +38,7 @@ import {
   SeparadorMenuContextual,
 } from "./context-menu/MenuContextual";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
+import { loadFavorites } from "./Favorites";
 
 interface InstanceManagerProps {
   instanceId: string;
@@ -145,6 +146,8 @@ interface SearchResult {
   project_type: string;
   latest_version?: string;
   file_name?: string;
+  source: BrowseSource;
+  fontes?: BrowseSource[];
 }
 
 interface WorldInfo {
@@ -171,6 +174,7 @@ type ContentTab = "content" | "worlds" | "configuration" | "logs";
 type ContentFilter = "mods" | "resourcepacks" | "shaders";
 type ViewMode = "installed" | "browse";
 type BrowseSource = "modrinth" | "curseforge";
+type FiltroFonteBusca = BrowseSource | "ambas";
 type TipoProjetoCache = "mod" | "resourcepack" | "shader";
 
 interface RegistroCacheConteudo {
@@ -202,6 +206,11 @@ const tipoProjetoPorFiltro = (filtro: ContentFilter): TipoProjetoCache => {
   if (filtro === "resourcepacks") return "resourcepack";
   if (filtro === "shaders") return "shader";
   return "mod";
+};
+
+const chaveCorrespondenciaProjeto = (item: Pick<SearchResult, "slug" | "title">): string => {
+  const valor = item.slug || item.title;
+  return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 };
 
 const montarChaveCacheConteudo = (
@@ -339,7 +348,7 @@ export default function InstanceManager({
   const [activeTab, setActiveTab] = useState<ContentTab>("content");
   const [activeFilter, setActiveFilter] = useState<ContentFilter>("mods");
   const [viewMode, setViewMode] = useState<ViewMode>("installed");
-  const [browseSource, setBrowseSource] = useState<BrowseSource>("modrinth");
+  const [browseSource, setBrowseSource] = useState<FiltroFonteBusca>("ambas");
   const [searchQuery, setSearchQuery] = useState("");
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [installedResourcePacks, setInstalledResourcePacks] = useState<InstalledMod[]>([]);
@@ -387,6 +396,7 @@ export default function InstanceManager({
   const editorIconeAbriuEdicaoRef = useRef(false);
 
   const lastSearch = useRef({ query: "", filter: "", source: "" });
+  const offsetsBuscaPorFonteRef = useRef<Record<BrowseSource, number>>({ modrinth: 0, curseforge: 0 });
   const carregandoMaisResultadosRef = useRef(false);
   const listaConteudoRef = useRef<HTMLDivElement | null>(null);
   const nomeInstanciaRef = useRef<HTMLInputElement | null>(null);
@@ -971,6 +981,7 @@ export default function InstanceManager({
   const searchContent = async (query: string, acumular = false) => {
     if (!instanceDetails) return;
     if (acumular && carregandoMaisResultadosRef.current) return;
+    if (!acumular) offsetsBuscaPorFonteRef.current = { modrinth: 0, curseforge: 0 };
     const assinaturaBusca = { query, filter: activeFilter, source: browseSource };
     lastSearch.current = assinaturaBusca;
     if (acumular) {
@@ -986,23 +997,31 @@ export default function InstanceManager({
         resourcepacks: "resourcepack",
         shaders: "shader",
       };
-      const plataforma = browseSource === "curseforge" ? "curseforge" : "modrinth";
       const tipoConteudo = typeMap[activeFilter];
       const loaderInstancia = instanceDetails.loaderType?.trim().toLowerCase();
+      const fontes: BrowseSource[] = browseSource === "ambas"
+        ? ["modrinth", "curseforge"]
+        : [browseSource];
+      const paginas = await Promise.all(fontes.map(async (fonte) => {
+        const resultados: any[] = await invoke("search_mods_online", {
+          query,
+          platform: fonte,
+          contentType: tipoConteudo,
+          filtros: {
+            gameVersion: instanceDetails.version,
+            loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
+            offset: offsetsBuscaPorFonteRef.current[fonte],
+            limit: 20,
+          },
+        });
+        return { fonte, resultados };
+      }));
 
-      const resultados: any[] = await invoke("search_mods_online", {
-        query,
-        platform: plataforma,
-        contentType: tipoConteudo,
-        filtros: {
-          gameVersion: instanceDetails.version,
-          loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
-          offset: acumular ? searchResults.length : 0,
-          limit: 20,
-        },
-      });
-
-      const pagina = resultados.map((item: any) => ({
+      const maiorPagina = Math.max(...paginas.map(({ resultados }) => resultados.length));
+      const resultadosIntercalados = Array.from({ length: maiorPagina }).flatMap((_, indice) =>
+        paginas.flatMap(({ fonte, resultados }) => resultados[indice] ? [{ fonte, item: resultados[indice] }] : [])
+      );
+      const paginaApiBruta = resultadosIntercalados.map(({ fonte, item }: { fonte: BrowseSource; item: any }) => ({
           id: String(item.id || ""),
           title: String(item.name || item.title || "Sem nome"),
           description: String(item.description || ""),
@@ -1020,17 +1039,54 @@ export default function InstanceManager({
           project_type: String(item.projectType || item.project_type || tipoConteudo),
           latest_version: item.latestVersion || item.latest_version || undefined,
           file_name: item.fileName || item.file_name || undefined,
-        }));
+          source: fonte,
+          fontes: [fonte],
+        } satisfies SearchResult));
+      const paginaApi = Array.from(paginaApiBruta.reduce((mapa, item) => {
+        const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
+        const existente = mapa.get(chave);
+        if (!existente) {
+          mapa.set(chave, item);
+          return mapa;
+        }
+        existente.fontes = Array.from(new Set([...(existente.fontes ?? [existente.source]), item.source]));
+        return mapa;
+      }, new Map<string, SearchResult>()).values());
+      const favoritos = acumular ? [] : loadFavorites()
+        .filter((item) => item.type === tipoConteudo)
+        .filter((item) => browseSource === "ambas" || item.source === browseSource)
+        .filter((item) => !query.trim() || `${item.title} ${item.author}`.toLowerCase().includes(query.trim().toLowerCase()))
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          icon_url: item.icon_url || undefined,
+          author: item.author,
+          slug: item.slug,
+          project_type: item.type,
+          source: item.source,
+          fontes: [item.source],
+        } satisfies SearchResult))
+        .filter((item) => !projetoJaInstalado(item));
+      const pagina = [
+        ...favoritos,
+        ...paginaApi,
+      ].filter((item, indice, itens) =>
+        itens.findIndex((candidato) => chaveCorrespondenciaProjeto(candidato) === chaveCorrespondenciaProjeto(item)) === indice
+      );
       if (lastSearch.current.query !== assinaturaBusca.query
           || lastSearch.current.filter !== assinaturaBusca.filter
           || lastSearch.current.source !== assinaturaBusca.source) {
         return;
       }
-      setTemMaisResultados(resultados.length === 20);
+      paginas.forEach(({ fonte, resultados }) => {
+        offsetsBuscaPorFonteRef.current[fonte] += resultados.length;
+      });
+      setTemMaisResultados(paginas.some(({ resultados }) => resultados.length === 20));
       setSearchResults((atuais) => {
         if (!acumular) return pagina;
-        const idsExistentes = new Set(atuais.map((item) => item.id));
-        return [...atuais, ...pagina.filter((item) => !idsExistentes.has(item.id))];
+        const idsExistentes = new Set(atuais.map((item) => `${item.source}:${item.id}`));
+        return [...atuais, ...pagina.filter((item) => !idsExistentes.has(`${item.source}:${item.id}`))];
       });
     } catch (error) {
       console.error("Erro ao buscar:", error);
@@ -1057,7 +1113,7 @@ export default function InstanceManager({
       };
       const tipoProjeto = typeMap[activeFilter];
 
-      if (browseSource === "curseforge") {
+      if (item.source === "curseforge") {
         if (tipoProjeto === "mod") {
           await invoke("install_mod", {
             instanceId,
@@ -1639,7 +1695,7 @@ export default function InstanceManager({
       icon_url: item.icon_url || "",
       author: item.author,
       slug: item.slug,
-      source: browseSource,
+      source: item.source,
       project_type: tipoProjetoPorFiltro(activeFilter),
       downloads: item.downloads,
     });
@@ -2104,7 +2160,9 @@ export default function InstanceManager({
                   placeholder={
                     viewMode === "installed"
                       ? `Buscar em ${filteredContent.length} projetos...`
-                      : `Buscar no ${browseSource === "modrinth" ? "Modrinth" : "CurseForge"}...`
+                      : browseSource === "ambas"
+                        ? "Buscar no Modrinth e CurseForge..."
+                        : `Buscar no ${browseSource === "modrinth" ? "Modrinth" : "CurseForge"}...`
                   }
                   className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-10 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                 />
@@ -2144,6 +2202,15 @@ export default function InstanceManager({
                 </div>
               ) : (
                 <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
+                  <button
+                    onClick={() => setBrowseSource("ambas")}
+                    className={cn(
+                      "px-3 py-1.5 rounded text-xs font-bold transition-all",
+                      browseSource === "ambas" ? "bg-white/15 text-white" : "text-white/40"
+                    )}
+                  >
+                    Ambos
+                  </button>
                   <button
                     onClick={() => setBrowseSource("modrinth")}
                     className={cn(
@@ -2426,7 +2493,7 @@ export default function InstanceManager({
                   <div className="p-4 grid grid-cols-1 gap-3">
                     {searchResults.map((item) => (
                       <div
-                        key={item.id}
+                        key={`${item.source}:${item.id}`}
                         className="bg-white/3 hover:bg-white/5 border border-white/5 rounded-xl p-4 flex gap-4 transition-all group"
                       >
                         <img
@@ -2445,9 +2512,17 @@ export default function InstanceManager({
                               >
                                 {item.title}
                               </button>
-                              <p className="text-xs text-white/40">
-                                por {item.author} • via <span className={browseSource === "modrinth" ? "text-emerald-400" : "text-orange-400"}>{browseSource}</span>
-                              </p>
+                              <div className="flex flex-wrap items-center gap-1 text-xs text-white/40">
+                                <span>por {item.author} • via</span>
+                                {(item.fontes ?? [item.source]).map((fonte) => (
+                                  <span
+                                    key={fonte}
+                                    className={fonte === "modrinth" ? "text-emerald-400" : "text-orange-400"}
+                                  >
+                                    {fonte === "modrinth" ? "Modrinth" : "CurseForge"}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
 
                             <div className="flex shrink-0 items-center gap-2">

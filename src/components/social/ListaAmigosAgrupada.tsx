@@ -193,8 +193,12 @@ function LinhaAmigoJogando({
 }) {
     const atividade = amigo.atividadeAtual;
     const podeAbrirAtividade = Boolean(atividade && atividade.tipo !== 'launcher' && onAbrirAtividade);
-    const abrirChat = () => onAbrirChat(amigo.friendProfileId);
-    const abrirAtividade = () => {
+    const abrirChat = (evento?: React.MouseEvent) => {
+        evento?.stopPropagation();
+        onAbrirChat(amigo.friendProfileId);
+    };
+    const abrirAtividade = (evento?: React.MouseEvent) => {
+        evento?.stopPropagation();
         if (podeAbrirAtividade && onAbrirAtividade) {
             onAbrirAtividade(amigo);
             return;
@@ -205,10 +209,11 @@ function LinhaAmigoJogando({
 
     return (
         <article
+            onClick={abrirChat}
             onContextMenu={(evento) => onAbrirMenuContexto(evento, amigo)}
             className={cn(
                 'grid w-full grid-cols-[1.75rem_2.5rem_minmax(0,1fr)_auto] items-center gap-2 border px-2 py-2',
-                'text-left transition-colors',
+                'cursor-pointer text-left transition-colors',
                 selecionado
                     ? 'border-emerald-400/20 bg-emerald-400/[0.045]'
                     : 'border-transparent hover:border-white/[0.07] hover:bg-white/[0.03]'
@@ -216,7 +221,10 @@ function LinhaAmigoJogando({
         >
             <button
                 type="button"
-                onClick={() => onAbrirPerfil?.(amigo.friendProfileId)}
+                onClick={(evento) => {
+                    evento.stopPropagation();
+                    onAbrirPerfil?.(amigo.friendProfileId);
+                }}
                 aria-label={`Abrir perfil de ${amigo.nome}`}
                 title={`Abrir perfil de ${amigo.nome}`}
                 className="relative h-7 w-7 shrink-0 transition-opacity hover:opacity-80"
@@ -243,8 +251,8 @@ function LinhaAmigoJogando({
             <button
                 type="button"
                 onClick={abrirAtividade}
-                aria-label={podeAbrirAtividade ? `Abrir ${atividade?.modpackNome}` : `Abrir conversa com ${amigo.nome}`}
-                title={podeAbrirAtividade ? 'Ver instância' : `Conversar com ${amigo.nome}`}
+                aria-label={podeAbrirAtividade ? `Solicitar ${atividade?.modpackNome || atividade?.instanciaNome}` : `Abrir conversa com ${amigo.nome}`}
+                title={podeAbrirAtividade ? "Abrir solicitação da instância" : `Conversar com ${amigo.nome}`}
                 className="h-10 w-10 transition-transform hover:scale-[1.04]"
             >
                 {atividade && <ImagemAtividade atividade={atividade} className="h-full w-full" />}
