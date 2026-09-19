@@ -583,13 +583,12 @@ pub async fn install_java(major: u32) -> Result<JavaInfo, String> {
 
         extract_dir.join(&root_folder)
     } else {
-        let arquivo = std::fs::File::open(&archive_path)
-            .map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
-        let decodificado = flate2::read::GzDecoder::new(arquivo);
-        let mut arquivo_tar = tar::Archive::new(decodificado);
-
-        // Encontrar o nome da pasta raiz dentro do .tar.gz
+        // Encontrar o nome da pasta raiz dentro do .tar.gz lendo a primeira entrada
         let root_folder = {
+            let arquivo = std::fs::File::open(&archive_path)
+                .map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
+            let decodificado = flate2::read::GzDecoder::new(arquivo);
+            let mut arquivo_tar = tar::Archive::new(decodificado);
             let mut entradas = arquivo_tar
                 .entries()
                 .map_err(|e| format!("Erro ao ler TAR: {}", e))?;
@@ -605,7 +604,11 @@ pub async fn install_java(major: u32) -> Result<JavaInfo, String> {
             nome.split('/').next().unwrap_or("").to_string()
         };
 
-        // Extrair (o `unpack` do tar impede que entradas escapem do destino).
+        // Extrair com o leitor na posicao inicial (pos = 0)
+        let arquivo = std::fs::File::open(&archive_path)
+            .map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
+        let decodificado = flate2::read::GzDecoder::new(arquivo);
+        let mut arquivo_tar = tar::Archive::new(decodificado);
         arquivo_tar
             .unpack(&extract_dir)
             .map_err(|e| format!("Erro ao extrair TAR: {}", e))?;
@@ -816,5 +819,59 @@ mod tests {
     fn preserva_ou_converte_java_console() {
         let resultado = resolver_executavel_java_console("java");
         assert!(!resultado.is_empty());
+    }
+
+    #[test]
+    fn testa_extracao_tar_gz_com_posicao_limpa() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "teste_tar_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let archive_path = temp_dir.join("test.tar.gz");
+
+        {
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let enc = GzEncoder::new(file, Compression::default());
+            let mut builder = tar::Builder::new(enc);
+
+            let dados = b"teste java binario";
+            let mut header = tar::Header::new_gnu();
+            header.set_path("jdk-21/bin/java").unwrap();
+            header.set_size(dados.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append(&header, &dados[..]).unwrap();
+            builder.finish().unwrap();
+        }
+
+        let extract_dir = temp_dir.join("extract");
+        std::fs::create_dir_all(&extract_dir).unwrap();
+
+        let root_folder = {
+            let arquivo = std::fs::File::open(&archive_path).unwrap();
+            let decodificado = flate2::read::GzDecoder::new(arquivo);
+            let mut arquivo_tar = tar::Archive::new(decodificado);
+            let mut entradas = arquivo_tar.entries().unwrap();
+            let primeira = entradas.next().unwrap().unwrap();
+            let nome = primeira.path().unwrap().to_string_lossy().to_string();
+            nome.split('/').next().unwrap_or("").to_string()
+        };
+
+        let arquivo = std::fs::File::open(&archive_path).unwrap();
+        let decodificado = flate2::read::GzDecoder::new(arquivo);
+        let mut arquivo_tar = tar::Archive::new(decodificado);
+        arquivo_tar.unpack(&extract_dir).unwrap();
+
+        assert_eq!(root_folder, "jdk-21");
+        assert!(extract_dir.join("jdk-21").join("bin").join("java").exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

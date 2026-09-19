@@ -102,8 +102,8 @@ jobs:
             exit 1
           fi
 
-          # Se a release ja existir publicada no GitHub Releases, pula para evitar reexecucao duplicada
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          # Se a release ja existir publicada no GitHub Releases, pula para evitar reexecucao duplicada (exceto workflow_dispatch)
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "A release $TAG ja esta publicada no GitHub Releases. Pulando build duplicado."
             echo "deve_publicar=false" >> "$GITHUB_OUTPUT"
             exit 0
