@@ -7,16 +7,18 @@ pub(crate) fn timestamp_atual_segundos() -> u64 {
         .unwrap_or(0)
 }
 
-/// Extrai DLLs nativas dos classifiers das bibliotecas para a pasta de natives.
+/// Extrai bibliotecas nativas dos classifiers para a pasta de natives.
 fn extrair_natives_de_libs(
     libs: &[crate::launcher::Library],
     libraries_path: &std::path::Path,
     natives_path: &std::path::Path,
 ) {
+    let nome_nativos = crate::launcher::nome_classifier_nativos();
+    let extensao_nativos = crate::launcher::extensao_nativos();
     for lib in libs {
         if let Some(downloads) = &lib.downloads {
             if let Some(classifiers) = &downloads.classifiers {
-                if let Some(native_obj) = classifiers.get("natives-windows") {
+                if let Some(native_obj) = classifiers.get(nome_nativos) {
                     if let Some(path) = native_obj["path"].as_str() {
                         let native_jar_path = libraries_path.join(path);
                         if native_jar_path.exists() {
@@ -25,7 +27,7 @@ fn extrair_natives_de_libs(
                                     for i in 0..archive.len() {
                                         if let Ok(mut entry) = archive.by_index(i) {
                                             let name = entry.name().to_string();
-                                            if name.ends_with(".dll") {
+                                            if name.ends_with(&format!(".{}", extensao_nativos)) {
                                                 let out = natives_path.join(
                                                     std::path::Path::new(&name)
                                                         .file_name()
@@ -231,19 +233,20 @@ async fn launch_instance_com_opcoes(
     // 5.1 Montar Classpath a partir das bibliotecas do manifesto
     let mut cp = Vec::new();
 
+    let sistema_atual = crate::launcher::nome_sistema_minecraft();
     for lib in &details.libraries {
         let mut allowed = true;
         if let Some(rules) = &lib.rules {
             for rule in rules {
                 if rule.action == "allow" {
                     if let Some(os) = &rule.os {
-                        if os.name != "windows" {
+                        if os.name != sistema_atual {
                             allowed = false;
                         }
                     }
                 } else if rule.action == "disallow" {
                     if let Some(os) = &rule.os {
-                        if os.name == "windows" {
+                        if os.name == sistema_atual {
                             allowed = false;
                         }
                     }
@@ -269,7 +272,7 @@ async fn launch_instance_com_opcoes(
     }
 
     cp.push(jar_path.to_string_lossy().to_string());
-    let cp_val = cp.join(";");
+    let cp_val = cp.join(crate::launcher::separador_classpath());
 
     // 5.2 Adicionar JVM args do manifesto (Fabric/Forge/NeoForge), com placeholders resolvidos
     for arg in super::instancias_criacao::coletar_argumentos_jvm_manifesto(

@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -27,13 +27,11 @@ pub(crate) struct ResultadoImportacaoInstancia {
 }
 
 fn listar_instancias_prism() -> Vec<InstanciaImportavelExterna> {
-    let Some(app_data) = std::env::var("APPDATA").ok() else {
+    let Some(base) = directories::BaseDirs::new() else {
         return Vec::new();
     };
 
-    let pasta_instancias = std::path::PathBuf::from(app_data)
-        .join("PrismLauncher")
-        .join("instances");
+    let pasta_instancias = base.data_dir().join("PrismLauncher").join("instances");
     listar_instancias_prism_em(&pasta_instancias)
 }
 
@@ -326,20 +324,15 @@ fn listar_instancias_modrinth_por_banco(
 }
 
 fn listar_instancias_modrinth() -> Vec<InstanciaImportavelExterna> {
-    let Some(app_data) = std::env::var("APPDATA").ok() else {
+    let Some(base) = directories::BaseDirs::new() else {
         return Vec::new();
     };
 
+    let dados = base.data_dir();
     let pastas_base = vec![
-        std::path::PathBuf::from(&app_data)
-            .join("com.modrinth.theseus")
-            .join("profiles"),
-        std::path::PathBuf::from(&app_data)
-            .join("ModrinthApp")
-            .join("profiles"),
-        std::path::PathBuf::from(&app_data)
-            .join("theseus")
-            .join("profiles"),
+        dados.join("com.modrinth.theseus").join("profiles"),
+        dados.join("ModrinthApp").join("profiles"),
+        dados.join("theseus").join("profiles"),
     ];
 
     let mut resultados = Vec::new();

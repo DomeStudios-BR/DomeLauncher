@@ -389,14 +389,54 @@ fn escrever_json_seguro<T: Serialize>(caminho: &std::path::Path, valor: &T) -> R
     std::fs::write(caminho, conteudo).map_err(|e| format!("Erro ao salvar arquivo: {}", e))
 }
 
+/// Pasta raiz de dados do launcher ao nível do usuário.
+/// No Windows preserva `%APPDATA%\dome`; em outros sistemas usa o diretório de
+/// dados do usuário (ex.: `~/.local/share/dome` no Linux via XDG).
+pub(crate) fn pasta_dados_launcher() -> PathBuf {
+    directories::BaseDirs::new()
+        .map(|base| base.data_dir().join("dome"))
+        .unwrap_or_else(|| PathBuf::from("dome"))
+}
+
 fn caminho_sessao_social() -> PathBuf {
-    std::env::var("APPDATA")
-        .map(|app_data| {
-            PathBuf::from(app_data)
-                .join("dome")
-                .join("social-session.dat")
-        })
-        .unwrap_or_else(|_| PathBuf::from("social-session.dat"))
+    pasta_dados_launcher().join("social-session.dat")
+}
+
+/// Nome do sistema atual conforme o manifesto do Minecraft
+/// (`windows`, `linux` ou `osx`).
+pub(crate) fn nome_sistema_minecraft() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "windows",
+        "macos" => "osx",
+        _ => "linux",
+    }
+}
+
+/// Chave `natives-*` do manifesto correspondente ao sistema atual.
+pub(crate) fn nome_classifier_nativos() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "natives-windows",
+        "macos" => "natives-osx",
+        _ => "natives-linux",
+    }
+}
+
+/// Extensão dos binários nativos extraídos (`.dll`, `.so` ou `.dylib`).
+pub(crate) fn extensao_nativos() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "dll",
+        "macos" => "dylib",
+        _ => "so",
+    }
+}
+
+/// Separador de entradas do classpath (ponto e vírgula no Windows, dois pontos nos demais).
+pub(crate) fn separador_classpath() -> &'static str {
+    if cfg!(windows) {
+        ";"
+    } else {
+        ":"
+    }
 }
 
 #[tauri::command]
@@ -684,9 +724,10 @@ impl LauncherState {
 
     pub fn new() -> Self {
         // Determinar o caminho correto para dados do launcher
-        let data_path = std::env::var("APPDATA")
-            .map(|app_data| PathBuf::from(app_data).join("dome"))
-            .unwrap_or_else(|_| PathBuf::from("."));
+        let data_path = pasta_dados_launcher();
+        if let Err(e) = std::fs::create_dir_all(&data_path) {
+            eprintln!("Warning: Could not create data directory: {}", e);
+        }
 
         let instances_path =
             match crate::comandos::configuracoes_java::carregar_configuracoes_locais() {
@@ -766,16 +807,12 @@ impl LauncherState {
 
     /// Caminho para o arquivo de conta
     fn get_account_path() -> PathBuf {
-        std::env::var("APPDATA")
-            .map(|app_data| PathBuf::from(app_data).join("dome").join("account.json"))
-            .unwrap_or_else(|_| PathBuf::from("account.json"))
+        pasta_dados_launcher().join("account.json")
     }
 
     /// Caminho para o arquivo de contas salvas (multi-conta)
     fn get_accounts_path() -> PathBuf {
-        std::env::var("APPDATA")
-            .map(|app_data| PathBuf::from(app_data).join("dome").join("accounts.json"))
-            .unwrap_or_else(|_| PathBuf::from("accounts.json"))
+        pasta_dados_launcher().join("accounts.json")
     }
 
     /// Carrega a conta salva do arquivo

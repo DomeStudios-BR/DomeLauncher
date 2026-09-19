@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::launcher::LauncherState;
@@ -82,33 +82,15 @@ impl Default for GlobalSettings {
 }
 
 pub fn get_default_instances_path() -> std::path::PathBuf {
-    std::env::var("APPDATA")
-        .map(|app_data| {
-            std::path::PathBuf::from(app_data)
-                .join("dome")
-                .join("instances")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("instances"))
+    crate::launcher::pasta_dados_launcher().join("instances")
 }
 
 fn get_settings_path() -> std::path::PathBuf {
-    std::env::var("APPDATA")
-        .map(|app_data| {
-            std::path::PathBuf::from(app_data)
-                .join("dome")
-                .join("settings.json")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("settings.json"))
+    crate::launcher::pasta_dados_launcher().join("settings.json")
 }
 
 fn get_runtime_dir() -> std::path::PathBuf {
-    std::env::var("APPDATA")
-        .map(|app_data| {
-            std::path::PathBuf::from(app_data)
-                .join("dome")
-                .join("runtime")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("runtime"))
+    crate::launcher::pasta_dados_launcher().join("runtime")
 }
 
 pub fn carregar_configuracoes_locais() -> Result<GlobalSettings, String> {
@@ -185,7 +167,7 @@ pub async fn get_system_ram() -> Result<u32, String> {
 pub fn resolver_caminho_java_do_path() -> Option<std::path::PathBuf> {
     if let Some(paths) = std::env::var_os("PATH") {
         for p in std::env::split_paths(&paths) {
-            let exe = p.join(if cfg!(windows) { "java.exe" } else { "java" });
+            let exe = p.join(nome_executavel_java(true));
             if exe.is_file() {
                 return Some(exe);
             }
@@ -201,6 +183,41 @@ pub fn resolver_caminho_java_do_path() -> Option<std::path::PathBuf> {
     None
 }
 
+/// Nome do executável Java (com extensão no Windows) conforme o sistema.
+fn nome_executavel_java(console: bool) -> &'static str {
+    if cfg!(windows) {
+        if console {
+            "java.exe"
+        } else {
+            "javaw.exe"
+        }
+    } else {
+        "java"
+    }
+}
+
+/// Executável Java dentro de um diretório de instalação (`<home>/bin/java*`).
+/// No Windows prioriza `javaw.exe` para jogar e `java.exe` para console.
+fn executavel_java_da_instalacao(
+    java_home: &std::path::Path,
+    preferir_console: bool,
+) -> Option<std::path::PathBuf> {
+    let bin = java_home.join("bin");
+    let candidatos: Vec<&str> = if cfg!(windows) {
+        if preferir_console {
+            vec!["java.exe", "javaw.exe"]
+        } else {
+            vec!["javaw.exe", "java.exe"]
+        }
+    } else {
+        vec!["java"]
+    };
+    candidatos
+        .iter()
+        .map(|nome| bin.join(nome))
+        .find(|caminho| caminho.exists())
+}
+
 /// Detecta todas as instalações de Java no sistema (estilo HeliosLauncher)
 #[tauri::command]
 pub async fn detect_java_installations() -> Result<Vec<JavaInfo>, String> {
@@ -213,14 +230,7 @@ pub async fn detect_java_installations() -> Result<Vec<JavaInfo>, String> {
         if let Ok(entries) = std::fs::read_dir(&runtime_dir) {
             for entry in entries.flatten() {
                 if entry.path().is_dir() {
-                    let java_exe = entry.path().join("bin").join("javaw.exe");
-                    let java_exe_alt = entry.path().join("bin").join("java.exe");
-                    let exe = if java_exe.exists() {
-                        java_exe
-                    } else {
-                        java_exe_alt
-                    };
-                    if exe.exists() {
+                    if let Some(exe) = executavel_java_da_instalacao(&entry.path(), false) {
                         let path_str = entry.path().to_string_lossy().to_string();
                         if checked_paths.insert(path_str.clone()) {
                             if let Some(info) = probe_java(&exe, true).await {
@@ -236,39 +246,77 @@ pub async fn detect_java_installations() -> Result<Vec<JavaInfo>, String> {
     // 2. Verificar JAVA_HOME e outras variáveis de ambiente
     for env_key in &["JAVA_HOME", "JRE_HOME", "JDK_HOME"] {
         if let Ok(val) = std::env::var(env_key) {
-            let java_exe = std::path::PathBuf::from(&val).join("bin").join("java.exe");
-            if java_exe.exists() && checked_paths.insert(val.clone()) {
-                if let Some(info) = probe_java(&java_exe, false).await {
-                    javas.push(info);
+            let java_home = std::path::PathBuf::from(&val);
+            if let Some(java_exe) = executavel_java_da_instalacao(&java_home, false) {
+                if java_exe.exists() && checked_paths.insert(val.clone()) {
+                    if let Some(info) = probe_java(&java_exe, false).await {
+                        javas.push(info);
+                    }
                 }
             }
         }
     }
 
-    // 3. Verificar pastas padrão do Windows
-    let drive_letters = vec!["C", "D", "E"];
-    let search_dirs = vec![
-        "Program Files\\Java",
-        "Program Files\\Eclipse Adoptium",
-        "Program Files\\Eclipse Foundation",
-        "Program Files\\AdoptOpenJDK",
-        "Program Files\\Amazon Corretto",
-        "Program Files\\Microsoft",
-        "Program Files\\Zulu",
-    ];
+    // 3. Verificar pastas comuns de instalação por sistema
+    #[cfg(target_os = "windows")]
+    {
+        let drive_letters = vec!["C", "D", "E"];
+        let search_dirs = vec![
+            "Program Files\\Java",
+            "Program Files\\Eclipse Adoptium",
+            "Program Files\\Eclipse Foundation",
+            "Program Files\\AdoptOpenJDK",
+            "Program Files\\Amazon Corretto",
+            "Program Files\\Microsoft",
+            "Program Files\\Zulu",
+        ];
 
-    for drive in &drive_letters {
+        for drive in &drive_letters {
+            for dir in &search_dirs {
+                let base = std::path::PathBuf::from(format!("{}:\\{}", drive, dir));
+                if base.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&base) {
+                        for entry in entries.flatten() {
+                            if entry.path().is_dir() {
+                                if let Some(java_exe) =
+                                    executavel_java_da_instalacao(&entry.path(), false)
+                                {
+                                    let path_str = entry.path().to_string_lossy().to_string();
+                                    if java_exe.exists() && checked_paths.insert(path_str.clone()) {
+                                        if let Some(info) = probe_java(&java_exe, false).await {
+                                            javas.push(info);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3.1 No Linux, verificar diretórios comuns de JDK
+    #[cfg(target_os = "linux")]
+    {
+        let search_dirs = vec!["/usr/lib/jvm", "/opt"];
+
         for dir in &search_dirs {
-            let base = std::path::PathBuf::from(format!("{}:\\{}", drive, dir));
+            let base = std::path::PathBuf::from(dir);
             if base.exists() {
                 if let Ok(entries) = std::fs::read_dir(&base) {
                     for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            let java_exe = entry.path().join("bin").join("java.exe");
-                            let path_str = entry.path().to_string_lossy().to_string();
-                            if java_exe.exists() && checked_paths.insert(path_str.clone()) {
-                                if let Some(info) = probe_java(&java_exe, false).await {
-                                    javas.push(info);
+                        let nome_pasta = entry.file_name().to_string_lossy().to_lowercase();
+                        let candidata = nome_pasta.contains("jdk") || nome_pasta.contains("java");
+                        if entry.path().is_dir() && candidata {
+                            if let Some(java_exe) =
+                                executavel_java_da_instalacao(&entry.path(), false)
+                            {
+                                let path_str = entry.path().to_string_lossy().to_string();
+                                if java_exe.exists() && checked_paths.insert(path_str.clone()) {
+                                    if let Some(info) = probe_java(&java_exe, false).await {
+                                        javas.push(info);
+                                    }
                                 }
                             }
                         }
@@ -421,7 +469,11 @@ pub async fn install_java(major: u32) -> Result<JavaInfo, String> {
     } else {
         "x64"
     };
-    let os = "windows";
+    let os = match std::env::consts::OS {
+        "windows" => "windows",
+        "macos" => "mac",
+        _ => "linux",
+    };
 
     println!(
         "[Java] Buscando JDK {} do Adoptium ({} {})...",
@@ -490,49 +542,87 @@ pub async fn install_java(major: u32) -> Result<JavaInfo, String> {
 
     println!("[Java] Extraindo {}...", file_name);
 
-    // Extrair o ZIP
     let extract_dir = runtime_dir.clone();
-    let file =
-        std::fs::File::open(&archive_path).map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
 
-    let mut zip_archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("Erro ao abrir ZIP: {}", e))?;
+    // No Windows o Adoptium distribui um ZIP; no Linux/macOS um .tar.gz.
+    let java_home = if file_name.to_lowercase().ends_with(".zip") {
+        let file = std::fs::File::open(&archive_path)
+            .map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
 
-    // Encontrar o nome da pasta raiz dentro do ZIP
-    let root_folder = {
-        let first = zip_archive
-            .by_index(0)
-            .map_err(|e| format!("ZIP vazio: {}", e))?;
-        let name = first.name().to_string();
-        name.split('/').next().unwrap_or("").to_string()
+        let mut zip_archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Erro ao abrir ZIP: {}", e))?;
+
+        // Encontrar o nome da pasta raiz dentro do ZIP
+        let root_folder = {
+            let first = zip_archive
+                .by_index(0)
+                .map_err(|e| format!("ZIP vazio: {}", e))?;
+            let name = first.name().to_string();
+            name.split('/').next().unwrap_or("").to_string()
+        };
+
+        // Extrair
+        for i in 0..zip_archive.len() {
+            let mut entry = zip_archive
+                .by_index(i)
+                .map_err(|e| format!("Erro no ZIP: {}", e))?;
+            let outpath = extract_dir.join(entry.name());
+
+            if entry.is_dir() {
+                std::fs::create_dir_all(&outpath).ok();
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Erro ao criar arquivo: {}", e))?;
+                std::io::copy(&mut entry, &mut outfile)
+                    .map_err(|e| format!("Erro ao extrair: {}", e))?;
+            }
+        }
+
+        extract_dir.join(&root_folder)
+    } else {
+        let arquivo = std::fs::File::open(&archive_path)
+            .map_err(|e| format!("Erro ao abrir arquivo: {}", e))?;
+        let decodificado = flate2::read::GzDecoder::new(arquivo);
+        let mut arquivo_tar = tar::Archive::new(decodificado);
+
+        // Encontrar o nome da pasta raiz dentro do .tar.gz
+        let root_folder = {
+            let mut entradas = arquivo_tar
+                .entries()
+                .map_err(|e| format!("Erro ao ler TAR: {}", e))?;
+            let primeira = entradas
+                .next()
+                .ok_or("TAR vazio: nenhuma entrada encontrada.")?
+                .map_err(|e| format!("Erro no TAR: {}", e))?;
+            let nome = primeira
+                .path()
+                .map_err(|e| format!("Erro ao ler nome no TAR: {}", e))?
+                .to_string_lossy()
+                .to_string();
+            nome.split('/').next().unwrap_or("").to_string()
+        };
+
+        // Extrair (o `unpack` do tar impede que entradas escapem do destino).
+        arquivo_tar
+            .unpack(&extract_dir)
+            .map_err(|e| format!("Erro ao extrair TAR: {}", e))?;
+
+        extract_dir.join(&root_folder)
     };
 
-    // Extrair
-    for i in 0..zip_archive.len() {
-        let mut entry = zip_archive
-            .by_index(i)
-            .map_err(|e| format!("Erro no ZIP: {}", e))?;
-        let outpath = extract_dir.join(entry.name());
-
-        if entry.is_dir() {
-            std::fs::create_dir_all(&outpath).ok();
-        } else {
-            if let Some(parent) = outpath.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            let mut outfile = std::fs::File::create(&outpath)
-                .map_err(|e| format!("Erro ao criar arquivo: {}", e))?;
-            std::io::copy(&mut entry, &mut outfile)
-                .map_err(|e| format!("Erro ao extrair: {}", e))?;
-        }
-    }
-
-    // Limpar arquivo ZIP
+    // Limpar arquivo de instalação
     std::fs::remove_file(&archive_path).ok();
 
     // Verificar a instalação
-    let java_home = extract_dir.join(&root_folder);
-    let java_exe = java_home.join("bin").join("java.exe");
+    let java_exe = executavel_java_da_instalacao(&java_home, true).ok_or_else(|| {
+        format!(
+            "Java não encontrado após extração em {:?}",
+            java_home.join("bin")
+        )
+    })?;
 
     if !java_exe.exists() {
         return Err(format!(
@@ -563,13 +653,10 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
         if let Some(ref path) = settings.java_path {
             if !path.is_empty() {
                 let dir = std::path::PathBuf::from(path);
-                let java_exe = dir.join("bin").join("java.exe");
-                if java_exe.exists() {
-                    return Ok(java_exe.to_string_lossy().to_string());
-                }
-                let javaw_exe = dir.join("bin").join("javaw.exe");
-                if javaw_exe.exists() {
-                    return Ok(javaw_exe.to_string_lossy().to_string());
+                if let Some(java_exe) = executavel_java_da_instalacao(&dir, false) {
+                    if java_exe.exists() {
+                        return Ok(java_exe.to_string_lossy().to_string());
+                    }
                 }
                 if dir.is_file() {
                     return Ok(dir.to_string_lossy().to_string());
@@ -604,21 +691,10 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
             java.version, java.vendor, java.path
         );
         let dir = std::path::PathBuf::from(&java.path);
-        let p1 = dir.join("bin").join("javaw.exe");
-        if p1.exists() {
-            return Ok(p1.to_string_lossy().to_string());
-        }
-        let p2 = dir.join("bin").join("java.exe");
-        if p2.exists() {
-            return Ok(p2.to_string_lossy().to_string());
-        }
-        let p3 = dir.join("javaw.exe");
-        if p3.exists() {
-            return Ok(p3.to_string_lossy().to_string());
-        }
-        let p4 = dir.join("java.exe");
-        if p4.exists() {
-            return Ok(p4.to_string_lossy().to_string());
+        if let Some(java_exe) = executavel_java_da_instalacao(&dir, false) {
+            if java_exe.exists() {
+                return Ok(java_exe.to_string_lossy().to_string());
+            }
         }
         if dir.is_file() {
             return Ok(dir.to_string_lossy().to_string());
@@ -632,13 +708,10 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
     );
     let installed = install_java(required_major).await?;
     let dir = std::path::PathBuf::from(&installed.path);
-    let p1 = dir.join("bin").join("javaw.exe");
-    if p1.exists() {
-        return Ok(p1.to_string_lossy().to_string());
-    }
-    let p2 = dir.join("bin").join("java.exe");
-    if p2.exists() {
-        return Ok(p2.to_string_lossy().to_string());
+    if let Some(java_exe) = executavel_java_da_instalacao(&dir, false) {
+        if java_exe.exists() {
+            return Ok(java_exe.to_string_lossy().to_string());
+        }
     }
     Ok(installed.path)
 }

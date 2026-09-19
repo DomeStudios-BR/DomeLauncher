@@ -4,7 +4,7 @@
 
 
 <p align="center">
-  <a href="https://github.com/levigarciia/DomeLauncher/releases/latest"><strong>Baixar para Windows</strong></a>
+  <a href="https://github.com/levigarciia/DomeLauncher/releases/latest"><strong>Baixar para Windows e Linux</strong></a>
   &nbsp;&nbsp;•&nbsp;&nbsp;
   <a href="https://domestudios.com.br/domelauncher">Site oficial</a>
   &nbsp;&nbsp;•&nbsp;&nbsp;
@@ -52,10 +52,13 @@ Importe suas instâncias do CurseForge, Modrinth e outros launchers compatíveis
 ## Comece a jogar
 
 1. Baixe o instalador na página de [Releases](https://github.com/levigarciia/DomeLauncher/releases/latest).
-2. Instale e abra o Dome Launcher no Windows.
-3. Entre com sua conta Microsoft, escolha ou crie uma instância e clique em **Jogar**.
+2. No Windows, use o instalador `.exe`; no Linux, prefira o pacote `.deb` ou o `.AppImage`.
+3. Instale e abra o Dome Launcher.
+4. Entre com sua conta Microsoft, escolha ou crie uma instância e clique em **Jogar**.
 
 > É necessário ter uma conta Microsoft com Minecraft e conexão com a internet para autenticação e downloads.
+>
+> No Linux, o launcher usa o WebKitGTK 4.1; no AppImage, instale `webkit2gtk-4.1` (no Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0`) caso o erro de ambiente apareça.
 
 ## Comunidade e suporte
 

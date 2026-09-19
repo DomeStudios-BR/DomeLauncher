@@ -15,7 +15,7 @@ Instruções explícitas da tarefa têm prioridade sobre este guia.
 ## Produto e documentação
 
 Launcher desktop de Minecraft com React 19, TypeScript e Vite na WebView, e Rust/Tauri 2 para operações nativas.
-Windows é o alvo atual de release.
+Windows e Linux são os alvos atuais de release.
 
 - `README.md` é para jogadores: recursos, requisitos, downloads e suporte. Mantenha apenas um link curto
   para documentação técnica; não acrescente arquitetura e instruções internas ali.
@@ -51,8 +51,9 @@ Windows é o alvo atual de release.
 ## Ambiente e comandos
 
 Use Bun, nunca npm. Consulte `package.json` antes de inventar scripts. A CI usa Bun 1.3.5 e Rust estável
-com `rustfmt` e `clippy`. No Windows, tenha WebView2 e ferramentas C++ necessárias ao Rust/Tauri.
-Execute na raiz do launcher:
+com `rustfmt` e `clippy`. No Windows, tenha WebView2 e ferramentas C++ necessárias ao Rust/Tauri. No Linux,
+tenha os pacotes de desenvolvimento do WebKitGTK 4.1 (`libwebkit2gtk-4.1-dev`) além de `librsvg2-dev`,
+`libgtk-3-dev` e `patchelf` para empacotar. Execute na raiz do launcher:
 
 ```powershell
 bun install --frozen-lockfile
@@ -112,7 +113,8 @@ e limpeza temporária explicitamente.
 ## Downloads e instâncias
 
 `aplicacao/downloads_instancias.rs` prepara cliente, bibliotecas e assets com até 32 transferências simultâneas.
-O cache fica em `%APPDATA%/dome/cache/arquivos-minecraft`, com chave SHA-1 do manifesto ou URL sem hash.
+O cache fica em `pasta_dados_launcher()/cache/arquivos-minecraft` (`%APPDATA%\dome` no Windows,
+`~/.local/share/dome` no Linux), com chave SHA-1 do manifesto ou URL sem hash.
 Requisições simultâneas pelo mesmo conteúdo compartilham o download.
 
 Preserve validação de tamanho/hash do cache, escrita temporária seguida de renomeação e cópias independentes
@@ -159,13 +161,14 @@ o lockfile Rust quando necessário.
 
 O commit de release (ex: `release: Dome Launcher v0.3.3`) integrado na `main` ou o push de tag `v*` dispara
 automaticamente o workflow `release-launcher.yml`. O workflow valida a sincronização das 3 versões, cria e envia a
-tag remota caso ainda não exista, compila e publica o NSIS e o `latest.json`. Chaves de assinatura pertencem aos
-secrets da CI.
+tag remota caso ainda não exista, compila e publica o NSIS (Windows), o `.deb`/`.AppImage` (Linux) e o `latest.json`.
+Chaves de assinatura pertencem aos secrets da CI.
 
 O smoke test deve cobrir instalação limpa no Windows sem ferramentas de desenvolvimento, login Microsoft,
 Vanilla/Fabric/Forge/NeoForge, seleção/instalação de Java, Modrinth/CurseForge, mundo local, conexão a servidor,
 importação/exportação/sync, login Discord, amigos, chat e encerramento de sessão. Valide atualização assinada
-com uma versão de teste. Só declare publicação após o workflow terminar e os assets remotos serem conferidos.
+com uma versão de teste. No Linux, valide o `.deb`/`.AppImage` em instalação limpa e o lançamento nativo do jogo.
+Só declare publicação após o workflow terminar e os assets remotos serem conferidos.
 Detecção da atualização, interação para instalar e disponibilidade do pacote são verificações distintas.
 A descrição publicada no `latest.json` é guardada antes da instalação e exibida uma única vez, em um modal de
 novidades, quando a versão instalada for aberta pela primeira vez. Preserve esse vínculo com `releaseBody`.
