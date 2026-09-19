@@ -76,7 +76,8 @@ bucket e devolve uma URL pública em `/api/launcher/novidades/imagens/:arquivo`;
 ### Notícias oficiais do Minecraft
 
 A Home consulta pelo comando `get_minecraft_news` o sitemap oficial do `minecraft.net`, limita a resposta a dez itens
-e mantém um cache local de 30 minutos em `%APPDATA%/dome/cache`. Um espelho somente de leitura dos artigos oficiais
+e mantém um cache local de 30 minutos na pasta de dados do launcher (`%APPDATA%\dome\cache` no Windows,
+`~/.local/share/dome/cache` no Linux). Um espelho somente de leitura dos artigos oficiais
 é usado como contingência caso o site esteja indisponível. Ao selecionar uma notícia,
 `get_minecraft_article` aceita somente URLs HTTPS de artigos do domínio oficial e devolve uma estrutura com texto e
 imagens, em vez de HTML executável. A interface renderiza essa estrutura em um modal próprio e não executa scripts,
@@ -121,7 +122,8 @@ ao aplicativo Discord do servidor. A variável não altera a CSP: confira `conne
 `refresh_launcher_social_session`, recebe `{ accessToken, expiraEm }` e preserva o refresh token.
 Falha na renovação limpa a sessão local. Não presuma retry de toda requisição com 401 ou rotação de refresh token.
 
-`salvar_sessao_social_local` grava `%APPDATA%/dome/social-session.dat`, protegido por DPAPI no Windows;
+`salvar_sessao_social_local` grava `social-session.dat` na pasta de dados do launcher (`%APPDATA%\dome` no Windows,
+`~/.local/share/dome` no Linux), protegido por DPAPI no Windows;
 `carregar_sessao_social_local` recupera a sessão. A chave legada `dome:social:sessao` no `localStorage`
 é migrada e removida. Tokens ainda existem na memória do frontend para IPC/socket.
 

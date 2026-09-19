@@ -171,10 +171,7 @@ pub(super) async fn download_instance_files(
             .timeout(std::time::Duration::from_secs(180))
             .build()
             .map_err(|e| e.to_string())?,
-        cache: std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("dome/cache/arquivos-minecraft"),
+        cache: crate::launcher::pasta_dados_launcher().join("cache/arquivos-minecraft"),
     });
     let cliente = &detalhes.downloads.client;
     let mut arquivos = vec![Arquivo {
@@ -183,13 +180,14 @@ pub(super) async fn download_instance_files(
         tamanho: Some(cliente.size),
         sha1: Some(cliente.sha1.clone()),
     }];
+    let sistema_atual = crate::launcher::nome_sistema_minecraft();
     for biblioteca in &detalhes.libraries {
         let mut permitida = true;
         if let Some(regras) = &biblioteca.rules {
             for regra in regras {
                 if let Some(sistema) = &regra.os {
-                    if (regra.action == "allow" && sistema.name != "windows")
-                        || (regra.action == "disallow" && sistema.name == "windows")
+                    if (regra.action == "allow" && sistema.name != sistema_atual)
+                        || (regra.action == "disallow" && sistema.name == sistema_atual)
                     {
                         permitida = false;
                     }
@@ -212,10 +210,11 @@ pub(super) async fn download_instance_files(
                 });
             }
         }
+        let nome_nativos = crate::launcher::nome_classifier_nativos();
         if let Some(nativos) = downloads
             .classifiers
             .as_ref()
-            .and_then(|c| c.get("natives-windows"))
+            .and_then(|c| c.get(nome_nativos))
         {
             if let (Some(url), Some(caminho)) = (nativos["url"].as_str(), nativos["path"].as_str())
             {

@@ -48,13 +48,7 @@ fn agora_em_ms() -> u64 {
 }
 
 fn get_cache_dir() -> std::path::PathBuf {
-    std::env::var("APPDATA")
-        .map(|app_data| {
-            std::path::PathBuf::from(app_data)
-                .join("dome")
-                .join("cache")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("cache"))
+    crate::launcher::pasta_dados_launcher().join("cache")
 }
 
 fn get_minecraft_news_cache_path() -> std::path::PathBuf {

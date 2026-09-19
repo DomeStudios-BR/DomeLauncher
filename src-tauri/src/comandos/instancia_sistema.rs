@@ -1051,9 +1051,12 @@ mod testes {
     fn rejeita_travessia_e_caminhos_absolutos() {
         assert!(!identificador_instancia_valido("../segredo"));
         assert!(!identificador_instancia_valido("pasta/filha"));
-        assert!(!identificador_instancia_valido("C:\\Windows"));
         assert!(!identificador_instancia_valido(".."));
         assert!(!identificador_instancia_valido(""));
+        #[cfg(windows)]
+        assert!(!identificador_instancia_valido("C:\\Windows"));
+        #[cfg(not(windows))]
+        assert!(!identificador_instancia_valido("/etc/passwd"));
     }
 
     #[test]
