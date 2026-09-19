@@ -2,19 +2,144 @@ name: release-launcher
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da versao para lancar (ex: v0.3.3)"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-launcher
+  cancel-in-progress: false
+
 jobs:
+  preparar-release:
+    runs-on: ubuntu-latest
+    outputs:
+      deve_publicar: ${{ steps.verificar.outputs.deve_publicar }}
+      versao_tag: ${{ steps.verificar.outputs.versao_tag }}
+      corpo_release: ${{ steps.verificar.outputs.corpo_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verificar gatilho e preparar release
+        id: verificar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEVE_PUBLICAR=false
+          TAG=""
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT_TAG="${{ github.event.inputs.tag }}"
+            if [ -n "$INPUT_TAG" ]; then
+              TAG="$INPUT_TAG"
+              [[ "$TAG" =~ ^v ]] || TAG="v$TAG"
+            else
+              TAG="v$(node -p "require('./package.json').version")"
+            fi
+            DEVE_PUBLICAR=true
+            echo "Disparo manual via workflow_dispatch para tag: $TAG"
+
+          elif [ "${{ github.ref_type }}" = "tag" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+            DEVE_PUBLICAR=true
+            echo "Disparo via push de tag: $TAG"
+
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            SUBJECT="$(git log -1 --pretty=%s)"
+            MENSAGEM="$(git log -1 --pretty=%B)"
+            echo "Subject do commit: $SUBJECT"
+
+            # Identifica commits de release (ex: "release: Dome Launcher v0.3.2")
+            if echo "$SUBJECT" | grep -iqE '^release(\([^)]+\))?:' || echo "$MENSAGEM" | grep -iqE '(^|\n)release(\([^)]+\))?:'; then
+              echo "Commit identificado como release!"
+              VERSAO="$(echo "$SUBJECT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+              if [ -z "$VERSAO" ]; then
+                VERSAO="$(echo "$MENSAGEM" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+              fi
+              if [ -n "$VERSAO" ]; then
+                TAG="v$VERSAO"
+              else
+                TAG="v$(node -p "require('./package.json').version")"
+              fi
+              DEVE_PUBLICAR=true
+              echo "Tag identificada a partir do commit: $TAG"
+            else
+              echo "Commit comum na main (nao e release). Nenhuma acao necessaria."
+              DEVE_PUBLICAR=false
+            fi
+          fi
+
+          if [ "$DEVE_PUBLICAR" != "true" ]; then
+            echo "deve_publicar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Validar sincronizacao dos manifestos
+          ESPERADA="${TAG#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          TAURI="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO="$(grep -m1 '^version' src-tauri/Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          echo "Validando manifestos: esperada=$ESPERADA package=$PKG tauri=$TAURI cargo=$CARGO"
+
+          if [ "$PKG" != "$ESPERADA" ] || [ "$TAURI" != "$ESPERADA" ] || [ "$CARGO" != "$ESPERADA" ]; then
+            echo "::error::A versao $TAG diverge dos manifestos: package=$PKG, tauri=$TAURI, cargo=$CARGO. Sincronize as 3 versoes antes de lancar a release."
+            exit 1
+          fi
+
+          # Se a release ja existir publicada no GitHub Releases, pula para evitar reexecucao duplicada
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "A release $TAG ja esta publicada no GitHub Releases. Pulando build duplicado."
+            echo "deve_publicar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Se a tag ainda nao existe no remoto, cria e envia a tag
+          if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG nao encontrada no remoto. Criando tag..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Tag $TAG enviada com sucesso para o repositorio."
+          else
+            echo "Tag $TAG ja existe no remoto."
+          fi
+
+          CORPO="$(git log -1 --pretty=%B)"
+          DELIMITER="EOF_RELEASE_DESC_${RANDOM}"
+
+          echo "deve_publicar=true" >> "$GITHUB_OUTPUT"
+          echo "versao_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "corpo_release<<$DELIMITER" >> "$GITHUB_OUTPUT"
+          echo "$CORPO" >> "$GITHUB_OUTPUT"
+          echo "$DELIMITER" >> "$GITHUB_OUTPUT"
+
   publicar-windows:
+    needs: preparar-release
+    if: needs.preparar-release.outputs.deve_publicar == 'true'
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Configurar Bun
         uses: oven-sh/setup-bun@v2
@@ -34,10 +159,10 @@ jobs:
       - name: Instalar dependencias
         run: bun install --frozen-lockfile
 
-      - name: Validar versao da tag
+      - name: Validar versao dos manifestos
         shell: pwsh
         run: |
-          $versaoTag = "${{ github.ref_name }}" -replace '^v', ''
+          $versaoTag = "${{ needs.preparar-release.outputs.versao_tag }}" -replace '^v', ''
           $versaoPackage = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $versaoTauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $versaoCargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
@@ -56,6 +181,9 @@ jobs:
         shell: pwsh
         run: |
           $mensagem = (git log -1 --pretty=%B).Trim()
+          if (-not $mensagem) {
+            $mensagem = "Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}"
+          }
           "corpo<<EOF" >> $env:GITHUB_OUTPUT
           $mensagem >> $env:GITHUB_OUTPUT
           "EOF" >> $env:GITHUB_OUTPUT
@@ -70,8 +198,8 @@ jobs:
         with:
           projectPath: ./
           tauriScript: bun run tauri --
-          tagName: ${{ github.ref_name }}
-          releaseName: Dome Launcher ${{ github.ref_name }}
+          tagName: ${{ needs.preparar-release.outputs.versao_tag }}
+          releaseName: Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}
           releaseBody: ${{ steps.mensagem_commit.outputs.corpo }}
           releaseDraft: false
           prerelease: false
@@ -83,7 +211,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const tag = context.ref.replace("refs/tags/", "");
+            const tag = "${{ needs.preparar-release.outputs.versao_tag }}";
             const release = await github.rest.repos.getReleaseByTag({
               owner,
               repo,

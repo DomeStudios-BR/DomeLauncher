@@ -928,6 +928,7 @@ export default function ProjetoDetalheModal({
       type: projeto.project_type,
       source: projeto.source,
       slug: projetoExibicao.slug,
+      downloads: projetoExibicao.downloads,
     };
     addFavorite(item);
     setFavorito(true);

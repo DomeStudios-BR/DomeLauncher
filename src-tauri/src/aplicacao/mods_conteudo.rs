@@ -731,6 +731,10 @@ async fn baixar_e_instalar_arquivos_mod(
     let mut instalados = Vec::new();
     for (temporario, destino) in temporarios {
         if let Err(e) = std::fs::rename(&temporario, &destino) {
+            if destino.is_file() {
+                let _ = std::fs::remove_file(&temporario);
+                continue;
+            }
             for instalado in instalados {
                 let _ = std::fs::remove_file(instalado);
             }

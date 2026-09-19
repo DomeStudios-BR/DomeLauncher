@@ -151,12 +151,17 @@ export default function EditorIconeModal({
             setModo("imagem");
         }
 
+    }, [aberto, chavePersistencia, iconeAtual]);
+
+    useEffect(() => {
+        if (!aberto) return;
+
         const aoPressionar = (evento: KeyboardEvent) => {
             if (evento.key === "Escape" && !salvando) aoFechar();
         };
         window.addEventListener("keydown", aoPressionar);
         return () => window.removeEventListener("keydown", aoPressionar);
-    }, [aberto, aoFechar, chavePersistencia, iconeAtual, salvando]);
+    }, [aberto, aoFechar, salvando]);
 
     if (!aberto) return null;
 

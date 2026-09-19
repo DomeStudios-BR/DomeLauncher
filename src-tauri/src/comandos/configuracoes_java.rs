@@ -1,7 +1,10 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::launcher::LauncherState;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -178,6 +181,26 @@ pub async fn get_system_ram() -> Result<u32, String> {
     Ok((sys.total_memory() / 1024 / 1024) as u32)
 }
 
+/// Tenta encontrar o executável do Java no PATH do sistema operacional
+pub fn resolver_caminho_java_do_path() -> Option<std::path::PathBuf> {
+    if let Some(paths) = std::env::var_os("PATH") {
+        for p in std::env::split_paths(&paths) {
+            let exe = p.join(if cfg!(windows) { "java.exe" } else { "java" });
+            if exe.is_file() {
+                return Some(exe);
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let exe_w = p.join("javaw.exe");
+                if exe_w.is_file() {
+                    return Some(exe_w);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Detecta todas as instalações de Java no sistema (estilo HeliosLauncher)
 #[tauri::command]
 pub async fn detect_java_installations() -> Result<Vec<JavaInfo>, String> {
@@ -255,20 +278,17 @@ pub async fn detect_java_installations() -> Result<Vec<JavaInfo>, String> {
         }
     }
 
-    // 4. Verificar se "java" está no PATH
-    let mut comando_java_path = tokio::process::Command::new("java");
-    comando_java_path.arg("-version");
-    #[cfg(target_os = "windows")]
-    comando_java_path.creation_flags(CREATE_NO_WINDOW);
-    if let Ok(output) = comando_java_path.output().await {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if let Some(info) = parse_java_version_output(&stderr, "java", false) {
-            // Verificar se não é duplicata
-            if !javas
-                .iter()
-                .any(|j| j.version == info.version && j.vendor == info.vendor)
-            {
-                javas.push(info);
+    // 4. Verificar se Java está acessível no PATH
+    if let Some(java_exe_path) = resolver_caminho_java_do_path() {
+        let path_str = java_exe_path.to_string_lossy().to_string();
+        if checked_paths.insert(path_str) {
+            if let Some(info) = probe_java(&java_exe_path, false).await {
+                if !javas
+                    .iter()
+                    .any(|j| j.version == info.version && j.vendor == info.vendor)
+                {
+                    javas.push(info);
+                }
             }
         }
     }
@@ -321,11 +341,21 @@ pub async fn probe_java(exe_path: &std::path::Path, is_managed: bool) -> Option<
     let output = comando_probe.output().await.ok()?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    parse_java_version_output(
-        &stderr,
-        &exe_path.parent()?.parent()?.to_string_lossy(),
-        is_managed,
-    )
+    let base_path = exe_path
+        .parent()
+        .map(|p| {
+            if p.file_name()
+                .map(|n| n.to_string_lossy().eq_ignore_ascii_case("bin"))
+                .unwrap_or(false)
+            {
+                p.parent().unwrap_or(p)
+            } else {
+                p
+            }
+        })
+        .unwrap_or(exe_path);
+
+    parse_java_version_output(&stderr, &base_path.to_string_lossy(), is_managed)
 }
 
 /// Parsear a saída de `java -version`
@@ -532,13 +562,24 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
     if !settings.auto_java {
         if let Some(ref path) = settings.java_path {
             if !path.is_empty() {
-                let java_exe = std::path::PathBuf::from(path).join("bin").join("java.exe");
+                let dir = std::path::PathBuf::from(path);
+                let java_exe = dir.join("bin").join("java.exe");
                 if java_exe.exists() {
                     return Ok(java_exe.to_string_lossy().to_string());
                 }
+                let javaw_exe = dir.join("bin").join("javaw.exe");
+                if javaw_exe.exists() {
+                    return Ok(javaw_exe.to_string_lossy().to_string());
+                }
+                if dir.is_file() {
+                    return Ok(dir.to_string_lossy().to_string());
+                }
             }
         }
-        // Se desabilitou auto e não tem caminho, usar "java" do PATH
+        // Se desabilitou auto e não tem caminho, tentar achar no PATH
+        if let Some(path_exe) = resolver_caminho_java_do_path() {
+            return Ok(path_exe.to_string_lossy().to_string());
+        }
         return Ok("java".to_string());
     }
 
@@ -562,16 +603,26 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
             "[Java] Encontrado Java {} ({}) em {}",
             java.version, java.vendor, java.path
         );
-        let exe_path = std::path::PathBuf::from(&java.path)
-            .join("bin")
-            .join("javaw.exe");
-        if exe_path.exists() {
-            return Ok(exe_path.to_string_lossy().to_string());
+        let dir = std::path::PathBuf::from(&java.path);
+        let p1 = dir.join("bin").join("javaw.exe");
+        if p1.exists() {
+            return Ok(p1.to_string_lossy().to_string());
         }
-        let exe_path = std::path::PathBuf::from(&java.path)
-            .join("bin")
-            .join("java.exe");
-        return Ok(exe_path.to_string_lossy().to_string());
+        let p2 = dir.join("bin").join("java.exe");
+        if p2.exists() {
+            return Ok(p2.to_string_lossy().to_string());
+        }
+        let p3 = dir.join("javaw.exe");
+        if p3.exists() {
+            return Ok(p3.to_string_lossy().to_string());
+        }
+        let p4 = dir.join("java.exe");
+        if p4.exists() {
+            return Ok(p4.to_string_lossy().to_string());
+        }
+        if dir.is_file() {
+            return Ok(dir.to_string_lossy().to_string());
+        }
     }
 
     // 3. Se auto_java, baixar automaticamente
@@ -580,10 +631,62 @@ async fn garantir_java_compativel(mc_version: &str, required_major: u32) -> Resu
         required_major
     );
     let installed = install_java(required_major).await?;
-    let exe_path = std::path::PathBuf::from(&installed.path)
-        .join("bin")
-        .join("javaw.exe");
-    Ok(exe_path.to_string_lossy().to_string())
+    let dir = std::path::PathBuf::from(&installed.path);
+    let p1 = dir.join("bin").join("javaw.exe");
+    if p1.exists() {
+        return Ok(p1.to_string_lossy().to_string());
+    }
+    let p2 = dir.join("bin").join("java.exe");
+    if p2.exists() {
+        return Ok(p2.to_string_lossy().to_string());
+    }
+    Ok(installed.path)
+}
+
+/// Dado um caminho de Java (que pode ser javaw.exe), retorna o executável java.exe
+/// correspondente para comandos de linha de comando (instaladores Forge/NeoForge).
+pub fn resolver_executavel_java_console(java_caminho: &str) -> String {
+    let path = std::path::Path::new(java_caminho);
+    if let Some(nome) = path.file_name().and_then(|n| n.to_str()) {
+        if nome.eq_ignore_ascii_case("javaw.exe") {
+            let alt = path.with_file_name("java.exe");
+            if alt.exists() {
+                return alt.to_string_lossy().to_string();
+            }
+        } else if nome.eq_ignore_ascii_case("javaw") {
+            let alt = path.with_file_name("java");
+            if alt.exists() {
+                return alt.to_string_lossy().to_string();
+            }
+        }
+    }
+    if java_caminho == "java" {
+        if let Some(path_exe) = resolver_caminho_java_do_path() {
+            return path_exe.to_string_lossy().to_string();
+        }
+    }
+    java_caminho.to_string()
+}
+
+/// Garante um executável Java de linha de comando (java.exe) compatível com a versão do Minecraft.
+/// Útil para rodar instaladores CLI (Forge, NeoForge).
+pub async fn ensure_java_cli_for_version(mc_version: &str) -> Result<String, String> {
+    let java_bruta = ensure_java_for_version(mc_version.to_string()).await?;
+    let java_cli = resolver_executavel_java_console(&java_bruta);
+
+    // Validar se o executável do Java responde
+    let mut comando_teste = std::process::Command::new(&java_cli);
+    comando_teste.arg("-version");
+    #[cfg(target_os = "windows")]
+    comando_teste.creation_flags(CREATE_NO_WINDOW);
+
+    match comando_teste.output() {
+        Ok(_) => Ok(java_cli),
+        Err(e) => Err(format!(
+            "Java não pôde ser executado ('{}') para Minecraft {}: {}",
+            java_cli, mc_version, e
+        )),
+    }
 }
 
 /// Garantir que exista um Java adequado para a versão do MC.
@@ -610,7 +713,7 @@ pub async fn get_required_java(mc_version: String) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_required_java_major, validar_cor_destaque};
+    use super::{get_required_java_major, resolver_executavel_java_console, validar_cor_destaque};
 
     #[test]
     fn valida_cor_de_destaque_hexadecimal() {
@@ -634,5 +737,11 @@ mod tests {
         assert_eq!(get_required_java_major("26.1.2"), 25);
         assert_eq!(get_required_java_major("26.1-snapshot"), 25);
         assert_eq!(get_required_java_major("27.1.0"), 25);
+    }
+
+    #[test]
+    fn preserva_ou_converte_java_console() {
+        let resultado = resolver_executavel_java_console("java");
+        assert!(!resultado.is_empty());
     }
 }

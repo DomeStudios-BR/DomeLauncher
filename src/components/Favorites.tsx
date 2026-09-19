@@ -30,6 +30,7 @@ export interface FavoriteItem {
   type: "mod" | "modpack" | "resourcepack" | "shader";
   source: "modrinth" | "curseforge";
   slug: string;
+  downloads?: number;
 }
 
 const STORAGE_KEY = "dome_favorites";

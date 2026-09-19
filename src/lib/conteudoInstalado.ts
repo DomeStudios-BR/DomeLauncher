@@ -16,5 +16,9 @@ export function arquivoPodePertencerAoProjeto(nomeArquivo: string, slugProjeto: 
     .replace(/\.disabled$/i, "")
     .replace(/\.(jar|zip)$/i, "");
   const nomeNormalizado = normalizarIdentificadorConteudo(nomeSemExtensao);
-  return nomeNormalizado === slug || nomeNormalizado.startsWith(`${slug}-`);
+  if (nomeNormalizado === slug || nomeNormalizado.startsWith(`${slug}-`)) return true;
+
+  const slugCompacto = slug.replace(/-/g, "");
+  const nomeCompacto = nomeNormalizado.replace(/-/g, "");
+  return slugCompacto.length >= 4 && nomeCompacto.startsWith(slugCompacto);
 }

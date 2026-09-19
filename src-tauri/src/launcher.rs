@@ -969,10 +969,25 @@ impl LauncherState {
                         if let Ok(content) = std::fs::read_to_string(&config_path) {
                             match serde_json::from_str::<Instance>(&content) {
                                 Ok(mut instance) => {
-                                    // Garantir que o path esteja correto (usar o caminho real do diretório)
-                                    let id = instance.id.clone();
-                                    instance.path = entry.path();
+                                    let pasta_nome =
+                                        entry.file_name().to_string_lossy().to_string();
                                     let mut precisa_salvar = false;
+
+                                    // Garantir que id e path reflitam o diretório real no disco (cura instâncias dessincronizadas)
+                                    if instance.id != pasta_nome {
+                                        instance.id = pasta_nome.clone();
+                                        precisa_salvar = true;
+                                    }
+                                    if instance.path != entry.path() {
+                                        instance.path = entry.path();
+                                        precisa_salvar = true;
+                                    }
+                                    if instance.name.trim().is_empty() {
+                                        instance.name = pasta_nome.clone();
+                                        precisa_salvar = true;
+                                    }
+
+                                    let id = instance.id.clone();
                                     if instance.last_played.as_deref() == Some("Nunca") {
                                         instance.last_played = None;
                                         precisa_salvar = true;

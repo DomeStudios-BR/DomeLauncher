@@ -157,9 +157,35 @@ pub(crate) async fn delete_instance(
 ) -> Result<(), String> {
     let instance_path = caminho_instancia_por_id(&state, &id)?;
     if instance_path.exists() {
-        std::fs::remove_dir_all(instance_path).map_err(|e| e.to_string())?;
+        std::fs::remove_dir_all(&instance_path)
+            .map_err(|e| format!("Erro ao excluir pasta da instância: {}", e))?;
+        return Ok(());
     }
-    Ok(())
+
+    // Se a pasta padrão não existir, procurar qualquer pasta que tenha instance.json com esse id
+    if let Ok(raiz) = state.caminho_instancias() {
+        if let Ok(entries) = std::fs::read_dir(&raiz) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let config_path = entry.path().join("instance.json");
+                    if config_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&config_path) {
+                            if let Ok(instancia) = serde_json::from_str::<Instance>(&content) {
+                                if instancia.id == id {
+                                    std::fs::remove_dir_all(entry.path()).map_err(|e| {
+                                        format!("Erro ao excluir pasta da instância: {}", e)
+                                    })?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err(format!("Instância '{}' não encontrada para exclusão.", id))
 }
 
 #[tauri::command]
@@ -227,6 +253,10 @@ pub(crate) async fn update_instance_name(
         .map_err(|e| format!("Erro ao parsear instance.json: {}", e))?;
 
     instance.name = new_name;
+    if let Some(pasta_nome) = instance_path.file_name().and_then(|n| n.to_str()) {
+        instance.id = pasta_nome.to_string();
+    }
+    instance.path = instance_path.clone();
 
     let new_content = serde_json::to_string_pretty(&instance)
         .map_err(|e| format!("Erro ao serializar instance.json: {}", e))?;
@@ -403,13 +433,26 @@ pub(crate) async fn rename_instance_folder(
     }
 
     if instance_id == id_base {
+        let config_path = pasta_atual.join("instance.json");
+        if config_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(mut instance) = serde_json::from_str::<Instance>(&content) {
+                    instance.name = new_folder_name;
+                    instance.id = id_base.clone();
+                    instance.path = pasta_atual.clone();
+                    if let Ok(new_content) = serde_json::to_string_pretty(&instance) {
+                        let _ = std::fs::write(&config_path, new_content);
+                    }
+                }
+            }
+        }
         return Ok(instance_id);
     }
 
     let mut novo_id = id_base.clone();
     let mut contador = 2;
     let pasta_nova = loop {
-        let candidata = caminho_instancia_por_id(&state, &novo_id)?;
+        let candidata = state.caminho_instancias()?.join(&novo_id);
         if !candidata.exists() {
             break candidata;
         }
@@ -421,21 +464,34 @@ pub(crate) async fn rename_instance_folder(
         .map_err(|e| format!("Erro ao renomear pasta da instância: {}", e))?;
 
     let config_path = pasta_nova.join("instance.json");
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("Erro ao ler instance.json: {}", e))?;
+    // Retry para Windows no caso de locks temporários (antivírus, indexador) logo após rename
+    let mut salvou = false;
+    for tentativa in 0..5 {
+        if tentativa > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        }
+        if config_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(mut instance) = serde_json::from_str::<Instance>(&content) {
+                    instance.id = novo_id.clone();
+                    instance.path = pasta_nova.clone();
+                    instance.name = new_folder_name.clone();
 
-        let mut instance: Instance = serde_json::from_str(&content)
-            .map_err(|e| format!("Erro ao parsear instance.json: {}", e))?;
+                    if let Ok(new_content) = serde_json::to_string_pretty(&instance) {
+                        if std::fs::write(&config_path, new_content).is_ok() {
+                            salvou = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-        instance.id = novo_id.clone();
-        instance.path = pasta_nova.clone();
-
-        let new_content = serde_json::to_string_pretty(&instance)
-            .map_err(|e| format!("Erro ao serializar instance.json: {}", e))?;
-
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("Erro ao salvar instance.json: {}", e))?;
+    if !salvou {
+        eprintln!(
+            "[Instâncias] Aviso: falha temporária ao salvar instance.json após renomeação. Será autocorrigido ao carregar."
+        );
     }
 
     Ok(novo_id)
