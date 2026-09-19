@@ -504,6 +504,7 @@ export default function Explore({
         type: contentType,
         source: variante.source,
         slug: variante.slug,
+        downloads: variante.downloads,
       };
       addFavorite(favItem);
       setFavorites((prev) => new Set(prev).add(item.id));

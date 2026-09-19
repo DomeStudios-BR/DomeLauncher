@@ -1602,7 +1602,8 @@ export default function App() {
               </motion.div>
             )}
 
-            {activeTab === "instance-manager" &&
+            {(activeTab === "instance-manager" ||
+              (activeTab === "project-detail" && abaOrigemProjeto === "instance-manager")) &&
               managedInstanceId &&
               !atividadeSocialDetalhe &&
               !(projetoDetalhe && abaOrigemProjeto === "instances") && (
@@ -1611,7 +1612,10 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="h-full"
+                className={cn(
+                  "h-full",
+                  activeTab === "project-detail" && "hidden"
+                )}
               >
                 <InstanceManager
                   instanceId={managedInstanceId}

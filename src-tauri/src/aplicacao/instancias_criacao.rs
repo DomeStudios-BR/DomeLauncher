@@ -272,7 +272,10 @@ pub(super) async fn install_forge_loader(
         versao_forge, versao_forge
     );
 
-    let temp_dir = std::env::temp_dir().join("dome_launcher_forge_installer");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "dome_launcher_forge_installer_{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
 
     let installer_path = temp_dir.join("forge-installer.jar");
@@ -284,6 +287,7 @@ pub(super) async fn install_forge_loader(
         .await
         .map_err(|e| format!("Erro ao baixar instalador Forge: {}", e))?;
     if !response.status().is_success() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
         return Err(format!(
             "Falha ao baixar instalador Forge ({}): {}",
             response.status(),
@@ -293,11 +297,7 @@ pub(super) async fn install_forge_loader(
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     std::fs::write(&installer_path, bytes).map_err(|e| e.to_string())?;
 
-    // Criar launcher_profiles.json se necessário (o instalador do Forge exige para --installClient)
-    let launcher_profiles = instance_path.join("launcher_profiles.json");
-    if !launcher_profiles.exists() {
-        let _ = std::fs::write(&launcher_profiles, "{\"profiles\":{}}");
-    }
+    preparar_diretorio_launcher_para_instalador(instance_path, minecraft_version)?;
 
     let instance_str = instance_path
         .to_str()
@@ -307,14 +307,24 @@ pub(super) async fn install_forge_loader(
         .to_str()
         .ok_or_else(|| "Caminho do instalador Forge inválido.".to_string())?;
 
-    let mut comando_instalador = std::process::Command::new("java");
+    let java_cli =
+        crate::comandos::configuracoes_java::ensure_java_cli_for_version(minecraft_version)
+            .await
+            .map_err(|e| format!("Erro ao obter Java para instalador Forge: {}", e))?;
+
+    let mut comando_instalador = std::process::Command::new(&java_cli);
     #[cfg(target_os = "windows")]
     comando_instalador.creation_flags(CREATE_NO_WINDOW);
     let output = comando_instalador
         .args(["-jar", instalador_str, "--installClient", instance_str])
         .current_dir(instance_path)
         .output()
-        .map_err(|e| format!("Erro ao executar instalador Forge: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Erro ao executar instalador Forge com '{}': {}",
+                java_cli, e
+            )
+        })?;
 
     if output.status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -501,14 +511,24 @@ pub(super) async fn install_neoforge_loader(
         .to_str()
         .ok_or_else(|| "Caminho do instalador NeoForge inválido.".to_string())?;
 
-    let mut comando_instalador = std::process::Command::new("java");
+    let java_cli =
+        crate::comandos::configuracoes_java::ensure_java_cli_for_version(minecraft_version)
+            .await
+            .map_err(|e| format!("Erro ao obter Java para instalador NeoForge: {}", e))?;
+
+    let mut comando_instalador = std::process::Command::new(&java_cli);
     #[cfg(target_os = "windows")]
     comando_instalador.creation_flags(CREATE_NO_WINDOW);
     let output = comando_instalador
         .args(["-jar", installer_str, "--installClient", instance_str])
         .current_dir(instance_path)
         .output()
-        .map_err(|e| format!("Erro ao executar instalador NeoForge: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Erro ao executar instalador NeoForge com '{}': {}",
+                java_cli, e
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -521,17 +541,42 @@ pub(super) async fn install_neoforge_loader(
         ));
     }
 
-    let perfil_instalado = instance_path
+    let perfil_direto = instance_path
         .join("versions")
         .join(format!("neoforge-{}", neoforge_version))
         .join(format!("neoforge-{}.json", neoforge_version));
-    if !perfil_instalado.exists() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        return Err(format!(
-            "O instalador NeoForge terminou sem criar o perfil de cliente esperado: {}",
-            perfil_instalado.display()
-        ));
-    }
+
+    let perfil_instalado = if perfil_direto.exists() {
+        perfil_direto
+    } else {
+        let mut encontrado = None;
+        if let Ok(entradas) = std::fs::read_dir(instance_path.join("versions")) {
+            for entrada in entradas.flatten() {
+                if entrada.path().is_dir() {
+                    let nome = entrada.file_name().to_string_lossy().to_string();
+                    if nome != minecraft_version
+                        && (nome.contains("neoforge") || nome.contains(neoforge_version))
+                    {
+                        let json = entrada.path().join(format!("{}.json", nome));
+                        if json.exists() {
+                            encontrado = Some(json);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        match encontrado {
+            Some(p) => p,
+            None => {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                return Err(format!(
+                    "O instalador NeoForge terminou sem criar o perfil de cliente esperado: {}",
+                    perfil_direto.display()
+                ));
+            }
+        }
+    };
 
     std::fs::copy(
         &perfil_instalado,
@@ -555,14 +600,14 @@ fn preparar_diretorio_launcher_para_instalador(
     let manifesto_destino = versao_dir.join(format!("{}.json", minecraft_version));
     if manifesto_origem.exists() && !manifesto_destino.exists() {
         std::fs::copy(&manifesto_origem, &manifesto_destino)
-            .map_err(|e| format!("Erro ao preparar manifesto para o NeoForge: {}", e))?;
+            .map_err(|e| format!("Erro ao preparar manifesto para o instalador: {}", e))?;
     }
 
     let cliente_origem = instance_path.join("bin").join("client.jar");
     let cliente_destino = versao_dir.join(format!("{}.jar", minecraft_version));
     if cliente_origem.exists() && !cliente_destino.exists() {
         std::fs::copy(&cliente_origem, &cliente_destino)
-            .map_err(|e| format!("Erro ao preparar cliente para o NeoForge: {}", e))?;
+            .map_err(|e| format!("Erro ao preparar cliente para o instalador: {}", e))?;
     }
 
     let launcher_profiles = instance_path.join("launcher_profiles.json");
@@ -631,6 +676,11 @@ pub(crate) async fn create_instance(
 
     // 4. Baixar arquivos essenciais do Minecraft primeiro
     download_instance_files(&instance_path, &details).await?;
+
+    // Salvar version_manifest.json antecipadamente para que instaladores de loader possam usá-lo
+    let version_manifest_path = instance_path.join("version_manifest.json");
+    let version_content = serde_json::to_string_pretty(&details).map_err(|e| e.to_string())?;
+    std::fs::write(&version_manifest_path, version_content).map_err(|e| e.to_string())?;
 
     // 5. Instalar loader se especificado (agora que os arquivos já existem)
     let (loader_type_enum, loader_version_final) = if let Some(loader) = &loader_type {
@@ -998,6 +1048,11 @@ pub(crate) async fn migrar_versao_instancia(
     }
     let preparar = async {
         download_instance_files(&temporario, &detalhes).await?;
+        std::fs::write(
+            temporario.join("version_manifest.json"),
+            serde_json::to_string_pretty(&detalhes).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
         match loader.as_str() {
             "fabric" => {
                 install_fabric_loader(&temporario, &version, loader_version.as_deref().unwrap())
@@ -1013,11 +1068,6 @@ pub(crate) async fn migrar_versao_instancia(
             }
             _ => {}
         }
-        std::fs::write(
-            temporario.join("version_manifest.json"),
-            serde_json::to_string_pretty(&detalhes).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
         Ok::<(), String>(())
     }
     .await;

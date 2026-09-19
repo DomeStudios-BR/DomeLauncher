@@ -151,12 +151,16 @@ Não crie commit, push, tag ou release apenas por terminar uma edição.
 ## Release
 
 Quando a tarefa incluir publicação, trabalhe por branch/PR, sem commit direto na `main`. Confira repositório
-e branch de origem do PR, especialmente em forks. Integre o PR na `main` antes de criar a tag.
+e branch de origem do PR, especialmente em forks. Integre o PR na `main`.
 
-Antes da tag: instalação congelada, auditoria, `bun run verificar` e `git diff --check`.
+Antes da release: instalação congelada, auditoria, `bun run verificar` e `git diff --check`.
 Mantenha versões iguais em `package.json`, `src-tauri/Cargo.toml` e `src-tauri/tauri.conf.json`, atualizando
-o lockfile Rust quando necessário. A tag `v*` dispara `release-launcher.yml`, que verifica versões, compila
-e publica NSIS e `latest.json`. Chaves de assinatura pertencem aos secrets da CI.
+o lockfile Rust quando necessário.
+
+O commit de release (ex: `release: Dome Launcher v0.3.3`) integrado na `main` ou o push de tag `v*` dispara
+automaticamente o workflow `release-launcher.yml`. O workflow valida a sincronização das 3 versões, cria e envia a
+tag remota caso ainda não exista, compila e publica o NSIS e o `latest.json`. Chaves de assinatura pertencem aos
+secrets da CI.
 
 O smoke test deve cobrir instalação limpa no Windows sem ferramentas de desenvolvimento, login Microsoft,
 Vanilla/Fabric/Forge/NeoForge, seleção/instalação de Java, Modrinth/CurseForge, mundo local, conexão a servidor,

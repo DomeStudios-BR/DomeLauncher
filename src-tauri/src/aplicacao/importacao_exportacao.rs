@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -916,6 +916,11 @@ async fn criar_instancia_base_importada(
     if baixar_arquivos_jogo || loader_exige_arquivos {
         super::instancias_criacao::download_instance_files(&instance_path, &details).await?;
     }
+
+    let version_manifest_path = instance_path.join("version_manifest.json");
+    let version_content = serde_json::to_string_pretty(&details).map_err(|e| e.to_string())?;
+    std::fs::write(&version_manifest_path, &version_content).map_err(|e| e.to_string())?;
+
     let (loader_type_salvo, loader_version_final, mc_type) = match loader_normalizado.as_deref() {
         Some("forge") => {
             let versao_loader =

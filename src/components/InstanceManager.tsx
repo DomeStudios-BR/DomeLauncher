@@ -22,6 +22,7 @@ import {
   Pencil,
   Save,
   Users,
+  Heart,
 } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -38,7 +39,7 @@ import {
   SeparadorMenuContextual,
 } from "./context-menu/MenuContextual";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
-import { loadFavorites } from "./Favorites";
+import { loadFavorites, saveFavorites, type FavoriteItem } from "./Favorites";
 
 interface InstanceManagerProps {
   instanceId: string;
@@ -148,6 +149,7 @@ interface SearchResult {
   file_name?: string;
   source: BrowseSource;
   fontes?: BrowseSource[];
+  idsPorFonte?: Partial<Record<BrowseSource, string>>;
 }
 
 interface WorldInfo {
@@ -212,6 +214,66 @@ const chaveCorrespondenciaProjeto = (item: Pick<SearchResult, "slug" | "title">)
   const valor = item.slug || item.title;
   return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 };
+
+const mesclarResultadosBusca = (atual: SearchResult, novo: SearchResult): SearchResult => ({
+  ...atual,
+  description: atual.description || novo.description,
+  icon_url: atual.icon_url || novo.icon_url,
+  downloads: Math.max(atual.downloads ?? 0, novo.downloads ?? 0),
+  latest_version: atual.latest_version || novo.latest_version,
+  file_name: atual.file_name || novo.file_name,
+  fontes: Array.from(new Set([...(atual.fontes ?? [atual.source]), ...(novo.fontes ?? [novo.source])])),
+  idsPorFonte: {
+    ...(atual.idsPorFonte ?? { [atual.source]: atual.id }),
+    ...(novo.idsPorFonte ?? { [novo.source]: novo.id }),
+  },
+});
+
+async function obterDownloadsFavorito(favorito: FavoriteItem): Promise<number | undefined> {
+  try {
+    if (favorito.source === "modrinth") {
+      const resposta = await fetch(`https://api.modrinth.com/v2/project/${favorito.id}`);
+      if (!resposta.ok) return undefined;
+      const dados = await resposta.json();
+      return typeof dados.downloads === "number" ? dados.downloads : undefined;
+    }
+
+    const dados = await invoke<{ downloads?: number }>("buscar_detalhes_projeto_curseforge", {
+      projectId: favorito.id,
+    });
+    return typeof dados.downloads === "number" ? dados.downloads : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function hidratarDownloadsFavoritos(favoritos: FavoriteItem[]): Promise<FavoriteItem[]> {
+  const pendentes = favoritos.filter((favorito) => favorito.downloads === undefined);
+  if (pendentes.length === 0) return favoritos;
+
+  const downloadsPorId = new Map<string, number>();
+  let proximoIndice = 0;
+  const trabalhadores = Array.from({ length: Math.min(4, pendentes.length) }, async () => {
+    while (proximoIndice < pendentes.length) {
+      const favorito = pendentes[proximoIndice];
+      proximoIndice += 1;
+      const downloads = await obterDownloadsFavorito(favorito);
+      if (downloads !== undefined) downloadsPorId.set(favorito.id, downloads);
+    }
+  });
+  await Promise.all(trabalhadores);
+  if (downloadsPorId.size === 0) return favoritos;
+
+  const todosAtualizados = loadFavorites().map((favorito) => {
+    const downloads = downloadsPorId.get(favorito.id);
+    return downloads === undefined ? favorito : { ...favorito, downloads };
+  });
+  saveFavorites(todosAtualizados);
+  return favoritos.map((favorito) => {
+    const downloads = downloadsPorId.get(favorito.id);
+    return downloads === undefined ? favorito : { ...favorito, downloads };
+  });
+}
 
 const montarChaveCacheConteudo = (
   instanceId: string,
@@ -358,7 +420,7 @@ export default function InstanceManager({
   const [searching, setSearching] = useState(false);
   const [carregandoMaisResultados, setCarregandoMaisResultados] = useState(false);
   const [temMaisResultados, setTemMaisResultados] = useState(true);
-  const [installing, setInstalling] = useState<string | null>(null);
+  const [instalacoesEmAndamento, setInstalacoesEmAndamento] = useState<Set<string>>(new Set());
   const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [logs, setLogs] = useState<LogFile[]>([]);
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
@@ -398,6 +460,7 @@ export default function InstanceManager({
   const lastSearch = useRef({ query: "", filter: "", source: "" });
   const offsetsBuscaPorFonteRef = useRef<Record<BrowseSource, number>>({ modrinth: 0, curseforge: 0 });
   const carregandoMaisResultadosRef = useRef(false);
+  const instalacoesEmAndamentoRef = useRef<Set<string>>(new Set());
   const listaConteudoRef = useRef<HTMLDivElement | null>(null);
   const nomeInstanciaRef = useRef<HTMLInputElement | null>(null);
   const arrasteIndicadorRef = useRef<{
@@ -1002,6 +1065,13 @@ export default function InstanceManager({
       const fontes: BrowseSource[] = browseSource === "ambas"
         ? ["modrinth", "curseforge"]
         : [browseSource];
+      const promessaFavoritos = acumular
+        ? Promise.resolve([] as FavoriteItem[])
+        : hidratarDownloadsFavoritos(loadFavorites()
+            .filter((item) => item.type === tipoConteudo)
+            .filter((item) => browseSource === "ambas" || item.source === browseSource)
+            .filter((item) => !query.trim()
+              || `${item.title} ${item.author}`.toLowerCase().includes(query.trim().toLowerCase())));
       const paginas = await Promise.all(fontes.map(async (fonte) => {
         const resultados: any[] = await invoke("search_mods_online", {
           query,
@@ -1041,21 +1111,15 @@ export default function InstanceManager({
           file_name: item.fileName || item.file_name || undefined,
           source: fonte,
           fontes: [fonte],
+          idsPorFonte: { [fonte]: String(item.id || "") },
         } satisfies SearchResult));
       const paginaApi = Array.from(paginaApiBruta.reduce((mapa, item) => {
         const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
         const existente = mapa.get(chave);
-        if (!existente) {
-          mapa.set(chave, item);
-          return mapa;
-        }
-        existente.fontes = Array.from(new Set([...(existente.fontes ?? [existente.source]), item.source]));
+        mapa.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
         return mapa;
       }, new Map<string, SearchResult>()).values());
-      const favoritos = acumular ? [] : loadFavorites()
-        .filter((item) => item.type === tipoConteudo)
-        .filter((item) => browseSource === "ambas" || item.source === browseSource)
-        .filter((item) => !query.trim() || `${item.title} ${item.author}`.toLowerCase().includes(query.trim().toLowerCase()))
+      const favoritos = (await promessaFavoritos)
         .map((item) => ({
           id: item.id,
           title: item.title,
@@ -1066,14 +1130,16 @@ export default function InstanceManager({
           project_type: item.type,
           source: item.source,
           fontes: [item.source],
+          downloads: item.downloads,
+          idsPorFonte: { [item.source]: item.id },
         } satisfies SearchResult))
         .filter((item) => !projetoJaInstalado(item));
-      const pagina = [
-        ...favoritos,
-        ...paginaApi,
-      ].filter((item, indice, itens) =>
-        itens.findIndex((candidato) => chaveCorrespondenciaProjeto(candidato) === chaveCorrespondenciaProjeto(item)) === indice
-      );
+      const pagina = Array.from([...favoritos, ...paginaApi].reduce((mapa, item) => {
+        const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
+        const existente = mapa.get(chave);
+        mapa.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
+        return mapa;
+      }, new Map<string, SearchResult>()).values());
       if (lastSearch.current.query !== assinaturaBusca.query
           || lastSearch.current.filter !== assinaturaBusca.filter
           || lastSearch.current.source !== assinaturaBusca.source) {
@@ -1085,8 +1151,13 @@ export default function InstanceManager({
       setTemMaisResultados(paginas.some(({ resultados }) => resultados.length === 20));
       setSearchResults((atuais) => {
         if (!acumular) return pagina;
-        const idsExistentes = new Set(atuais.map((item) => `${item.source}:${item.id}`));
-        return [...atuais, ...pagina.filter((item) => !idsExistentes.has(`${item.source}:${item.id}`))];
+        const resultados = new Map<string, SearchResult>();
+        for (const item of [...atuais, ...pagina]) {
+          const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
+          const existente = resultados.get(chave);
+          resultados.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
+        }
+        return Array.from(resultados.values());
       });
     } catch (error) {
       console.error("Erro ao buscar:", error);
@@ -1103,7 +1174,11 @@ export default function InstanceManager({
 
   const installContent = async (item: SearchResult) => {
     if (!instanceDetails) return;
-    setInstalling(item.id);
+    const chaveInstalacao = `${item.source}:${item.id}`;
+    if (instalacoesEmAndamentoRef.current.has(chaveInstalacao)) return;
+
+    instalacoesEmAndamentoRef.current.add(chaveInstalacao);
+    setInstalacoesEmAndamento(new Set(instalacoesEmAndamentoRef.current));
 
     try {
       const typeMap: Record<ContentFilter, string> = {
@@ -1174,7 +1249,6 @@ export default function InstanceManager({
       if (versions.length === 0) {
         const alvoCompat = loaderType ? `${loaderType} ${instanceDetails.version}` : instanceDetails.version;
         alert(`Nenhuma versão compatível com ${alvoCompat}`);
-        setInstalling(null);
         return;
       }
 
@@ -1183,7 +1257,6 @@ export default function InstanceManager({
 
       if (!file) {
         alert("Arquivo não encontrado");
-        setInstalling(null);
         return;
       }
 
@@ -1235,7 +1308,8 @@ export default function InstanceManager({
       console.error("Erro ao instalar:", error);
       alert(`Erro: ${error}`);
     } finally {
-      setInstalling(null);
+      instalacoesEmAndamentoRef.current.delete(chaveInstalacao);
+      setInstalacoesEmAndamento(new Set(instalacoesEmAndamentoRef.current));
     }
   };
 
@@ -1919,13 +1993,28 @@ export default function InstanceManager({
       .map((item) => (item.projectId ? String(item.projectId).toLowerCase() : ""))
       .filter((item) => item.length > 0)
   );
+  const favoritosAtuais = loadFavorites();
 
   const projetoJaInstalado = (item: SearchResult) => {
-    const idProjeto = item.id.toLowerCase();
-    if (idsProjetosInstalados.has(idProjeto)) return true;
+    const idsProjeto = new Set([
+      item.id,
+      ...Object.values(item.idsPorFonte ?? {}),
+    ].filter((id): id is string => Boolean(id)).map((id) => id.toLowerCase()));
+    if ([...idsProjeto].some((id) => idsProjetosInstalados.has(id))) return true;
 
     return currentContent.some((instalado) =>
       arquivoPodePertencerAoProjeto(instalado.fileName, item.slug)
+    );
+  };
+
+  const projetoFavorito = (item: SearchResult) => {
+    const idsProjeto = new Set([
+      item.id,
+      ...Object.values(item.idsPorFonte ?? {}),
+    ].filter((id): id is string => Boolean(id)));
+    const chaveProjeto = chaveCorrespondenciaProjeto(item);
+    return favoritosAtuais.some((favorito) =>
+      idsProjeto.has(favorito.id) || chaveCorrespondenciaProjeto(favorito) === chaveProjeto
     );
   };
 
@@ -2494,7 +2583,12 @@ export default function InstanceManager({
                     {searchResults.map((item) => (
                       <div
                         key={`${item.source}:${item.id}`}
-                        className="bg-white/3 hover:bg-white/5 border border-white/5 rounded-xl p-4 flex gap-4 transition-all group"
+                        className={cn(
+                          "rounded-xl border p-4 flex gap-4 transition-all group",
+                          projetoFavorito(item)
+                            ? "border-pink-400/55 bg-pink-500/[0.06] shadow-[inset_0_0_0_1px_rgba(244,114,182,0.08)] hover:bg-pink-500/[0.09]"
+                            : "border-white/5 bg-white/3 hover:bg-white/5"
+                        )}
                       >
                         <img
                           src={item.icon_url || `https://api.dicebear.com/9.x/shapes/svg?seed=${item.id}`}
@@ -2505,13 +2599,23 @@ export default function InstanceManager({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-4">
                             <div>
-                              <button
-                                type="button"
-                                onClick={() => abrirPaginaProjeto(item)}
-                                className="cursor-pointer text-left font-bold text-white transition-colors hover:text-emerald-400"
-                              >
-                                {item.title}
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => abrirPaginaProjeto(item)}
+                                  className="cursor-pointer text-left font-bold text-white transition-colors hover:text-emerald-400"
+                                >
+                                  {item.title}
+                                </button>
+                                {projetoFavorito(item) && (
+                                  <Heart
+                                    size={14}
+                                    fill="currentColor"
+                                    aria-label="Conteúdo favorito"
+                                    className="shrink-0 text-pink-400 drop-shadow-[0_0_5px_rgba(244,114,182,0.45)]"
+                                  />
+                                )}
+                              </div>
                               <div className="flex flex-wrap items-center gap-1 text-xs text-white/40">
                                 <span>por {item.author} • via</span>
                                 {(item.fontes ?? [item.source]).map((fonte) => (
@@ -2537,15 +2641,15 @@ export default function InstanceManager({
                               ) : (
                                 <button
                                   onClick={() => installContent(item)}
-                                  disabled={installing === item.id}
+                                  disabled={instalacoesEmAndamento.has(`${item.source}:${item.id}`)}
                                   className={cn(
                                     "px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shrink-0",
-                                    installing === item.id
+                                    instalacoesEmAndamento.has(`${item.source}:${item.id}`)
                                       ? "bg-white/10 text-white/40"
                                       : "bg-emerald-500 hover:bg-emerald-400 text-black active:scale-95"
                                   )}
                                 >
-                                  {installing === item.id ? (
+                                  {instalacoesEmAndamento.has(`${item.source}:${item.id}`) ? (
                                     <>
                                       <Loader2 size={14} className="animate-spin" />
                                       Instalando...
@@ -2569,7 +2673,8 @@ export default function InstanceManager({
                             <span className="flex items-center gap-1">
                               <Download size={10} />
                               {(() => {
-                                const qtdDownloads = item.downloads || 0;
+                                if (item.downloads === undefined) return "—";
+                                const qtdDownloads = item.downloads;
                                 if (qtdDownloads >= 1000000) return `${(qtdDownloads / 1000000).toFixed(1)}M`;
                                 if (qtdDownloads >= 1000) return `${(qtdDownloads / 1000).toFixed(1)}K`;
                                 return qtdDownloads;
