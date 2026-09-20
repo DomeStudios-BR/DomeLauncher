@@ -69,7 +69,7 @@ addCreatingInstance({
     status: 'downloading',
     progress: 62,
     message: 'Recebendo 31.0 / 50.0 MiB · 8.4 MiB/s',
-    icon: '/dome.png',
+    icon: '/dome-launcher.ico',
 });
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode>

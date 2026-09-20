@@ -397,7 +397,7 @@ export function ListaAmigosAgrupada({
                 </button>
             </div>
 
-            {!sessaoAtiva && <p className="px-4 py-6 text-center text-[10px] text-white/35">Entre com o Discord para usar o social.</p>}
+            {!sessaoAtiva && <p className="px-4 py-6 text-center text-[10px] text-white/35">Entre com a Microsoft para usar o social.</p>}
 
             {sessaoAtiva && abaAtiva === 'amigos' && (
                 <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">

@@ -20,6 +20,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { cn } from "./lib/utils";
 import { LoginModal } from "./components/LoginModal";
+import { autenticarComMicrosoft } from "./lib/autenticacaoMicrosoft";
+import { OnboardingLauncher } from "./components/OnboardingLauncher";
 import CreateInstanceModal from "./components/CreateInstanceModal";
 import CreatingInstancesOverlay from "./components/CreatingInstancesOverlay";
 import { useLauncher, type Instance } from "./hooks/useLauncher";
@@ -202,7 +204,7 @@ const TITULOS_ABA: Record<string, string> = {
 };
 
 export default function App() {
-  const { instances, launch, launchServer, remove, fetchInstances } = useLauncher();
+  const { instances, account: contaInicial, loading: carregandoLauncher, launch, launchServer, remove, fetchInstances } = useLauncher();
   const [activeTab, setActiveTab] = useState("home");
   const [perfilVisualizadoId, setPerfilVisualizadoId] = useState<string | null>(null);
   const [historicoNavegacao, setHistoricoNavegacao] = useState<{
@@ -248,8 +250,15 @@ export default function App() {
   const ultimaAssinaturaPresence = useRef<string>("");
   const menuContaRef = useRef<HTMLDivElement | null>(null);
   const alterarAba = useCallback((aba: string) => {
+    if (aba === "profile" && !user) return;
     startTransition(() => setActiveTab(aba));
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    if (user || activeTab !== "profile") return;
+    setPerfilVisualizadoId(null);
+    alterarAba("home");
+  }, [activeTab, alterarAba, user]);
 
   const navegarParaAba = useCallback((aba: string) => {
     if (aba === activeTab) return;
@@ -382,6 +391,12 @@ export default function App() {
   const atualizarSessaoMinecraft = useCallback(async () => {
     await Promise.all([carregarContaMinecraftAtiva(), carregarContasMinecraft()]);
   }, [carregarContaMinecraftAtiva, carregarContasMinecraft]);
+
+  const entrarMicrosoftDireto = useCallback(async () => {
+    const conta = await autenticarComMicrosoft();
+    setUser(conta);
+    await atualizarSessaoMinecraft();
+  }, [atualizarSessaoMinecraft]);
 
   const deslogarContaMinecraft = useCallback(async () => {
     try {
@@ -971,16 +986,18 @@ export default function App() {
   }, []);
 
   const handleProfileClick = () => {
+    if (!user) return;
     setMenuContaAberto(false);
     setPerfilVisualizadoId(null);
     navegarParaAba("profile");
   };
 
   const abrirPerfilSocial = useCallback((perfilId: string) => {
+    if (!user) return;
     setPerfilVisualizadoId(perfilId);
     setSocialDrawerAberto(false);
     navegarParaAba("profile");
-  }, [navegarParaAba]);
+  }, [navegarParaAba, user]);
 
   const abrirProjeto = useCallback((origem: AbaOrigemProjeto, projeto: ProjetoConteudo) => {
     setAbaOrigemProjeto(origem);
@@ -1130,15 +1147,16 @@ export default function App() {
           <div ref={menuContaRef} className="relative">
             <button
               onClick={handleProfileClick}
+              disabled={!user}
               className={cn(
                 "flex h-11 w-11 items-center justify-center border transition-colors",
                 activeTab === "profile"
                   ? "border-emerald-400/45 bg-emerald-500/12"
                   : user
                   ? "border-emerald-400/40 bg-[#171717]"
-                  : "border-white/15 bg-[#171717] hover:border-white/30"
+                  : "cursor-not-allowed border-white/10 bg-[#141414] opacity-35"
               )}
-              title="Abrir perfil da comunidade"
+              title={user ? "Abrir perfil da comunidade" : "Entre com a Microsoft para acessar seu perfil"}
             >
               {user ? (
                 <img
@@ -1748,6 +1766,7 @@ export default function App() {
           >
             <SocialSidebar
               usuarioMinecraft={user}
+              onEntrarMicrosoft={entrarMicrosoftDireto}
               iconeAtividadeLocal={instanciaAtiva?.icon}
               className={cn(
                 "h-full min-h-0 shrink-0",
@@ -1779,6 +1798,14 @@ export default function App() {
           setUser(conta);
           atualizarSessaoMinecraft();
         }}
+      />
+      <OnboardingLauncher
+        usuario={user}
+        carregando={carregandoLauncher}
+        temDadosExistentes={Boolean(contaInicial) || instances.length > 0}
+        onEntrar={entrarMicrosoftDireto}
+        onCriarInstancia={() => setIsCreateOpen(true)}
+        onImportar={() => navegarParaAba("instances")}
       />
       <CreateInstanceModal
         isOpen={isCreateOpen}

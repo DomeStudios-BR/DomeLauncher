@@ -352,15 +352,18 @@ export default function PerfilComunidade({
           new Date(a.last_played!).getTime(),
       )
       .slice(0, 3)
-      .map((instancia) => ({
-        id: instancia.id,
-        nome: instancia.name,
-        versao: instancia.version,
-        carregador: instancia.loader_type || instancia.mc_type,
-        iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
-        horasJogadas: Math.round(((instancia.tempo_total_jogado_segundos ?? 0) / 3600) * 10) / 10,
-        ultimaVez: instancia.last_played ?? null,
-      }));
+      .map((instancia) => {
+        const iconePublicado = perfil.instanciasRecentes?.find((item) => item.id === instancia.id)?.iconeUrl;
+        return {
+          id: instancia.id,
+          nome: instancia.name,
+          versao: instancia.version,
+          carregador: instancia.loader_type || instancia.mc_type,
+          iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : iconePublicado ?? instancia.icon ?? null,
+          horasJogadas: Math.round(((instancia.tempo_total_jogado_segundos ?? 0) / 3600) * 10) / 10,
+          ultimaVez: instancia.last_played ?? null,
+        };
+      });
 
     if (recentesLocais.length === 0) return;
     if (JSON.stringify(recentesLocais) === JSON.stringify(perfil.instanciasRecentes ?? [])) return;
@@ -548,7 +551,8 @@ export default function PerfilComunidade({
           ...comentarioRecebido,
           autorNome: perfilAutenticado.nomeSocial
             || perfilAutenticado.discordGlobalName
-            || perfilAutenticado.discordUsername,
+            || perfilAutenticado.discordUsername
+            || "Jogador",
           autorAvatarUrl: comentarioRecebido.autorAvatarUrl || urlAvatarAutor,
         }
       : comentarioRecebido;
@@ -791,7 +795,7 @@ export default function PerfilComunidade({
             nome: instancia.name,
             versao: instancia.version,
             carregador: instancia.loader_type || instancia.mc_type,
-            iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
+            iconeUrl: instancia.icon ?? null,
             horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
             ultimaVez: instancia.last_played ?? null,
           })),
@@ -800,7 +804,7 @@ export default function PerfilComunidade({
             nome: instancia.name,
             versao: instancia.version,
             carregador: instancia.loader_type || instancia.mc_type,
-            iconeUrl: instancia.icon?.startsWith("https://") ? instancia.icon : null,
+            iconeUrl: instancia.icon ?? null,
             horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
             ultimaVez: instancia.last_played ?? null,
           })),
@@ -1706,6 +1710,7 @@ export default function PerfilComunidade({
                         ? perfilAutenticado.nomeSocial
                           || perfilAutenticado.discordGlobalName
                           || perfilAutenticado.discordUsername
+                          || "Jogador"
                         : comentario.autorNome;
                       const avatarAutor = comentario.autorAvatarUrl || (comentarioDoUsuario ? urlAvatarAutor : null);
                       return (

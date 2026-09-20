@@ -574,7 +574,7 @@ export default function ProjetoDetalheModal({
         if (!cancelado) setTokenSocial(token);
         if (!token) {
           if (!cancelado) {
-            setErroAnalises("Conecte o Discord na aba social para ver as análises dos seus amigos.");
+            setErroAnalises("Entre com a Microsoft para ver as análises dos seus amigos.");
           }
           return;
         }

@@ -201,7 +201,7 @@ export default function ModalAnaliseModpack({
 
           {semSessao && (
             <p className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-              Conecte o Discord na aba social do launcher para publicar análises.
+              Entre com a Microsoft no launcher para publicar análises.
             </p>
           )}
           {erro && <p className="text-xs text-red-300">{erro}</p>}

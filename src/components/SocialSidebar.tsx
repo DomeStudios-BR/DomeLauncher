@@ -12,8 +12,9 @@ import {
   publicarProgressoTransferenciaSocial,
 } from '../lib/eventosTransferenciaSocial';
 import { cn } from '../lib/utils';
-import { ChevronLeft, User } from '../iconesPixelados';
+import { ChevronLeft, ChevronRight, User } from '../iconesPixelados';
 import { EsqueletoSocial } from './EsqueletoCarregamento';
+import { EVENTO_SESSAO_SOCIAL_ATUALIZADA } from '../lib/autenticacaoMicrosoft';
 import { ListaAmigosAgrupada } from './social/ListaAmigosAgrupada';
 import { PainelChatSocial } from './social/PainelChatSocial';
 import { PerfilSocialPainel } from './social/PerfilSocialPainel';
@@ -72,8 +73,8 @@ interface EmblemaSocial {
 
 interface PerfilSocial {
   perfilId: string;
-  discordId: string;
-  discordUsername: string;
+  discordId?: string | null;
+  discordUsername?: string | null;
   discordGlobalName?: string | null;
   discordAvatar?: string | null;
   handle: string;
@@ -251,6 +252,7 @@ interface InstanciaResumo {
 
 interface SocialSidebarProps {
   usuarioMinecraft: ContaMinecraft | null;
+  onEntrarMicrosoft: () => Promise<void>;
   iconeAtividadeLocal?: string | null;
   className?: string;
   onFecharDrawer?: () => void;
@@ -263,9 +265,6 @@ interface SocialSidebarProps {
 
 const CHAVE_SESSAO_SOCIAL = 'dome:social:sessao';
 const API_DOME_LAUNCHER_URL = CONFIGURACAO_SOCIAL.apiBaseUrl;
-const DISCORD_CLIENT_ID = CONFIGURACAO_SOCIAL.discordClientId;
-const DISCORD_REDIRECT_URI = CONFIGURACAO_SOCIAL.discordRedirectUri;
-const DISCORD_SCOPES = CONFIGURACAO_SOCIAL.discordScopes;
 const INTERVALO_HEARTBEAT_MS = 20_000;
 const JANELA_MINIMA_CARREGAMENTO_AMIGOS_MS = 1_500;
 const PREFIXO_RECEBIMENTO_SOCIAL = 'recebimento-social:';
@@ -332,7 +331,7 @@ function garantirCardRecebimentoSocial(
     progress: 0,
     progressoIndeterminado: true,
     message: 'O amigo está preparando o pacote...',
-    icon: detalhes.icone?.trim() || '/dome.png',
+    icon: detalhes.icone?.trim() || '/dome-launcher.ico',
   });
   return id;
 }
@@ -442,6 +441,7 @@ function gerarIdInstancia(nomeInstancia: string): string {
 
 export default function SocialSidebar({
   usuarioMinecraft,
+  onEntrarMicrosoft,
   iconeAtividadeLocal,
   className,
   onFecharDrawer,
@@ -452,6 +452,7 @@ export default function SocialSidebar({
   onAlternarRecuo,
 }: SocialSidebarProps) {
   const [sessao, setSessao] = useState<SessaoSocial | null>(null);
+  const [entrandoMicrosoft, setEntrandoMicrosoft] = useState(false);
   const [perfil, setPerfil] = useState<PerfilSocial | null>(null);
   const [carregandoSessao, setCarregandoSessao] = useState(true);
   const [carregandoPerfil, setCarregandoPerfil] = useState(false);
@@ -635,6 +636,18 @@ export default function SocialSidebar({
       setAparecerOffline(Boolean(novaSessao.perfil.aparecerOffline));
     }
   }, []);
+
+  const entrarMicrosoftPelaBarraSocial = useCallback(async () => {
+    setEntrandoMicrosoft(true);
+    setErroPerfil(null);
+    try {
+      await onEntrarMicrosoft();
+    } catch (erro) {
+      setErroPerfil(mensagemErro(erro, 'Não foi possível entrar com a Microsoft.'));
+    } finally {
+      setEntrandoMicrosoft(false);
+    }
+  }, [onEntrarMicrosoft]);
 
   const persistirPerfilNaSessao = useCallback((perfilAtualizado: PerfilSocial) => {
     const sessaoAtual = sessaoRef.current;
@@ -1295,6 +1308,15 @@ export default function SocialSidebar({
   }, [atualizarSessao]);
 
   useEffect(() => {
+    const aoAtualizarSessao = (evento: Event) => {
+      const novaSessao = (evento as CustomEvent<SessaoSocial | null>).detail;
+      atualizarSessao(novaSessao ?? null);
+    };
+    window.addEventListener(EVENTO_SESSAO_SOCIAL_ATUALIZADA, aoAtualizarSessao);
+    return () => window.removeEventListener(EVENTO_SESSAO_SOCIAL_ATUALIZADA, aoAtualizarSessao);
+  }, [atualizarSessao]);
+
+  useEffect(() => {
     if (!chaveStorageNaoLidas) {
       setNaoLidasPorAmigo({});
       return;
@@ -1449,32 +1471,11 @@ export default function SocialSidebar({
 
     let ativo = true;
 
-    const sincronizarContaPrincipal = async (token: string) => {
-      if (normalizarUuid(perfil.contaMinecraftPrincipalUuid) === uuidAtual) return;
-
-      try {
-        const dados = await invoke<RespostaSalvarPerfilApi>('save_launcher_social_profile', {
-          apiBaseUrl: API_DOME_LAUNCHER_URL,
-          accessToken: token,
-          payload: {
-            contaMinecraftPrincipalUuid: uuidAtual,
-          },
-        });
-
-        if (!ativo || !dados?.perfil) return;
-        setPerfil(dados.perfil);
-        persistirPerfilNaSessao(dados.perfil);
-      } catch {
-        // Falha silenciosa para nao atrapalhar o social.
-      }
-    };
-
     const sincronizarVinculoDaContaAtiva = async () => {
       const token = await obterTokenValido();
       if (!token || !ativo) return;
 
       if (jaVinculada) {
-        await sincronizarContaPrincipal(token);
         return;
       }
 
@@ -1503,36 +1504,6 @@ export default function SocialSidebar({
       ativo = false;
     };
   }, [obterTokenValido, perfil, persistirPerfilNaSessao, sessao, usuarioMinecraft]);
-
-  const iniciarLoginDiscord = async () => {
-    setMensagemPerfil(null);
-    setErroPerfil(null);
-
-    if (!API_DOME_LAUNCHER_URL || !DISCORD_CLIENT_ID || !DISCORD_REDIRECT_URI) {
-      setErroPerfil('Não foi possível iniciar login social. Verifique sua conexão e tente novamente.');
-      return;
-    }
-
-    try {
-      const novaSessao = await invoke<SessaoSocial>('login_discord_social', {
-        apiBaseUrl: API_DOME_LAUNCHER_URL,
-        clientId: DISCORD_CLIENT_ID,
-        redirectUri: DISCORD_REDIRECT_URI,
-        scope: DISCORD_SCOPES,
-      });
-
-      atualizarSessao(novaSessao);
-      setNomeSocialEditavel(novaSessao.perfil.nomeSocial ?? '');
-      setHandleEditavel(novaSessao.perfil.handle ?? '');
-      await Promise.all([
-        carregarPerfilSocial(novaSessao.accessToken),
-        carregarAmigos(novaSessao.accessToken, { forcar: true }),
-      ]);
-      await conectarSocketRealtime();
-    } catch (erro) {
-      setErroPerfil(mensagemErro(erro, 'Nao foi possivel autenticar com Discord.'));
-    }
-  };
 
   const salvarPerfilSocial = async () => {
     const token = await obterTokenValido();
@@ -2052,18 +2023,8 @@ export default function SocialSidebar({
 
     return (
       <>
-      <aside className={cn('launcher-social shrink-0 overflow-y-auto', className)}>
-        <div className="flex w-full flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={onAlternarRecuo}
-            title="Abrir painel social"
-            aria-label="Abrir painel social"
-            className="grid h-10 w-10 place-items-center border border-white/10 bg-white/[0.025] text-white/45 transition-colors hover:border-white/20 hover:text-white"
-          >
-            <ChevronLeft size={13} />
-          </button>
-
+      <aside className={cn('launcher-social flex shrink-0 flex-col overflow-hidden', className)}>
+        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-x-hidden overflow-y-auto">
           <div
             title={sessao ? nomeExibicaoAtual : 'Entrar no social'}
             className="relative grid h-10 w-10 place-items-center border border-white/10 bg-[#151515]"
@@ -2099,6 +2060,17 @@ export default function SocialSidebar({
               )}
             </div>
           )}
+        </div>
+        <div className="flex shrink-0 justify-center border-t border-white/[0.07] pt-3">
+          <button
+            type="button"
+            onClick={onAlternarRecuo}
+            title="Abrir painel social"
+            aria-label="Abrir painel social"
+            className="grid h-10 w-10 place-items-center border border-white/10 bg-white/[0.025] text-white/45 transition-colors hover:border-white/20 hover:text-white"
+          >
+            <ChevronLeft size={13} />
+          </button>
         </div>
       </aside>
       <PainelChatSocial
@@ -2142,14 +2114,15 @@ export default function SocialSidebar({
   }
 
   return (
-    <aside className={cn('launcher-social flex w-[311px] shrink-0 flex-col overflow-hidden', className)}>
+    <aside className={cn('launcher-social relative flex w-[311px] shrink-0 flex-col overflow-hidden', className)}>
       <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
         <div className="shrink-0">
           <PerfilSocialPainel
           sessaoAtiva={Boolean(sessao)}
           perfil={perfil}
+          onEntrarMicrosoft={() => void entrarMicrosoftPelaBarraSocial()}
+          entrandoMicrosoft={entrandoMicrosoft}
           onFecharDrawer={onFecharDrawer}
-          onIniciarLoginDiscord={iniciarLoginDiscord}
           nomeExibicaoAtual={nomeExibicaoAtual}
           handleExibicaoAtual={handleExibicaoAtual}
           uuidAvatarMinecraft={uuidAvatarMinecraft}
@@ -2179,7 +2152,6 @@ export default function SocialSidebar({
           onAlterarNome={setNomeSocialEditavel}
           onAlterarHandle={setHandleEditavel}
           onAtualizarStatus={atualizarStatusSocial}
-          onRecuar={onAlternarRecuo}
           />
         </div>
 
@@ -2216,6 +2188,20 @@ export default function SocialSidebar({
           rotuloStatus={rotuloStatus}
         />
       </div>
+
+      {onAlternarRecuo && (
+        <div className="flex shrink-0 justify-end border-t border-white/[0.07] pt-3">
+          <button
+            type="button"
+            onClick={onAlternarRecuo}
+            aria-label="Recolher painel social"
+            title="Recolher painel social"
+            className="grid h-10 w-10 place-items-center border border-white/10 bg-white/[0.025] text-white/45 transition-colors hover:border-white/20 hover:text-white"
+          >
+            <ChevronRight size={13} />
+          </button>
+        </div>
+      )}
 
       {perfil?.perfilId && <CompartilhamentosSociais
         apiBaseUrl={API_DOME_LAUNCHER_URL}

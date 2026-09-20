@@ -4,8 +4,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+static BLOQUEIO_ARQUIVOS_INSTANCIA: Mutex<()> = Mutex::new(());
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -398,6 +400,83 @@ pub(crate) fn pasta_dados_launcher() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("dome"))
 }
 
+pub(crate) fn pasta_backups_instancias() -> PathBuf {
+    pasta_dados_launcher().join("backups").join("instances")
+}
+
+pub(crate) fn pasta_cache_social() -> PathBuf {
+    pasta_dados_launcher().join("cache").join("social")
+}
+
+pub(crate) fn pasta_preparacao_social() -> PathBuf {
+    pasta_dados_launcher()
+        .join("temp")
+        .join("social")
+        .join("preparation")
+}
+
+pub(crate) fn pasta_recibos_sociais() -> PathBuf {
+    pasta_dados_launcher().join("social").join("receipts")
+}
+
+fn mesclar_pasta_legada(origem: &Path, destino: &Path) -> Result<(), String> {
+    if !origem.exists() {
+        return Ok(());
+    }
+    if !destino.exists() {
+        if let Some(pai) = destino.parent() {
+            std::fs::create_dir_all(pai).map_err(|e| e.to_string())?;
+        }
+        if std::fs::rename(origem, destino).is_ok() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(destino).map_err(|e| e.to_string())?;
+    }
+
+    for entrada in std::fs::read_dir(origem).map_err(|e| e.to_string())? {
+        let entrada = entrada.map_err(|e| e.to_string())?;
+        let caminho_origem = entrada.path();
+        let caminho_destino = destino.join(entrada.file_name());
+        if !caminho_destino.exists() {
+            mover_entrada_legada(&caminho_origem, &caminho_destino)?;
+            continue;
+        }
+        if caminho_origem.is_dir() && caminho_destino.is_dir() {
+            mesclar_pasta_legada(&caminho_origem, &caminho_destino)?;
+            continue;
+        }
+        let nome = entrada.file_name().to_string_lossy().to_string();
+        let alternativo = destino.join(format!("legacy-{}-{nome}", uuid::Uuid::new_v4()));
+        mover_entrada_legada(&caminho_origem, &alternativo)?;
+    }
+    std::fs::remove_dir(origem).map_err(|e| e.to_string())
+}
+
+fn mover_entrada_legada(origem: &Path, destino: &Path) -> Result<(), String> {
+    if std::fs::rename(origem, destino).is_ok() {
+        return Ok(());
+    }
+    if origem.is_dir() {
+        std::fs::create_dir_all(destino).map_err(|e| e.to_string())?;
+        mesclar_pasta_legada(origem, destino)
+    } else {
+        std::fs::copy(origem, destino).map_err(|e| e.to_string())?;
+        std::fs::remove_file(origem).map_err(|e| e.to_string())
+    }
+}
+
+fn migrar_pastas_auxiliares_instancias(raiz_instancias: &Path) -> Result<(), String> {
+    for (nome_legado, destino) in [
+        (".dome-backups", pasta_backups_instancias()),
+        (".social-cache", pasta_cache_social()),
+        (".social-preparacao", pasta_preparacao_social()),
+        (".social-recebimentos", pasta_recibos_sociais()),
+    ] {
+        mesclar_pasta_legada(&raiz_instancias.join(nome_legado), &destino)?;
+    }
+    Ok(())
+}
+
 fn caminho_sessao_social() -> PathBuf {
     pasta_dados_launcher().join("social-session.dat")
 }
@@ -514,6 +593,9 @@ impl LauncherState {
         forcar_atualizacao: bool,
         encerrar_sessao: bool,
     ) -> Result<(), String> {
+        let _bloqueio = BLOQUEIO_ARQUIVOS_INSTANCIA
+            .lock()
+            .map_err(|_| "Falha ao bloquear atualização da instância".to_string())?;
         let caminho_config = instances_path.join(instance_id).join("instance.json");
         if !caminho_config.exists() {
             return Ok(());
@@ -525,12 +607,17 @@ impl LauncherState {
                 instance_id, e
             )
         })?;
-        let mut instancia: Instance = serde_json::from_str(&conteudo).map_err(|e| {
-            format!(
-                "Erro ao parsear instance.json para atualizar tempo jogado ({}): {}",
-                instance_id, e
-            )
-        })?;
+        let (mut instancia, recuperada) =
+            Self::ler_instancia_do_conteudo(&conteudo).map_err(|e| {
+                format!(
+                    "Erro ao parsear instance.json para atualizar tempo jogado ({}): {}",
+                    instance_id, e
+                )
+            })?;
+
+        if recuperada {
+            Self::salvar_instancia_em_arquivo(&caminho_config, &instancia);
+        }
 
         let Some(sessao_iniciada_em) = instancia.sessao_iniciada_em.clone() else {
             return Ok(());
@@ -701,6 +788,22 @@ impl LauncherState {
         }
     }
 
+    fn ler_instancia_do_conteudo(conteudo: &str) -> Result<(Instance, bool), serde_json::Error> {
+        match serde_json::from_str::<Instance>(conteudo) {
+            Ok(instancia) => Ok((instancia, false)),
+            Err(erro_original) => {
+                let mut valores =
+                    serde_json::Deserializer::from_str(conteudo).into_iter::<Instance>();
+                match valores.next() {
+                    Some(Ok(instancia)) if valores.byte_offset() < conteudo.len() => {
+                        Ok((instancia, true))
+                    }
+                    _ => Err(erro_original),
+                }
+            }
+        }
+    }
+
     pub fn finalizar_tempo_jogado_instancia(&self, instance_id: &str) -> Result<(), String> {
         let instances_path = self.caminho_instancias()?;
         Self::atualizar_tempo_jogado_instancia_por_caminho(&instances_path, instance_id, true, true)
@@ -714,6 +817,7 @@ impl LauncherState {
     }
 
     pub fn atualizar_caminho_instancias(&self, caminho: PathBuf) -> Result<(), String> {
+        migrar_pastas_auxiliares_instancias(&caminho)?;
         let mut caminho_atual = self
             .instances_path
             .lock()
@@ -752,6 +856,9 @@ impl LauncherState {
         // Criar o diretório se não existir
         if let Err(e) = std::fs::create_dir_all(&instances_path) {
             eprintln!("Warning: Could not create instances directory: {}", e);
+        }
+        if let Err(erro) = migrar_pastas_auxiliares_instancias(&instances_path) {
+            eprintln!("[Instâncias] Aviso: não foi possível reorganizar pastas auxiliares: {erro}");
         }
 
         // Carregar contas salvas (multi-conta) e conta ativa.
@@ -938,6 +1045,26 @@ impl LauncherState {
         Ok(())
     }
 
+    /// Remove todas as credenciais locais sem apagar instâncias, mundos ou configurações.
+    pub fn clear_all_accounts(&self) -> Result<(), String> {
+        for caminho in [Self::get_account_path(), Self::get_accounts_path()] {
+            if caminho.exists() {
+                std::fs::remove_file(&caminho)
+                    .map_err(|e| format!("Erro ao remover credenciais locais: {e}"))?;
+            }
+        }
+
+        *self
+            .account
+            .lock()
+            .map_err(|_| "Falha ao limpar conta ativa".to_string())? = None;
+        self.accounts
+            .lock()
+            .map_err(|_| "Falha ao limpar contas salvas".to_string())?
+            .clear();
+        Ok(())
+    }
+
     pub fn list_accounts(&self) -> Vec<MinecraftAccount> {
         self.accounts
             .lock()
@@ -1004,11 +1131,11 @@ impl LauncherState {
                     let config_path = entry.path().join("instance.json");
                     if config_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&config_path) {
-                            match serde_json::from_str::<Instance>(&content) {
-                                Ok(mut instance) => {
+                            match Self::ler_instancia_do_conteudo(&content) {
+                                Ok((mut instance, recuperada)) => {
                                     let pasta_nome =
                                         entry.file_name().to_string_lossy().to_string();
-                                    let mut precisa_salvar = false;
+                                    let mut precisa_salvar = recuperada;
 
                                     // Garantir que id e path reflitam o diretório real no disco (cura instâncias dessincronizadas)
                                     if instance.id != pasta_nome {
@@ -1092,6 +1219,34 @@ impl LauncherState {
             }
         }
         Ok(instances)
+    }
+}
+
+#[cfg(test)]
+mod testes_instancias {
+    use super::LauncherState;
+
+    const INSTANCIA_VALIDA: &str = r#"{
+        "id": "teste",
+        "name": "Teste",
+        "version": "1.21.1",
+        "mcType": "vanilla",
+        "path": "C:\\instancias\\teste",
+        "created": "2026-09-19T00:00:00Z"
+    }"#;
+
+    #[test]
+    fn recupera_instancia_com_residuo_apos_json() {
+        let conteudo = format!("{}l\n}}", INSTANCIA_VALIDA);
+        let (instancia, recuperada) = LauncherState::ler_instancia_do_conteudo(&conteudo).unwrap();
+
+        assert_eq!(instancia.id, "teste");
+        assert!(recuperada);
+    }
+
+    #[test]
+    fn rejeita_instancia_sem_json_valido_no_inicio() {
+        assert!(LauncherState::ler_instancia_do_conteudo("lixo antes do json").is_err());
     }
 }
 

@@ -49,7 +49,7 @@ const SERVIDORES_DOME: ServidorDome[] = [
     nome: "Emergence",
     endereco: "emc.domestudios.com.br",
     porta: 25565,
-    icone: "/dome.png",
+    icone: "/dome-launcher.ico",
     aliases: ["emc.domestudios.com"],
   },
 ];
@@ -89,6 +89,21 @@ function tempoRelativo(data: string): string {
 
 function obterContagemJogadores(servidor: ServerInfo): string | undefined {
   return servidor.player_count ?? servidor.playerCount ?? undefined;
+}
+
+function limparMotdServidor(motd: string | null | undefined): string | undefined {
+  const texto = motd
+    ?.replace(/\u00a7[0-9A-FK-OR]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return texto || undefined;
+}
+
+function descreverErroServidor(erro: unknown): string {
+  if (typeof erro === "string" && erro.trim()) return erro;
+  if (erro instanceof Error && erro.message.trim()) return erro.message;
+  return "Não foi possível se conectar ao servidor";
 }
 
 function normalizarEndereco(host: string): string {
@@ -326,7 +341,7 @@ function SecaoServidoresDome({
                 icon: resposta.icon ?? servidor.icone ?? null,
               },
             }));
-          } catch {
+          } catch (erro) {
             if (cancelado) return;
 
             setStatusServidores((anterior) => ({
@@ -383,7 +398,7 @@ function SecaoServidoresDome({
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 overflow-hidden bg-black/30">
                   <img
-                    src={status?.icon || servidor.icone || "/dome.svg"}
+                    src={status?.icon || servidor.icone || "/dome-launcher.ico"}
                     alt={servidor.nome}
                     className="h-full w-full object-cover"
                   />
@@ -499,7 +514,17 @@ function SecaoVolteAJogar({
     }
   });
   const [statusServidores, setStatusServidores] = useState<
-    Record<string, { online: boolean; erro?: string; ping?: number; icon?: string | null }>
+    Record<
+      string,
+      {
+        online: boolean;
+        erro?: string;
+        ping?: number;
+        jogadores?: string;
+        motd?: string;
+        icon?: string | null;
+      }
+    >
   >({});
 
   const chaveServidor = (instanciaId: string, servidor: ServerInfo) =>
@@ -612,17 +637,19 @@ function SecaoVolteAJogar({
               [chave]: {
                 online: true,
                 ping: ping.ping ?? undefined,
+                jogadores: obterContagemJogadores(ping),
+                motd: limparMotdServidor(ping.motd),
                 icon: ping.icon ?? item.servidor.icon ?? undefined,
               },
             }));
-          } catch {
+          } catch (erro) {
             if (cancelado) return;
 
             setStatusServidores((anterior) => ({
               ...anterior,
               [chave]: {
                 online: false,
-                erro: "Não foi possível se conectar ao servidor",
+                erro: descreverErroServidor(erro),
                 icon: item.servidor.icon ?? undefined,
               },
             }));
@@ -635,8 +662,11 @@ function SecaoVolteAJogar({
       verificarServidores();
     }
 
+    const intervalo = window.setInterval(verificarServidores, 30_000);
+
     return () => {
       cancelado = true;
+      window.clearInterval(intervalo);
     };
   }, [itensVolteAJogar]);
 
@@ -679,8 +709,8 @@ function SecaoVolteAJogar({
                   <img
                     src={
                       item.tipo === "servidor"
-                        ? status?.icon || item.servidor.icon || instancia.icon || "/dome.svg"
-                        : instancia.icon || "/dome.svg"
+                        ? status?.icon || item.servidor.icon || instancia.icon || "/dome-launcher.ico"
+                        : instancia.icon || "/dome-launcher.ico"
                     }
                     alt={
                       item.tipo === "servidor"
@@ -741,15 +771,21 @@ function SecaoVolteAJogar({
                   )}
 
                   {item.tipo === "servidor" && (
-                    <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[12px] text-white/65">
-                      {item.servidor.address}
-                      {item.servidor.port && item.servidor.port !== 25565
-                        ? `:${item.servidor.port}`
-                        : ""}
-                      {" • "}
-                      na instância {instancia.name}
-                      {status?.ping != null ? ` • ${status.ping}ms` : ""}
-                    </p>
+                    <div className="min-w-0">
+                      {status?.motd && (
+                        <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[12px] text-white/80">
+                          {status.motd}
+                        </p>
+                      )}
+                      <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/50">
+                        {item.servidor.address}
+                        {item.servidor.port && item.servidor.port !== 25565
+                          ? `:${item.servidor.port}`
+                          : ""}
+                        {" • "}
+                        na instância {instancia.name}
+                      </p>
+                    </div>
                   )}
                 </div>
 
@@ -807,6 +843,16 @@ function SecaoVolteAJogar({
                   )}
                 </div>
               </div>
+
+              {item.tipo === "servidor" && status?.online && (
+                <div className="mt-[9px] flex items-center gap-3 border-t border-white/10 pt-[9px] font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/65">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-[7px] w-[7px] rounded-full bg-emerald-400" />
+                    {status.jogadores ?? "--/--"} jogadores
+                  </span>
+                  {status.ping != null && <span className="text-white/40">{status.ping}ms</span>}
+                </div>
+              )}
 
               {item.tipo === "servidor" && !status?.online && status?.erro && (
                 <p className="mt-2 truncate font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-red-300/70">

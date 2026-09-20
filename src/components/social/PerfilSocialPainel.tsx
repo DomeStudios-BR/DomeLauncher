@@ -1,4 +1,4 @@
-import { ChevronRight, Pencil } from '../../iconesPixelados';
+import { Pencil } from '../../iconesPixelados';
 import { cn } from '../../lib/utils';
 import type { AtividadeSocial, PerfilSocial } from './tiposSocial';
 import { ImagemAtividade } from './ImagemAtividade';
@@ -8,8 +8,9 @@ import type { StatusPresenca } from './tiposSocial';
 interface PerfilSocialPainelProps {
   sessaoAtiva: boolean;
   perfil: PerfilSocial | null;
+  onEntrarMicrosoft: () => void;
+  entrandoMicrosoft: boolean;
   onFecharDrawer?: () => void;
-  onIniciarLoginDiscord: () => void;
   nomeExibicaoAtual: string;
   handleExibicaoAtual: string;
   uuidAvatarMinecraft: string | null;
@@ -32,7 +33,6 @@ interface PerfilSocialPainelProps {
   onAlterarNome: (valor: string) => void;
   onAlterarHandle: (valor: string) => void;
   onAtualizarStatus: (status: Exclude<StatusPresenca, 'offline'>, invisivel: boolean) => void;
-  onRecuar?: () => void;
 }
 
 function iniciaisNome(nome: string): string {
@@ -45,8 +45,9 @@ function iniciaisNome(nome: string): string {
 export function PerfilSocialPainel({
   sessaoAtiva,
   perfil,
+  onEntrarMicrosoft,
+  entrandoMicrosoft,
   onFecharDrawer,
-  onIniciarLoginDiscord,
   nomeExibicaoAtual,
   handleExibicaoAtual,
   uuidAvatarMinecraft,
@@ -69,7 +70,6 @@ export function PerfilSocialPainel({
   onAlterarNome,
   onAlterarHandle,
   onAtualizarStatus,
-  onRecuar,
 }: PerfilSocialPainelProps) {
   const nomeAtividade = atividadeAtual?.modpackNome || atividadeAtual?.instanciaNome || 'Minecraft';
   const emblemaDestaque = (perfil?.emblemasExibidos ?? perfil?.emblemas)?.[0] ?? null;
@@ -94,26 +94,22 @@ export function PerfilSocialPainel({
 
       {!sessaoAtiva && (
         <div className="space-y-2">
-          {onRecuar && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={onRecuar}
-                aria-label="Recolher painel social"
-                title="Recolher painel social"
-                className="grid h-8 w-8 place-items-center border border-white/10 bg-white/[0.025] text-white/40 transition-colors hover:border-white/20 hover:text-white/75"
-              >
-                <ChevronRight size={13} />
-              </button>
-            </div>
-          )}
-          <p className="text-[12px] leading-relaxed text-white/55">Conecte sua identidade do Discord para encontrar amigos e jogar em grupo.</p>
           <button
-            onClick={onIniciarLoginDiscord}
-            className="w-full border border-emerald-400/25 bg-emerald-400/[0.07] px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200 transition-colors hover:bg-emerald-400/[0.12]"
+            type="button"
+            onClick={onEntrarMicrosoft}
+            disabled={entrandoMicrosoft}
+            className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-white/10 bg-white px-3 py-3 text-[10px] font-black uppercase tracking-[0.08em] text-[#101010] shadow-lg shadow-black/20 transition-colors hover:bg-emerald-300 disabled:cursor-wait disabled:bg-white/70"
           >
-            Entrar com Discord
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg"
+              className="h-4 w-4"
+              alt=""
+            />
+            {entrandoMicrosoft ? 'Autenticando...' : 'Iniciar login'}
           </button>
+          <p className="text-[12px] leading-relaxed text-white/55">
+            Entre com a Microsoft para ativar seu perfil e os recursos sociais.
+          </p>
           {erroPerfil && <p className="text-[11px] text-red-300/90">{erroPerfil}</p>}
           {!erroPerfil && mensagemPerfil && <p className="text-[11px] text-emerald-300/90">{mensagemPerfil}</p>}
         </div>
@@ -162,17 +158,6 @@ export function PerfilSocialPainel({
               >
                 <Pencil size={12} />
               </button>
-              {onRecuar && (
-                <button
-                  type="button"
-                  onClick={onRecuar}
-                  aria-label="Recolher painel social"
-                  title="Recolher painel social"
-                  className="grid h-8 w-8 place-items-center border border-white/10 bg-white/[0.025] text-white/40 transition-colors hover:border-white/20 hover:text-white/75"
-                >
-                  <ChevronRight size={13} />
-                </button>
-              )}
             </div>
           </div>
 

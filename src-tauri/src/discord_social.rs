@@ -1,47 +1,11 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ContaMinecraftSocial {
-    pub uuid: String,
-    pub nome: String,
-    pub vinculado_em: String,
-    pub ultimo_uso_em: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PerfilSocialDiscord {
-    pub perfil_id: String,
-    pub discord_id: String,
-    pub discord_username: String,
-    pub discord_global_name: Option<String>,
-    pub discord_avatar: Option<String>,
-    pub handle: String,
-    pub nome_social: String,
-    pub contas_minecraft_vinculadas: Vec<ContaMinecraftSocial>,
-    pub conta_minecraft_principal_uuid: Option<String>,
-    pub online: bool,
-    pub ultimo_seen_em: Option<String>,
-    pub criado_em: String,
-    pub atualizado_em: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SessaoSocialDiscord {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expira_em: String,
-    pub perfil: PerfilSocialDiscord,
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,7 +45,8 @@ pub async fn login_discord_social(
     client_id: String,
     redirect_uri: String,
     scope: Option<String>,
-) -> Result<SessaoSocialDiscord, String> {
+    access_token: Option<String>,
+) -> Result<serde_json::Value, String> {
     let api_base_url = normalizar_api_base_url(&api_base_url)?;
     let client_id = client_id.trim().to_string();
     let redirect_uri = redirect_uri.trim().to_string();
@@ -177,11 +142,20 @@ pub async fn login_discord_social(
         redirect_uri,
     };
 
-    let endpoint = format!("{}/api/launcher/auth/discord/exchange", api_base_url);
+    let vinculando = access_token
+        .as_deref()
+        .is_some_and(|token| !token.trim().is_empty());
+    let endpoint = if vinculando {
+        format!("{}/api/launcher/social/discord/link", api_base_url)
+    } else {
+        format!("{}/api/launcher/auth/discord/exchange", api_base_url)
+    };
     let client = Client::new();
-    let resposta = client
-        .post(&endpoint)
-        .json(&body)
+    let mut requisicao = client.post(&endpoint).json(&body);
+    if let Some(token) = access_token.filter(|token| !token.trim().is_empty()) {
+        requisicao = requisicao.bearer_auth(token.trim());
+    }
+    let resposta = requisicao
         .send()
         .await
         .map_err(|e| format!("Falha ao autenticar com API social: {}", e))?;
@@ -192,7 +166,7 @@ pub async fn login_discord_social(
     }
 
     resposta
-        .json::<SessaoSocialDiscord>()
+        .json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Resposta da API social invalida: {}", e))
 }

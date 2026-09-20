@@ -41,6 +41,7 @@ pub fn run() {
             super::instancias_basicas::open_browser,
             crate::auth::check_auth_status,
             crate::auth::logout, // Logout e limpeza de sessão
+            crate::auth::esquecer_contas_e_reiniciar_onboarding,
             crate::auth::list_minecraft_accounts,
             crate::auth::switch_minecraft_account,
             crate::auth::remove_minecraft_account,
@@ -137,6 +138,7 @@ pub fn run() {
             crate::comandos::social_launcher::upload_launcher_social_sync_package,
             crate::comandos::social_launcher::download_import_launcher_social_sync_package,
             crate::comandos::social_launcher::refresh_launcher_social_session,
+            crate::comandos::social_launcher::exchange_launcher_minecraft_session,
             crate::comandos::social_launcher::logout_launcher_social,
             crate::launcher::carregar_sessao_social_local,
             crate::launcher::salvar_sessao_social_local,
