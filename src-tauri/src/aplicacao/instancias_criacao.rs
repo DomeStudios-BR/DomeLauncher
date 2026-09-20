@@ -1133,11 +1133,7 @@ pub(crate) async fn migrar_versao_instancia(
     }
 
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    let pasta_backups = instancia
-        .path
-        .parent()
-        .ok_or("A instância não possui uma pasta pai válida.")?
-        .join(".dome-backups");
+    let pasta_backups = crate::launcher::pasta_backups_instancias();
     std::fs::create_dir_all(&pasta_backups).map_err(|e| e.to_string())?;
     let backup = pasta_backups.join(format!("{}-versao-{}", instancia.id, timestamp));
     let mut preservados = Vec::new();

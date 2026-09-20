@@ -207,7 +207,7 @@ export default function CreateInstanceModal({
       status: "downloading",
       progress: 0,
       message: "Iniciando download...",
-      icon: customIcon || "/dome.png",
+      icon: customIcon || "/dome-launcher.ico",
     };
     addCreatingInstance(creatingInstance);
 
@@ -216,7 +216,7 @@ export default function CreateInstanceModal({
 
     // Criar em background
     try {
-      const params: any = { name, version, mcType: loader, icon: customIcon || "/dome.png" };
+      const params: any = { name, version, mcType: loader, icon: customIcon || "/dome-launcher.ico" };
       if (loader !== "vanilla") {
         params.loaderType = loader;
         params.loaderVersion = loaderVersion;
@@ -272,7 +272,7 @@ export default function CreateInstanceModal({
             <div className="relative group">
               <div className="w-16 h-16 rounded-xl bg-linear-to-br from-emerald-500/20 to-orange-500/20 border border-white/10 overflow-hidden">
                 <img
-                  src={customIcon || "/dome.png"}
+                  src={customIcon || "/dome-launcher.ico"}
                   alt=""
                   className="w-full h-full object-cover"
                 />

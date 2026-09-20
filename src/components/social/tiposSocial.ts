@@ -35,8 +35,8 @@ export interface AtividadeSocial {
 
 export interface PerfilSocial {
   perfilId: string;
-  discordId: string;
-  discordUsername: string;
+  discordId?: string | null;
+  discordUsername?: string | null;
   discordGlobalName?: string | null;
   discordAvatar?: string | null;
   handle: string;

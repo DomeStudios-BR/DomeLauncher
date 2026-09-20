@@ -33,6 +33,13 @@ function usaGeradorAntigo(icone: string | null | undefined): boolean {
   return Boolean(icone?.toLowerCase().includes("api.dicebear.com"));
 }
 
+function normalizarIconeLegado(icone: string | null | undefined): string | undefined {
+  if (icone === "/dome.png" || icone === "/dome.svg") {
+    return "/dome-launcher.ico";
+  }
+  return icone ?? undefined;
+}
+
 async function migrarIconesDoGeradorAntigo(instancias: Instance[]): Promise<Instance[]> {
   return Promise.all(instancias.map(async (instancia) => {
     if (!usaGeradorAntigo(instancia.icon) || migracoesIconesEmAndamento.has(instancia.id)) {
@@ -63,6 +70,7 @@ export function useLauncher() {
       const data = await invoke<Instance[]>("get_instances");
       const normalizadas = (data as any[]).map((inst) => ({
         ...inst,
+        icon: normalizarIconeLegado(inst.icon),
         mc_type: inst.mc_type ?? inst.mcType,
         loader_type: inst.loader_type ?? inst.loaderType,
         last_played: inst.last_played ?? inst.lastPlayed,

@@ -16,6 +16,13 @@ pub fn logout(state: State<LauncherState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn esquecer_contas_e_reiniciar_onboarding(state: State<LauncherState>) -> Result<(), String> {
+    state.clear_all_accounts()?;
+    crate::launcher::salvar_sessao_social_local(None)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn list_minecraft_accounts(state: State<LauncherState>) -> Vec<MinecraftAccount> {
     state.list_accounts()
 }

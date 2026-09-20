@@ -156,7 +156,7 @@ fn obter_mapa_instancias_em_execucao(
             continue;
         }
 
-        let tinha_pid_registrado = state.obter_pid_instancia(instance_id).is_some();
+        let pid_registrado = state.obter_pid_instancia(instance_id);
         let instance_path_normalizado = normalizar_caminho_processo(&instance_path);
         let caminho_canonico_normalizado = instance_path
             .canonicalize()
@@ -180,13 +180,15 @@ fn obter_mapa_instancias_em_execucao(
             });
 
         if let Some((pid, _, _)) = processo_localizado {
-            state.registrar_processo_instancia(instance_id, *pid);
-            state.iniciar_monitoramento_tempo_jogado(instance_id, *pid);
+            if pid_registrado != Some(*pid) {
+                state.registrar_processo_instancia(instance_id, *pid);
+                state.iniciar_monitoramento_tempo_jogado(instance_id, *pid);
+            }
             resultados.insert(instance_id.clone(), true);
             continue;
         }
 
-        if tinha_pid_registrado {
+        if pid_registrado.is_some() {
             state.remover_pid_instancia(instance_id);
             if let Err(erro) = state.finalizar_tempo_jogado_instancia(instance_id) {
                 eprintln!(
@@ -667,7 +669,7 @@ fn escrever_string_mc(valor: &str, destino: &mut Vec<u8>) {
 fn extrair_texto_descricao_mc(valor: &serde_json::Value) -> Option<String> {
     match valor {
         serde_json::Value::String(texto) => {
-            if texto.trim().is_empty() {
+            if texto.is_empty() {
                 None
             } else {
                 Some(texto.to_string())
@@ -677,7 +679,7 @@ fn extrair_texto_descricao_mc(valor: &serde_json::Value) -> Option<String> {
             let mut partes: Vec<String> = Vec::new();
 
             if let Some(texto) = objeto.get("text").and_then(|v| v.as_str()) {
-                if !texto.trim().is_empty() {
+                if !texto.is_empty() {
                     partes.push(texto.to_string());
                 }
             }
@@ -685,9 +687,7 @@ fn extrair_texto_descricao_mc(valor: &serde_json::Value) -> Option<String> {
             if let Some(extra) = objeto.get("extra").and_then(|v| v.as_array()) {
                 for item in extra {
                     if let Some(texto) = extrair_texto_descricao_mc(item) {
-                        if !texto.trim().is_empty() {
-                            partes.push(texto);
-                        }
+                        partes.push(texto);
                     }
                 }
             }
@@ -702,7 +702,6 @@ fn extrair_texto_descricao_mc(valor: &serde_json::Value) -> Option<String> {
             let partes: Vec<String> = lista
                 .iter()
                 .filter_map(extrair_texto_descricao_mc)
-                .filter(|s| !s.trim().is_empty())
                 .collect();
 
             if partes.is_empty() {
@@ -800,6 +799,7 @@ fn consultar_status_servidor_minecraft(
 
 async fn resolver_srv_minecraft(host: &str) -> Option<(String, u16)> {
     use hickory_resolver::TokioAsyncResolver;
+    use std::time::Duration;
 
     if host.parse::<std::net::IpAddr>().is_ok() {
         return None;
@@ -807,7 +807,13 @@ async fn resolver_srv_minecraft(host: &str) -> Option<(String, u16)> {
 
     let resolver = TokioAsyncResolver::tokio_from_system_conf().ok()?;
     let nome_consulta = format!("_minecraft._tcp.{}", host.trim_end_matches('.'));
-    let resposta = resolver.srv_lookup(nome_consulta).await.ok()?;
+    let resposta = tokio::time::timeout(
+        Duration::from_millis(1_500),
+        resolver.srv_lookup(nome_consulta),
+    )
+    .await
+    .ok()?
+    .ok()?;
 
     resposta
         .iter()
@@ -864,12 +870,7 @@ pub async fn ping_server(address: String) -> Result<ServerInfo, String> {
             .map_err(|e| format!("Falha ao resolver endereço do servidor: {}", e))?;
 
         for socket_addr in enderecos {
-            match consultar_status_servidor_minecraft(
-                socket_addr,
-                &host_destino,
-                porta_destino,
-                timeout,
-            ) {
+            match consultar_status_servidor_minecraft(socket_addr, &host, porta_destino, timeout) {
                 Ok((ping, motd, player_count, icon)) => {
                     return Ok(ServerInfo {
                         name: host.clone(),
@@ -906,10 +907,12 @@ pub async fn ping_server(address: String) -> Result<ServerInfo, String> {
         }
     }
 
-    Err(format!(
+    let erro = format!(
         "Servidor offline ou inacessível{}",
         ultimo_erro.map(|e| format!(": {}", e)).unwrap_or_default()
-    ))
+    );
+    eprintln!("Falha ao consultar status de {address}: {erro}");
+    Err(erro)
 }
 
 #[tauri::command]
@@ -1039,7 +1042,28 @@ pub fn abrir_pasta_mundo(
 
 #[cfg(test)]
 mod testes {
-    use super::identificador_instancia_valido;
+    use super::{extrair_texto_descricao_mc, identificador_instancia_valido};
+
+    #[test]
+    fn preserva_espacos_em_motd_com_componentes() {
+        let descricao = serde_json::json!({
+            "text": "",
+            "extra": [
+                { "text": "Rove" },
+                " ",
+                { "text": "Open Beta" },
+                { "text": " · " },
+                { "text": "1.21.11" },
+                "\n",
+                { "text": "Open World Zombie Survival" }
+            ]
+        });
+
+        assert_eq!(
+            extrair_texto_descricao_mc(&descricao).as_deref(),
+            Some("Rove Open Beta · 1.21.11\nOpen World Zombie Survival")
+        );
+    }
 
     #[test]
     fn aceita_identificadores_simples() {

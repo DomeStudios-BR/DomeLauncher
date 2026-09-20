@@ -25,6 +25,9 @@ import { EsqueletoAba } from "./EsqueletoCarregamento";
 import { ehCorHexValida, normalizarCorDestaque } from "../lib/corDestaque";
 import { SeletorCorDestaque } from "./settings/SeletorCorDestaque";
 import { EVENTO_INSTANCIAS_ATUALIZADAS } from "../lib/eventosTransferenciaSocial";
+import { reiniciarOnboarding } from "../lib/onboarding";
+import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
+import { EVENTO_SESSAO_SOCIAL_ATUALIZADA } from "../lib/autenticacaoMicrosoft";
 
 // Tipos
 interface GlobalSettings {
@@ -64,6 +67,17 @@ interface JavaInfo {
   vendor: string;
   arch: string;
   is_managed: boolean;
+}
+
+interface SessaoSocialLocal {
+  accessToken?: string;
+  refreshToken?: string;
+  expiraEm?: string;
+  perfil?: {
+    discordUsername?: string | null;
+    [chave: string]: unknown;
+  };
+  [chave: string]: unknown;
 }
 
 // Resoluções predefinidas
@@ -128,6 +142,72 @@ export default function Settings() {
   const [javaAberto, setJavaAberto] = useState(true);
   const [codigoCor, setCodigoCor] = useState("#10B981");
   const [selecionandoPasta, setSelecionandoPasta] = useState(false);
+  const [limpandoContas, setLimpandoContas] = useState(false);
+  const [conectandoDiscord, setConectandoDiscord] = useState(false);
+  const [discordConectado, setDiscordConectado] = useState<string | null>(null);
+
+  useEffect(() => {
+    void invoke<string | null>("carregar_sessao_social_local").then((bruto) => {
+      if (!bruto) return;
+      const sessao = JSON.parse(bruto) as { perfil?: { discordUsername?: string | null } };
+      setDiscordConectado(sessao.perfil?.discordUsername ?? null);
+    }).catch(() => undefined);
+  }, []);
+
+  const conectarDiscord = async () => {
+    setConectandoDiscord(true);
+    setErro(null);
+    try {
+      const bruto = await invoke<string | null>("carregar_sessao_social_local");
+      if (!bruto) throw new Error("Entre com a Microsoft antes de conectar o Discord.");
+      const sessao = JSON.parse(bruto) as SessaoSocialLocal;
+      const resposta = await invoke<{ perfil: NonNullable<SessaoSocialLocal["perfil"]> }>("login_discord_social", {
+        apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+        clientId: CONFIGURACAO_SOCIAL.discordClientId,
+        redirectUri: CONFIGURACAO_SOCIAL.discordRedirectUri,
+        scope: CONFIGURACAO_SOCIAL.discordScopes,
+        accessToken: sessao.accessToken,
+      });
+      const atualizada = { ...sessao, perfil: resposta.perfil };
+      await invoke("salvar_sessao_social_local", { sessao: JSON.stringify(atualizada) });
+      window.dispatchEvent(new CustomEvent(EVENTO_SESSAO_SOCIAL_ATUALIZADA, { detail: atualizada }));
+      setDiscordConectado(String(resposta.perfil.discordUsername ?? "Discord conectado"));
+    } catch (erroDiscord) {
+      setErro(String(erroDiscord));
+    } finally {
+      setConectandoDiscord(false);
+    }
+  };
+
+  const esquecerContas = async () => {
+    if (!confirm("Remover todas as contas e sessões deste dispositivo? Instâncias e mundos serão preservados.")) {
+      return;
+    }
+
+    setLimpandoContas(true);
+    try {
+      const sessaoBruta = await invoke<string | null>("carregar_sessao_social_local");
+      if (sessaoBruta) {
+        const sessao = JSON.parse(sessaoBruta) as { accessToken?: string };
+        if (sessao.accessToken) {
+          await invoke("logout_launcher_social", {
+            apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+            accessToken: sessao.accessToken,
+          }).catch(() => undefined);
+        }
+      }
+      await invoke("esquecer_contas_e_reiniciar_onboarding");
+      for (const chave of Object.keys(localStorage)) {
+        if (chave.startsWith("dome:social:") || chave.startsWith("dome:onboarding:")) {
+          localStorage.removeItem(chave);
+        }
+      }
+      window.location.reload();
+    } catch (erroLimpeza) {
+      setErro(String(erroLimpeza));
+      setLimpandoContas(false);
+    }
+  };
   const [instancias, setInstancias] = useState<InstanciaSincronizavel[]>([]);
   const [sincronizando, setSincronizando] = useState(false);
   const [mensagemSync, setMensagemSync] = useState<string | null>(null);
@@ -794,6 +874,58 @@ export default function Settings() {
             <RefreshCw size={14} className={sincronizando ? "animate-spin" : ""} />
             {sincronizando ? "Aplicando..." : "Aplicar em todas agora"}
           </button>
+        </Secao>
+
+        <Secao
+          icone={<Shield size={18} className="text-emerald-400" />}
+          titulo="Conta e onboarding"
+          descricao="Sessões, integrações e ferramentas de teste"
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4 border border-white/10 bg-white/[0.02] p-4">
+              <div>
+                <p className="text-sm font-bold text-white">Discord opcional</p>
+                <p className="mt-1 text-xs text-white/35">
+                  {discordConectado ? `Conectado como ${discordConectado}` : "Conecte para futuras integrações; o social funciona sem ele."}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={conectandoDiscord || Boolean(discordConectado)}
+                onClick={() => void conectarDiscord()}
+                className="shrink-0 border border-indigo-300/25 bg-indigo-400/10 px-3 py-2 text-xs font-bold text-indigo-100 disabled:opacity-40"
+              >
+                {conectandoDiscord ? "Conectando..." : discordConectado ? "Conectado" : "Conectar Discord"}
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 border border-white/10 bg-white/[0.02] p-4">
+              <div>
+                <p className="text-sm font-bold text-white">Reexibir onboarding</p>
+                <p className="mt-1 text-xs text-white/35">Testa as telas sem remover suas contas ou instâncias.</p>
+              </div>
+              <button
+                type="button"
+                onClick={reiniciarOnboarding}
+                className="shrink-0 border border-white/15 bg-white/[0.04] px-3 py-2 text-xs font-bold text-white/80 hover:border-white/30"
+              >
+                Reexibir
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 border border-red-400/20 bg-red-500/[0.04] p-4">
+              <div>
+                <p className="text-sm font-bold text-red-200">Esquecer contas deste dispositivo</p>
+                <p className="mt-1 text-xs text-white/35">Remove Microsoft e sessão Dome, preservando mundos e instâncias.</p>
+              </div>
+              <button
+                type="button"
+                disabled={limpandoContas}
+                onClick={() => void esquecerContas()}
+                className="shrink-0 border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-200 disabled:opacity-40"
+              >
+                {limpandoContas ? "Limpando..." : "Esquecer tudo"}
+              </button>
+            </div>
+          </div>
         </Secao>
       </div>
     </div>

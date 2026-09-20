@@ -180,6 +180,38 @@ pub struct ContaMinecraftSocialLauncherApi {
     pub ultimo_uso_em: Option<String>,
 }
 
+#[tauri::command]
+pub async fn exchange_launcher_minecraft_session(
+    api_base_url: String,
+    minecraft_access_token: String,
+) -> Result<serde_json::Value, String> {
+    let api_base = normalizar_api_base_url(&api_base_url)?;
+    let token = minecraft_access_token.trim();
+    if token.is_empty() {
+        return Err("Token Minecraft ausente.".to_string());
+    }
+
+    let resposta = criar_cliente_http_launcher()?
+        .post(format!("{api_base}/api/launcher/auth/minecraft/exchange"))
+        .json(&serde_json::json!({ "minecraftAccessToken": token }))
+        .send()
+        .await
+        .map_err(|e| format!("Erro de rede ao iniciar sessão Dome: {e}"))?;
+
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Não foi possível iniciar a sessão Dome pelo Minecraft.",
+        )
+        .await);
+    }
+
+    resposta
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Resposta inválida ao iniciar sessão Dome: {e}"))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EmblemaSocialLauncherApi {
@@ -613,6 +645,24 @@ async fn enviar_midia_perfil(
         .ok_or("A API não retornou a URL da mídia.".into())
 }
 
+async fn publicar_icones_instancias(
+    cliente: &reqwest::Client,
+    api_base: &str,
+    token: &str,
+    instancias: &mut [InstanciaPublicaPerfilLauncherApi],
+) -> Result<(), String> {
+    for instancia in instancias {
+        let Some(icone) = instancia.icone_url.as_deref() else {
+            continue;
+        };
+        if !icone.starts_with("data:") {
+            continue;
+        }
+        instancia.icone_url = Some(enviar_midia_perfil(cliente, api_base, token, icone).await?);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_launcher_profile_presentation(
     api_base_url: String,
@@ -622,6 +672,10 @@ pub async fn save_launcher_profile_presentation(
     let api_base = normalizar_api_base_url(&api_base_url)?;
     let token = normalizar_token_social(&access_token)?;
     let cliente = criar_cliente_http_launcher()?;
+    let mut instancias_recentes = apresentacao.instancias_recentes;
+    let mut instancias_favoritas = apresentacao.instancias_favoritas;
+    publicar_icones_instancias(&cliente, &api_base, &token, &mut instancias_recentes).await?;
+    publicar_icones_instancias(&cliente, &api_base, &token, &mut instancias_favoritas).await?;
     let banner_perfil_url = match apresentacao
         .banner_dados_url
         .filter(|valor| !valor.is_empty())
@@ -648,8 +702,8 @@ pub async fn save_launcher_profile_presentation(
             "capturasFavoritas": capturas_favoritas,
             "emblemasExibidosIds": apresentacao.emblemas_exibidos_ids,
             "bio": apresentacao.bio,
-            "instanciasRecentes": apresentacao.instancias_recentes,
-            "instanciasFavoritas": apresentacao.instancias_favoritas
+            "instanciasRecentes": instancias_recentes,
+            "instanciasFavoritas": instancias_favoritas
         }))
         .send()
         .await
@@ -759,12 +813,18 @@ pub async fn delete_launcher_profile_comment(
 pub async fn save_launcher_social_profile(
     api_base_url: String,
     access_token: String,
-    payload: PayloadSalvarPerfilSocialLauncherApi,
+    mut payload: PayloadSalvarPerfilSocialLauncherApi,
 ) -> Result<RespostaSalvarPerfilSocialLauncherApi, String> {
     let api_base = normalizar_api_base_url(&api_base_url)?;
     let token = normalizar_token_social(&access_token)?;
     let endpoint = format!("{}/api/launcher/social/profile/me", api_base);
     let client = criar_cliente_http_launcher()?;
+    if let Some(instancias) = payload.instancias_recentes.as_mut() {
+        publicar_icones_instancias(&client, &api_base, &token, instancias).await?;
+    }
+    if let Some(instancias) = payload.instancias_favoritas.as_mut() {
+        publicar_icones_instancias(&client, &api_base, &token, instancias).await?;
+    }
 
     let resposta = client
         .patch(&endpoint)
@@ -1415,7 +1475,7 @@ async fn receber_pacote_social(
     }
 
     use sha2::{Digest, Sha256};
-    let recibos = state.caminho_instancias()?.join(".social-recebimentos");
+    let recibos = crate::launcher::pasta_recibos_sociais();
     std::fs::create_dir_all(&recibos).map_err(|e| e.to_string())?;
     let recibo = recibos.join(format!(
         "{:x}.json",
@@ -1549,12 +1609,11 @@ async fn receber_pacote_social(
     if cancelamento.is_cancelled() {
         return Err("Transferência cancelada.".into());
     }
-    let raiz = state.caminho_instancias()?;
-    let pasta_preparacao = raiz
-        .join(".social-preparacao")
-        .join(uuid::Uuid::new_v4().to_string());
+    let raiz_preparacao = crate::launcher::pasta_preparacao_social();
+    std::fs::create_dir_all(&raiz_preparacao).map_err(|e| e.to_string())?;
+    let pasta_preparacao = raiz_preparacao.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;
-    let _preparacao = pacotes_sociais::PastaTemporaria::nova(&raiz, &pasta_preparacao)?;
+    let _preparacao = pacotes_sociais::PastaTemporaria::nova(&raiz_preparacao, &pasta_preparacao)?;
     let estado_preparacao = LauncherState {
         account: state.account.clone(),
         accounts: state.accounts.clone(),
@@ -1578,7 +1637,7 @@ async fn receber_pacote_social(
     pacotes_sociais::restaurar_referencias(
         &caminho_arquivo,
         &instancia.path,
-        &raiz.join(".social-cache"),
+        &crate::launcher::pasta_cache_social(),
     )
     .await?;
     if let Some(v) = &vinculo {
