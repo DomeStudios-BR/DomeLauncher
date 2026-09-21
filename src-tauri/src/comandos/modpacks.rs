@@ -1,6 +1,7 @@
 use crate::launcher::LauncherState;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
@@ -31,6 +32,19 @@ const PASTAS_CONTEUDO_MODPACK: [&str; 7] = [
     "kubejs",
     "scripts",
 ];
+const LIMITE_DOWNLOADS_MODPACK: usize = 32;
+
+fn montar_url_cdn_curseforge(file_id: u64, nome_arquivo: &str) -> String {
+    let id = file_id.to_string();
+    let separacao = id.len().saturating_sub(3);
+    let (pasta, arquivo) = id.split_at(separacao);
+    format!(
+        "https://edge.forgecdn.net/files/{}/{}/{}",
+        pasta,
+        arquivo,
+        urlencoding::encode(nome_arquivo)
+    )
+}
 
 fn listar_arquivos_assinatura(raiz: &Path, atual: &Path, arquivos: &mut Vec<PathBuf>) {
     let Ok(entradas) = std::fs::read_dir(atual) else {
@@ -278,113 +292,74 @@ pub async fn install_modpack_files(
     }
 
     if !arquivos_curseforge.is_empty() {
-        for (mod_id, file_id) in arquivos_curseforge {
-            let detalhes_url = format!(
-                "{}/mods/{}/files/{}",
-                crate::CURSEFORGE_API_BASE,
-                mod_id,
-                file_id
-            );
-            let request = crate::anexar_headers_curseforge(client.get(&detalhes_url))?;
-            let resposta = request.send().await.map_err(|e| {
-                format!(
-                    "Erro ao buscar arquivo CurseForge {}:{}: {}",
-                    mod_id, file_id, e
-                )
-            })?;
+        let ids_arquivos: Vec<u64> = arquivos_curseforge
+            .iter()
+            .map(|(_, file_id)| *file_id)
+            .collect();
+        let detalhes_url = format!("{}/mods/files", crate::CURSEFORGE_API_BASE);
+        let request = crate::anexar_headers_curseforge(
+            client
+                .post(&detalhes_url)
+                .json(&serde_json::json!({ "fileIds": ids_arquivos })),
+        )?;
+        let resposta = request
+            .send()
+            .await
+            .map_err(|e| format!("Erro ao buscar arquivos do modpack no CurseForge: {}", e))?;
 
-            if !resposta.status().is_success() {
+        if !resposta.status().is_success() {
+            return Err(format!(
+                "CurseForge retornou HTTP {} ao buscar os arquivos do modpack.",
+                resposta.status()
+            ));
+        }
+
+        let payload: serde_json::Value = resposta
+            .json()
+            .await
+            .map_err(|e| format!("Erro ao interpretar arquivos do CurseForge: {}", e))?;
+        let detalhes_por_id: HashMap<u64, serde_json::Value> = payload["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|detalhe| detalhe["id"].as_u64().map(|id| (id, detalhe.clone())))
+            .collect();
+
+        for (mod_id, file_id) in arquivos_curseforge {
+            let Some(data) = detalhes_por_id.get(&file_id) else {
                 if erros_curseforge.len() < 8 {
                     erros_curseforge.push(format!(
-                        "CurseForge {}:{} retornou HTTP {}",
-                        mod_id,
-                        file_id,
-                        resposta.status()
+                        "CurseForge não retornou o arquivo {}:{}",
+                        mod_id, file_id
                     ));
                 }
-                println!(
-                    "[install_modpack_files] CurseForge {}:{} retornou HTTP {}",
-                    mod_id,
-                    file_id,
-                    resposta.status()
-                );
                 continue;
-            }
-
-            let payload: serde_json::Value = resposta
-                .json()
-                .await
-                .map_err(|e| format!("Erro ao parsear detalhe de arquivo CurseForge: {}", e))?;
-            let data = &payload["data"];
+            };
             let mut url_download = data["downloadUrl"]
                 .as_str()
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            if url_download.is_empty() {
-                let rota_download_url = format!(
-                    "{}/mods/{}/files/{}/download-url",
-                    crate::CURSEFORGE_API_BASE,
-                    mod_id,
-                    file_id
-                );
-                let request_download_url =
-                    crate::anexar_headers_curseforge(client.get(&rota_download_url))?;
-                match request_download_url.send().await {
-                    Ok(resposta_download_url) => {
-                        if resposta_download_url.status().is_success() {
-                            match resposta_download_url.json::<serde_json::Value>().await {
-                                Ok(payload_download_url) => {
-                                    url_download = payload_download_url["data"]
-                                        .as_str()
-                                        .unwrap_or("")
-                                        .trim()
-                                        .to_string();
-                                }
-                                Err(e) => {
-                                    if erros_curseforge.len() < 8 {
-                                        erros_curseforge.push(format!(
-                                            "Falha ao parsear download-url de {}:{} ({})",
-                                            mod_id, file_id, e
-                                        ));
-                                    }
-                                }
-                            }
-                        } else if erros_curseforge.len() < 8 {
-                            erros_curseforge.push(format!(
-                                "download-url de {}:{} retornou HTTP {}",
-                                mod_id,
-                                file_id,
-                                resposta_download_url.status()
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        if erros_curseforge.len() < 8 {
-                            erros_curseforge.push(format!(
-                                "Falha ao consultar download-url de {}:{} ({})",
-                                mod_id, file_id, e
-                            ));
-                        }
-                    }
-                }
-            }
-
-            if url_download.is_empty() {
-                if erros_curseforge.len() < 8 {
-                    erros_curseforge.push(format!(
-                        "Arquivo CurseForge {}:{} sem URL de download",
-                        mod_id, file_id
-                    ));
-                }
-                continue;
-            }
 
             let file_name = data["fileName"]
                 .as_str()
                 .filter(|nome| !nome.trim().is_empty())
                 .unwrap_or("mod.jar")
                 .to_string();
+
+            if url_download.is_empty() && file_name != "mod.jar" {
+                url_download = montar_url_cdn_curseforge(file_id, &file_name);
+            }
+
+            if url_download.is_empty() {
+                if erros_curseforge.len() < 8 {
+                    erros_curseforge.push(format!(
+                        "Arquivo CurseForge {}:{} sem nome ou URL de download",
+                        mod_id, file_id
+                    ));
+                }
+                continue;
+            }
 
             arquivos_para_baixar.push((
                 url_download,
@@ -396,7 +371,7 @@ pub async fn install_modpack_files(
 
     if detectou_curseforge
         && total_arquivos_manifesto_curseforge > 0
-        && arquivos_para_baixar.is_empty()
+        && arquivos_para_baixar.len() != total_arquivos_manifesto_curseforge
     {
         let detalhe = if erros_curseforge.is_empty() {
             "Nenhuma URL válida foi retornada pelo CurseForge.".to_string()
@@ -404,8 +379,10 @@ pub async fn install_modpack_files(
             format!("Detalhes: {}", erros_curseforge.join(" | "))
         };
         return Err(format!(
-            "Não foi possível obter arquivos do modpack no CurseForge. {}",
-            detalhe
+            "Não foi possível obter todos os arquivos do modpack no CurseForge ({}/{} resolvidos). {}",
+            arquivos_para_baixar.len(),
+            total_arquivos_manifesto_curseforge,
+            detalhe,
         ));
     }
 
@@ -541,9 +518,9 @@ pub async fn install_modpack_files(
         })
         .collect();
 
-    // Executar downloads em paralelo (10 simultâneos)
+    // Executar downloads em paralelo
     let resultados_download = stream::iter(download_tasks)
-        .buffer_unordered(10)
+        .buffer_unordered(LIMITE_DOWNLOADS_MODPACK)
         .collect::<Vec<_>>()
         .await;
     let total_sucesso = resultados_download.iter().filter(|r| r.is_ok()).count();
@@ -553,7 +530,7 @@ pub async fn install_modpack_files(
         .take(8)
         .collect();
 
-    if !arquivos_para_baixar.is_empty() && total_sucesso == 0 {
+    if total_sucesso != arquivos_para_baixar.len() {
         let detalhe_download = if erros_download.is_empty() {
             "sem detalhes do download".to_string()
         } else {
@@ -565,8 +542,11 @@ pub async fn install_modpack_files(
             format!(" | CurseForge: {}", erros_curseforge.join(" | "))
         };
         return Err(format!(
-            "Nenhum arquivo do modpack pôde ser baixado. {}{}",
-            detalhe_download, detalhe_curseforge
+            "O modpack ficou incompleto: {}/{} arquivos foram baixados. {}{}",
+            total_sucesso,
+            arquivos_para_baixar.len(),
+            detalhe_download,
+            detalhe_curseforge,
         ));
     }
 
@@ -633,4 +613,17 @@ pub async fn check_modpack_updates(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod testes {
+    use super::montar_url_cdn_curseforge;
+
+    #[test]
+    fn monta_url_cdn_para_arquivo_sem_download_publico() {
+        assert_eq!(
+            montar_url_cdn_curseforge(7_906_177, "[NeoForge] Mekanism CTM-Fusion 1.1.zip"),
+            "https://edge.forgecdn.net/files/7906/177/%5BNeoForge%5D%20Mekanism%20CTM-Fusion%201.1.zip"
+        );
+    }
 }
