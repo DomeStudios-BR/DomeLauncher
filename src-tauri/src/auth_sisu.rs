@@ -244,6 +244,155 @@ struct SisuToken {
     token: String,
 }
 
+#[derive(Deserialize)]
+struct TokenMinecraft {
+    access_token: String,
+    expires_in: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct PerfilMinecraft {
+    id: String,
+    name: String,
+}
+
+fn mensagem_erro_minecraft(corpo: &str, padrao: &str) -> String {
+    let Ok(valor) = serde_json::from_str::<serde_json::Value>(corpo) else {
+        return padrao.to_string();
+    };
+
+    valor
+        .get("errorMessage")
+        .or_else(|| valor.get("message"))
+        .or_else(|| valor.get("error"))
+        .and_then(|mensagem| mensagem.as_str())
+        .filter(|mensagem| !mensagem.trim().is_empty())
+        .unwrap_or(padrao)
+        .to_string()
+}
+
+fn erro_perfil_minecraft(status: reqwest::StatusCode, corpo: &str) -> String {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return "Esta conta Microsoft não possui um perfil do Minecraft Java. Confirme a licença e crie o perfil no site oficial do Minecraft antes de entrar.".to_string();
+    }
+
+    let detalhe = mensagem_erro_minecraft(corpo, "resposta inválida do serviço");
+    format!(
+        "Não foi possível consultar o perfil do Minecraft (HTTP {}). {}",
+        status.as_u16(),
+        detalhe
+    )
+}
+
+async fn aguardar_nova_tentativa(tentativa: usize) {
+    let atraso = if tentativa == 0 { 500 } else { 1_500 };
+    tokio::time::sleep(tokio::time::Duration::from_millis(atraso)).await;
+}
+
+async fn obter_token_minecraft(
+    client: &Client,
+    token_identidade: &str,
+) -> Result<TokenMinecraft, String> {
+    for tentativa in 0..3 {
+        let resposta = client
+            .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+            .json(&json!({ "identityToken": token_identidade }))
+            .send()
+            .await;
+
+        let resposta = match resposta {
+            Ok(resposta) => resposta,
+            Err(erro) if tentativa < 2 && (erro.is_timeout() || erro.is_connect()) => {
+                aguardar_nova_tentativa(tentativa).await;
+                continue;
+            }
+            Err(erro) => {
+                return Err(format!(
+                    "Não foi possível conectar ao serviço do Minecraft: {}",
+                    erro
+                ))
+            }
+        };
+
+        let status = resposta.status();
+        let corpo = resposta
+            .text()
+            .await
+            .map_err(|erro| format!("Não foi possível ler a resposta do Minecraft: {}", erro))?;
+
+        if status.is_success() {
+            return serde_json::from_str::<TokenMinecraft>(&corpo).map_err(|_| {
+                "O serviço do Minecraft retornou uma resposta de login inválida.".to_string()
+            });
+        }
+
+        if tentativa < 2
+            && (status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+        {
+            aguardar_nova_tentativa(tentativa).await;
+            continue;
+        }
+
+        let detalhe = mensagem_erro_minecraft(&corpo, "autenticação recusada pelo serviço");
+        return Err(format!(
+            "Não foi possível autenticar no Minecraft (HTTP {}). {}",
+            status.as_u16(),
+            detalhe
+        ));
+    }
+
+    unreachable!("o laço sempre retorna na última tentativa")
+}
+
+async fn obter_perfil_minecraft(
+    client: &Client,
+    access_token: &str,
+) -> Result<PerfilMinecraft, String> {
+    for tentativa in 0..3 {
+        let resposta = client
+            .get("https://api.minecraftservices.com/minecraft/profile")
+            .bearer_auth(access_token)
+            .send()
+            .await;
+
+        let resposta = match resposta {
+            Ok(resposta) => resposta,
+            Err(erro) if tentativa < 2 && (erro.is_timeout() || erro.is_connect()) => {
+                aguardar_nova_tentativa(tentativa).await;
+                continue;
+            }
+            Err(erro) => {
+                return Err(format!(
+                    "Não foi possível conectar ao perfil do Minecraft: {}",
+                    erro
+                ))
+            }
+        };
+
+        let status = resposta.status();
+        let corpo = resposta
+            .text()
+            .await
+            .map_err(|erro| format!("Não foi possível ler o perfil do Minecraft: {}", erro))?;
+
+        if status.is_success() {
+            return serde_json::from_str::<PerfilMinecraft>(&corpo)
+                .map_err(|_| "O serviço do Minecraft retornou um perfil inválido.".to_string());
+        }
+
+        if tentativa < 2
+            && (status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+        {
+            aguardar_nova_tentativa(tentativa).await;
+            continue;
+        }
+
+        return Err(erro_perfil_minecraft(status, &corpo));
+    }
+
+    unreachable!("o laço sempre retorna na última tentativa")
+}
+
 // --- Unified Automated Command ---
 
 #[tauri::command]
@@ -463,41 +612,20 @@ pub async fn login_microsoft_sisu(
         .and_then(|s| s.as_str())
         .ok_or("Failed to get UHS")?;
 
-    // MC Login
-    let mc_login_res = client.post("https://api.minecraftservices.com/authentication/login_with_xbox")
-        .json(&json!({
-            "identityToken": format!("XBL3.0 x={};{}", uhs, authorize_res.value.authorization_token.token)
-        }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mc_access_token = mc_login_res["access_token"]
-        .as_str()
-        .ok_or("No MC Token")?
-        .to_string();
-
-    // Profile
-    let profile_res = client
-        .get("https://api.minecraftservices.com/minecraft/profile")
-        .header("Authorization", format!("Bearer {}", mc_access_token))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let uuid = profile_res["id"].as_str().ok_or("No UUID")?.to_string();
-    let name = profile_res["name"].as_str().ok_or("No Name")?.to_string();
+    let token_identidade = format!(
+        "XBL3.0 x={};{}",
+        uhs, authorize_res.value.authorization_token.token
+    );
+    let token_minecraft = obter_token_minecraft(&client, &token_identidade).await?;
+    let perfil = obter_perfil_minecraft(&client, &token_minecraft.access_token).await?;
+    let mc_access_token = token_minecraft.access_token;
+    let uuid = perfil.id;
+    let name = perfil.name;
 
     // Calcular expiração do token (padrão do Minecraft é 24 horas)
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() + 86400) // 24 horas
+        .map(|d| d.as_secs() + token_minecraft.expires_in.unwrap_or(86_400))
         .ok();
 
     let account = MinecraftAccount {
@@ -614,41 +742,15 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
         .and_then(|s| s.as_str())
         .ok_or("Falha ao obter UHS")?;
 
-    let mc_login_res = client
-        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
-        .json(&json!({
-            "identityToken": format!("XBL3.0 x={};{}", uhs, authorize_res.value.authorization_token.token)
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("Erro no login Minecraft: {}", e))?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Erro ao parsear login Minecraft: {}", e))?;
-
-    let mc_access_token = mc_login_res["access_token"]
-        .as_str()
-        .ok_or("Token do Minecraft ausente")?
-        .to_string();
-
-    let profile_res = client
-        .get("https://api.minecraftservices.com/minecraft/profile")
-        .header("Authorization", format!("Bearer {}", mc_access_token))
-        .send()
-        .await
-        .map_err(|e| format!("Erro ao buscar perfil Minecraft: {}", e))?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Erro ao parsear perfil Minecraft: {}", e))?;
-
-    let uuid = profile_res["id"]
-        .as_str()
-        .ok_or("UUID do perfil não encontrado")?
-        .to_string();
-    let name = profile_res["name"]
-        .as_str()
-        .ok_or("Nome do perfil não encontrado")?
-        .to_string();
+    let token_identidade = format!(
+        "XBL3.0 x={};{}",
+        uhs, authorize_res.value.authorization_token.token
+    );
+    let token_minecraft = obter_token_minecraft(&client, &token_identidade).await?;
+    let perfil = obter_perfil_minecraft(&client, &token_minecraft.access_token).await?;
+    let mc_access_token = token_minecraft.access_token;
+    let uuid = perfil.id;
+    let name = perfil.name;
 
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -675,4 +777,39 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
 
     println!("[Auth:SISU] Token renovado com sucesso.");
     Ok(conta_atualizada)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{erro_perfil_minecraft, mensagem_erro_minecraft};
+    use reqwest::StatusCode;
+
+    #[test]
+    fn extrai_mensagem_da_resposta_do_minecraft() {
+        let corpo = r#"{"error":"TooManyRequests","errorMessage":"Tente novamente mais tarde"}"#;
+
+        assert_eq!(
+            mensagem_erro_minecraft(corpo, "erro padrão"),
+            "Tente novamente mais tarde"
+        );
+    }
+
+    #[test]
+    fn explica_quando_a_conta_nao_possui_perfil_java() {
+        let mensagem = erro_perfil_minecraft(StatusCode::NOT_FOUND, "{}");
+
+        assert!(mensagem.contains("não possui um perfil do Minecraft Java"));
+        assert!(mensagem.contains("crie o perfil no site oficial"));
+    }
+
+    #[test]
+    fn preserva_status_em_falha_do_servico_de_perfil() {
+        let mensagem = erro_perfil_minecraft(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"errorMessage":"Serviço temporariamente indisponível"}"#,
+        );
+
+        assert!(mensagem.contains("HTTP 503"));
+        assert!(mensagem.contains("Serviço temporariamente indisponível"));
+    }
 }

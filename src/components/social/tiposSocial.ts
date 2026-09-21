@@ -63,6 +63,7 @@ export interface PerfilSocial {
     imagemUrl: string;
     concedidoEm: string;
   }>;
+  avatarPerfilUrl?: string | null;
   bannerPerfilUrl?: string | null;
   capturasFavoritas?: Array<{
     id: string;

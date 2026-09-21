@@ -2159,6 +2159,10 @@
 .perfil-comunidade .acoes-editar-banner { position: absolute; right: 24px; top: 24px; z-index: 5; display: flex; gap: 8px; }
 .perfil-comunidade .acoes-editar-banner .editar-banner { position: static; }
 .perfil-comunidade .acoes-editar-banner button { border: 1px solid #ffffff22; background: #111d; color: #ddd; padding: 8px 12px; }
+.perfil-comunidade .acoes-editar-avatar { position: absolute; right: -12px; bottom: -12px; z-index: 5; display: flex; gap: 8px; align-items: center; }
+.perfil-comunidade .acoes-editar-avatar .editar-avatar { position: static; white-space: nowrap; }
+.perfil-comunidade .acoes-editar-avatar button { border: 1px solid #ffffff22; background: #111e; color: #ddd; padding: 8px 12px; white-space: nowrap; }
+.perfil-comunidade .erro-formulario { margin: 8px 0 0; color: #ff8c8c; font-size: 12px; }
 .perfil-comunidade .amigo-perfil-item {
   display: flex;
   align-items: center;
