@@ -76,10 +76,15 @@ pub(super) fn aplicar_sincronizacao_nova_instancia(
     if !origem.starts_with(&raiz) {
         return Err("A instância de origem da sincronização é inválida.".to_string());
     }
+    let destino = std::fs::canonicalize(destino)
+        .map_err(|e| format!("Erro ao validar a instância de destino: {}", e))?;
+    if !destino.starts_with(&raiz) {
+        return Err("A instância de destino da sincronização é inválida.".to_string());
+    }
     if origem == destino || !origem.join("instance.json").is_file() {
         return Ok(());
     }
-    aplicar_sincronizacao_em_destino(&origem, destino, &sync)
+    aplicar_sincronizacao_em_destino(&origem, &destino, &sync)
 }
 
 pub(super) fn aplicar_sincronizacao_antes_de_jogar(
