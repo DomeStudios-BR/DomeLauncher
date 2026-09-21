@@ -89,6 +89,7 @@ interface PerfilSocial {
   ultimoSeenEm?: string | null;
   emblemas?: EmblemaSocial[];
   emblemasExibidos?: EmblemaSocial[];
+  avatarPerfilUrl?: string | null;
   criadoEm: string;
   atualizadoEm: string;
 }
@@ -489,6 +490,7 @@ export default function SocialSidebar({
   const [textoChat, setTextoChat] = useState('');
   const [carregandoChat, setCarregandoChat] = useState(false);
   const [enviandoChat, setEnviandoChat] = useState(false);
+  const enviandoChatRef = useRef(false);
   const [erroChat, setErroChat] = useState<string | null>(null);
   const [atividadeLocal, setAtividadeLocal] = useState<AtividadeLocalLauncher>({
     emJogo: false,
@@ -1948,9 +1950,14 @@ export default function SocialSidebar({
   });
 
   const enviarMensagemChat = async () => {
+    if (enviandoChatRef.current) return;
+    enviandoChatRef.current = true;
     const token = await obterTokenValido();
     const friendProfileId = amigoSelecionadoPerfilIdRef.current;
-    if (!token || !friendProfileId || !textoChat.trim()) return;
+    if (!token || !friendProfileId || !textoChat.trim()) {
+      enviandoChatRef.current = false;
+      return;
+    }
 
     setEnviandoChat(true);
     setErroChat(null);
@@ -1969,6 +1976,7 @@ export default function SocialSidebar({
     } catch (erro) {
       setErroChat(mensagemErro(erro, 'Nao foi possivel enviar mensagem.'));
     } finally {
+      enviandoChatRef.current = false;
       setEnviandoChat(false);
     }
   };
@@ -1976,6 +1984,7 @@ export default function SocialSidebar({
   const aoPressionarEnterMensagem = (evento: KeyboardEvent<HTMLInputElement>) => {
     if (evento.key !== 'Enter' || evento.shiftKey) return;
     evento.preventDefault();
+    if (evento.repeat) return;
     enviarMensagemChat();
   };
 
@@ -1989,11 +1998,12 @@ export default function SocialSidebar({
 
   if (recuado) {
     const statusPerfil: StatusPresenca = aparecerOffline ? 'offline' : statusManual;
-    const urlAvatarPerfil = uuidAvatarMinecraft
+    const urlAvatarPerfil = perfil?.avatarPerfilUrl
+      || (uuidAvatarMinecraft
       ? `https://mc-heads.net/head/${uuidAvatarMinecraft}/64`
       : perfil?.discordAvatar
         ? `https://cdn.discordapp.com/avatars/${perfil.discordId}/${perfil.discordAvatar}.png?size=64`
-        : null;
+        : null);
 
     const renderizarAvatarAmigo = (amigo: AmigoSocial) => (
       <button

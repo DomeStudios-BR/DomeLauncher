@@ -118,7 +118,13 @@ export function PerfilSocialPainel({
       {sessaoAtiva && perfil && (
         <div className="space-y-3">
           <div className="group flex items-center gap-3">
-            {uuidAvatarMinecraft ? (
+            {perfil.avatarPerfilUrl ? (
+              <img
+                src={perfil.avatarPerfilUrl}
+                alt={nomeExibicaoAtual}
+                className="h-12 w-12 border border-white/15 bg-[#0d1013] object-cover shadow-[5px_5px_0_rgba(0,0,0,0.2)]"
+              />
+            ) : uuidAvatarMinecraft ? (
               <img
                 src={`https://mc-heads.net/head/${uuidAvatarMinecraft}/64`}
                 alt={nomeExibicaoAtual}

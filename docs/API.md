@@ -7,6 +7,10 @@ Minecraft por uma sessão Dome em `POST /api/launcher/auth/minecraft/exchange`. 
 no serviço oficial, localiza o perfil pelo UUID ou cria um novo perfil, sem exigir Discord. A sessão social continua
 protegida no arquivo nativo `social-session.dat`.
 
+As etapas de token e perfil do Minecraft validam o status HTTP e repetem até três vezes somente falhas transitórias
+de conexão, limite de requisições e erros 5xx. Uma resposta 404 do perfil indica que a conta Microsoft ainda não tem
+um perfil Minecraft Java; ela não é tratada como falha genérica nem cria uma identidade Dome incompleta.
+
 Contas Minecraft adicionais são vinculadas ao perfil Dome já autenticado por
 `POST /api/launcher/social/minecraft/link`. Trocar a conta ativa usada para jogar não altera automaticamente
 `contaMinecraftPrincipalUuid`, que representa apenas o avatar público escolhido para o perfil.
@@ -56,7 +60,7 @@ Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, es
 A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET /api/launcher/friends`.
 Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
-PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O banner,
+PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O avatar, o banner,
 as capturas favoritas, a bio, os metadados públicos das instâncias recentes e favoritas e os emblemas exibidos
 são salvos na DomeAPI. Perfis visitados também recebem a lista resumida de amizades aceitas do jogador. Caminhos
 locais de instâncias nunca são enviados. Se a cota do armazenamento local acabar,

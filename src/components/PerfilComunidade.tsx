@@ -205,8 +205,12 @@ export default function PerfilComunidade({
   const [erroCarregamentoPerfil, setErroCarregamentoPerfil] = useState(false);
   const [salvandoPerfil, setSalvandoPerfil] = useState(false);
   const [erroSalvarPerfil, setErroSalvarPerfil] = useState<string | null>(null);
+  const [erroComentario, setErroComentario] = useState<string | null>(null);
+  const enviandoComentarioRef = useRef(false);
+  const perfilIdAtualRef = useRef(perfilId);
+  perfilIdAtualRef.current = perfilId;
   const [avatarPersonalizado, setAvatarPersonalizado] = useState<string | null>(
-    personalizacaoInicial.avatarPersonalizado ?? null,
+    null,
   );
   const [bannerPersonalizado, setBannerPersonalizado] = useState<string | null>(
     personalizacaoInicial.bannerPersonalizado ?? null,
@@ -308,7 +312,9 @@ export default function PerfilComunidade({
         const perfilCompleto = resultadoPerfil.status === "fulfilled" ? resultadoPerfil.value : sessao.perfil;
         const comentariosAtualizados = resultadoComentarios.status === "fulfilled"
           ? resultadoComentarios.value
-          : cacheInicial?.comentarios ?? [];
+          : perfilId
+            ? []
+            : cacheInicial?.comentarios ?? [];
         setPerfil(perfilCompleto);
         const amigosDoPerfil = perfilId ? (perfilCompleto.amigos ?? []) : [];
         if (resultadoAmigos?.status === "fulfilled" && resultadoAmigos.value) {
@@ -322,6 +328,7 @@ export default function PerfilComunidade({
         }
         setComentarios(comentariosAtualizados);
         if (!perfilId) salvarCachePerfil(perfilCompleto, comentariosAtualizados);
+        setAvatarPersonalizado(perfilCompleto.avatarPerfilUrl ?? null);
         setBannerPersonalizado(perfilCompleto.bannerPerfilUrl ?? null);
         setBio(
           sanitizarBio(
@@ -515,7 +522,7 @@ export default function PerfilComunidade({
     "Seu perfil";
   const handlePerfil = perfil?.handle || "";
   const uuidAvatar = perfil?.contaMinecraftPrincipalUuid || minecraftUuid;
-  const urlAvatar = (ehPerfilProprio ? avatarPersonalizado : null) || (uuidAvatar
+  const urlAvatar = (ehPerfilProprio ? avatarPersonalizado : perfil?.avatarPerfilUrl) || (uuidAvatar
     ? `https://mc-heads.net/head/${uuidAvatar}/128`
     : null);
   const perfilAutenticado = sessaoSocial?.perfil;
@@ -537,44 +544,63 @@ export default function PerfilComunidade({
   };
   const publicarComentario = async (evento: FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
-    const dados = new FormData(evento.currentTarget);
+    if (enviandoComentarioRef.current) return;
+    const formulario = evento.currentTarget;
+    const dados = new FormData(formulario);
     const texto = String(dados.get("comentario") ?? "").trim();
     if (!texto || !sessaoSocial) return;
-    const comentarioRecebido = await invoke<ComentarioPerfil>("post_launcher_profile_comment", {
-      apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
-      accessToken: sessaoSocial.accessToken,
-      conteudo: texto,
-      perfilId,
-    });
-    const comentario = comentarioRecebido.autorPerfilId === perfilAutenticado?.perfilId
-      ? {
-          ...comentarioRecebido,
-          autorNome: perfilAutenticado.nomeSocial
-            || perfilAutenticado.discordGlobalName
-            || perfilAutenticado.discordUsername
-            || "Jogador",
-          autorAvatarUrl: comentarioRecebido.autorAvatarUrl || urlAvatarAutor,
-        }
-      : comentarioRecebido;
-    setComentarios((atuais) => {
-      const atualizados = [comentario, ...atuais];
-      if (perfil) salvarCachePerfil(perfil, atualizados);
-      return atualizados;
-    });
-    evento.currentTarget.reset();
+    const destinoPerfilId = perfilId;
+    const destinoEhPerfilProprio = ehPerfilProprio;
+    enviandoComentarioRef.current = true;
+    setErroComentario(null);
+    try {
+      const comentarioRecebido = await invoke<ComentarioPerfil>("post_launcher_profile_comment", {
+        apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+        accessToken: sessaoSocial.accessToken,
+        conteudo: texto,
+        perfilId: destinoPerfilId,
+      });
+      if (perfilIdAtualRef.current !== destinoPerfilId) return;
+      const comentario = comentarioRecebido.autorPerfilId === perfilAutenticado?.perfilId
+        ? {
+            ...comentarioRecebido,
+            autorNome: perfilAutenticado.nomeSocial
+              || perfilAutenticado.discordGlobalName
+              || perfilAutenticado.discordUsername
+              || "Jogador",
+            autorAvatarUrl: comentarioRecebido.autorAvatarUrl || urlAvatarAutor,
+          }
+        : comentarioRecebido;
+      setComentarios((atuais) => {
+        const atualizados = [comentario, ...atuais];
+        if (destinoEhPerfilProprio && perfil) salvarCachePerfil(perfil, atualizados);
+        return atualizados;
+      });
+      formulario.reset();
+    } catch (erro) {
+      setErroComentario(erro instanceof Error ? erro.message : String(erro));
+    } finally {
+      enviandoComentarioRef.current = false;
+    }
   };
   const excluirComentario = async (comentarioId: string) => {
     if (!sessaoSocial) return;
-    await invoke("delete_launcher_profile_comment", {
-      apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
-      accessToken: sessaoSocial.accessToken,
-      comentarioId,
-    });
-    setComentarios((atuais) => {
-      const atualizados = atuais.filter((comentario) => comentario.id !== comentarioId);
-      if (perfil) salvarCachePerfil(perfil, atualizados);
-      return atualizados;
-    });
+    setErroComentario(null);
+    try {
+      await invoke("delete_launcher_profile_comment", {
+        apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+        accessToken: sessaoSocial.accessToken,
+        comentarioId,
+        perfilId,
+      });
+      setComentarios((atuais) => {
+        const atualizados = atuais.filter((comentario) => comentario.id !== comentarioId);
+        if (ehPerfilProprio && perfil) salvarCachePerfil(perfil, atualizados);
+        return atualizados;
+      });
+    } catch (erro) {
+      setErroComentario(erro instanceof Error ? erro.message : String(erro));
+    }
   };
   const excluirAnalise = async (analiseId: string) => {
     if (!sessaoSocial || !confirm("Excluir esta análise?")) return;
@@ -786,6 +812,7 @@ export default function PerfilComunidade({
         apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
         accessToken: sessaoAtual.accessToken,
         apresentacao: {
+          avatarDadosUrl: avatarPersonalizado,
           bannerDadosUrl: bannerPersonalizado,
           capturas: capturasSelecionadas.map((captura) => ({ ...captura, id: identificarCaptura(captura) })),
           emblemasExibidosIds,
@@ -811,6 +838,7 @@ export default function PerfilComunidade({
         },
       });
       setPerfil(perfilAtualizado);
+      setAvatarPersonalizado(perfilAtualizado.avatarPerfilUrl ?? null);
       setBannerPersonalizado(perfilAtualizado.bannerPerfilUrl ?? null);
       setCapturasFavoritas(perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? []);
       setInstanciasFavoritas(perfilAtualizado.instanciasFavoritas?.map((instancia) => instancia.id) ?? []);
@@ -820,7 +848,7 @@ export default function PerfilComunidade({
       );
       salvarPersonalizacaoLocal({
         bio,
-        avatarPersonalizado,
+        avatarPersonalizado: perfilAtualizado.avatarPerfilUrl ?? null,
         bannerPersonalizado: perfilAtualizado.bannerPerfilUrl ?? null,
         capturasFavoritas: perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? [],
         instanciasFavoritas,
@@ -838,7 +866,7 @@ export default function PerfilComunidade({
   const cancelarEdicao = () => {
     const salva = carregarPersonalizacao();
     setBio(sanitizarBio(salva.bio ?? perfil?.bio));
-    setAvatarPersonalizado(salva.avatarPersonalizado ?? null);
+    setAvatarPersonalizado(perfil?.avatarPerfilUrl ?? null);
     setBannerPersonalizado(perfil?.bannerPerfilUrl ?? null);
     setCapturasFavoritas(perfil?.capturasFavoritas?.map((captura) => captura.id) ?? []);
     setEmblemasExibidosIds((perfil?.emblemasExibidos ?? perfil?.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
@@ -997,14 +1025,7 @@ export default function PerfilComunidade({
                   className={`avatar-moldura preset-rubi status-${statusPresenca}`}
                   id="avatarMoldura"
                 >
-                  {avatarPersonalizado ? (
-                    <img
-                      id="avatarCustomizado"
-                      src={avatarPersonalizado}
-                      alt={`Avatar de ${nomePerfil}`}
-                      style={{ display: "block" }}
-                    />
-                  ) : urlAvatar ? (
+                  {urlAvatar ? (
                     <img
                       id="avatarCustomizado"
                       src={urlAvatar}
@@ -1103,9 +1124,14 @@ export default function PerfilComunidade({
                     title={rotuloStatusPresenca(statusPresenca)}
                   />
                   {editando && (
-                    <label className="editar-imagem editar-avatar" htmlFor="arquivoAvatar">
-                      Trocar
-                    </label>
+                    <div className="acoes-editar-avatar">
+                      <label className="editar-imagem editar-avatar" htmlFor="arquivoAvatar">Trocar</label>
+                      {avatarPersonalizado && (
+                        <button type="button" onClick={() => setAvatarPersonalizado(null)}>
+                          Usar cabeça do Minecraft
+                        </button>
+                      )}
+                    </div>
                   )}
                   <input
                     id="arquivoAvatar"
@@ -1698,11 +1724,15 @@ export default function PerfilComunidade({
                       name="comentario"
                       maxLength={180}
                       placeholder={`Escreva algo no perfil de ${nomePerfil}...`}
+                      onKeyDown={(evento) => {
+                        if (evento.key === "Enter" && evento.repeat) evento.preventDefault();
+                      }}
                     />
                     <button className="botao primario" type="submit">
                       Publicar
                     </button>
                   </form>
+                  {erroComentario && <p className="erro-formulario">{erroComentario}</p>}
                   <div className="lista-comentarios" id="listaComentarios">
                     {comentarios.map((comentario) => {
                       const comentarioDoUsuario = comentario.autorPerfilId === perfilAutenticado?.perfilId;
@@ -1899,6 +1929,12 @@ export default function PerfilComunidade({
                   <span>＋</span>
                   <small>Enviar</small>
                 </label>
+                {avatarPersonalizado && (
+                  <button className="preset" type="button" onClick={() => setAvatarPersonalizado(null)}>
+                    <span>↶</span>
+                    <small>Cabeça Minecraft</small>
+                  </button>
+                )}
                 <input
                   id="arquivoAvatar"
                   type="file"

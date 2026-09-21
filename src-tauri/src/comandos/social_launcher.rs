@@ -268,6 +268,7 @@ pub struct PerfilSocialLauncherApi {
     pub emblemas: Vec<EmblemaSocialLauncherApi>,
     #[serde(default)]
     pub emblemas_exibidos: Vec<EmblemaSocialLauncherApi>,
+    pub avatar_perfil_url: Option<String>,
     pub banner_perfil_url: Option<String>,
     #[serde(default)]
     pub capturas_favoritas: Vec<CapturaFavoritaPerfilLauncherApi>,
@@ -593,6 +594,7 @@ pub struct CapturaApresentacaoLauncherApi {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApresentacaoPerfilLauncherApi {
+    pub avatar_dados_url: Option<String>,
     pub banner_dados_url: Option<String>,
     pub capturas: Vec<CapturaApresentacaoLauncherApi>,
     pub emblemas_exibidos_ids: Vec<String>,
@@ -676,6 +678,13 @@ pub async fn save_launcher_profile_presentation(
     let mut instancias_favoritas = apresentacao.instancias_favoritas;
     publicar_icones_instancias(&cliente, &api_base, &token, &mut instancias_recentes).await?;
     publicar_icones_instancias(&cliente, &api_base, &token, &mut instancias_favoritas).await?;
+    let avatar_perfil_url = match apresentacao
+        .avatar_dados_url
+        .filter(|valor| !valor.is_empty())
+    {
+        Some(valor) => Some(enviar_midia_perfil(&cliente, &api_base, &token, &valor).await?),
+        None => None,
+    };
     let banner_perfil_url = match apresentacao
         .banner_dados_url
         .filter(|valor| !valor.is_empty())
@@ -698,6 +707,7 @@ pub async fn save_launcher_profile_presentation(
         ))
         .bearer_auth(&token)
         .json(&serde_json::json!({
+            "avatarPerfilUrl": avatar_perfil_url,
             "bannerPerfilUrl": banner_perfil_url,
             "capturasFavoritas": capturas_favoritas,
             "emblemasExibidosIds": apresentacao.emblemas_exibidos_ids,
@@ -791,10 +801,15 @@ pub async fn delete_launcher_profile_comment(
     api_base_url: String,
     access_token: String,
     comentario_id: String,
+    perfil_id: Option<String>,
 ) -> Result<(), String> {
+    let destino = perfil_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "me".into());
     let endpoint = format!(
-        "{}/api/launcher/social/profile/me/comments/{}",
+        "{}/api/launcher/social/profile/{}/comments/{}",
         normalizar_api_base_url(&api_base_url)?,
+        urlencoding::encode(&destino),
         urlencoding::encode(&comentario_id)
     );
     let resposta = criar_cliente_http_launcher()?
