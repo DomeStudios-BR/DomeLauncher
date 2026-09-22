@@ -10,7 +10,6 @@ protegida no arquivo nativo `social-session.dat`.
 As etapas de token e perfil do Minecraft validam o status HTTP e repetem até três vezes somente falhas transitórias
 de conexão, limite de requisições e erros 5xx. Uma resposta 404 do perfil indica que a conta Microsoft ainda não tem
 um perfil Minecraft Java; ela não é tratada como falha genérica nem cria uma identidade Dome incompleta.
-
 Contas Minecraft adicionais são vinculadas ao perfil Dome já autenticado por
 `POST /api/launcher/social/minecraft/link`. Trocar a conta ativa usada para jogar não altera automaticamente
 `contaMinecraftPrincipalUuid`, que representa apenas o avatar público escolhido para o perfil.

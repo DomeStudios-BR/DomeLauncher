@@ -24,6 +24,7 @@ import { autenticarComMicrosoft } from "./lib/autenticacaoMicrosoft";
 import { OnboardingLauncher } from "./components/OnboardingLauncher";
 import CreateInstanceModal from "./components/CreateInstanceModal";
 import CreatingInstancesOverlay from "./components/CreatingInstancesOverlay";
+import IndicadorExclusoesInstancias from "./components/IndicadorExclusoesInstancias";
 import { useLauncher, type Instance } from "./hooks/useLauncher";
 import { useBreakpointXl } from "./hooks/useBreakpointXl";
 import type { AbaOrigemProjeto, ProjetoConteudo } from "./components/ProjetoDetalheModal";
@@ -44,6 +45,7 @@ import {
   EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS,
   type PublicacaoInstanciaSocial,
 } from "./lib/eventosTransferenciaSocial";
+import { solicitarNavegacaoInterna } from "./lib/navegacaoInterna";
 
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
@@ -237,6 +239,7 @@ export default function App() {
     total?: number;
   } | null>(null);
   const [projetoDetalhe, setProjetoDetalhe] = useState<ProjetoConteudo | null>(null);
+  const [instalacaoDiretaProjetoId, setInstalacaoDiretaProjetoId] = useState<string | null>(null);
   const [atividadeSocialDetalhe, setAtividadeSocialDetalhe] = useState<AmigoSocial | null>(null);
   const [abaOrigemProjeto, setAbaOrigemProjeto] = useState<AbaOrigemProjeto>("home");
   const [corDestaque, setCorDestaque] = useState("#10B981");
@@ -271,6 +274,8 @@ export default function App() {
   }, [activeTab, alterarAba]);
 
   const voltarNavegacao = useCallback(() => {
+    if (solicitarNavegacaoInterna(-1)) return;
+
     const destino = historicoNavegacao.anteriores[
       historicoNavegacao.anteriores.length - 1
     ];
@@ -284,6 +289,8 @@ export default function App() {
   }, [activeTab, alterarAba, historicoNavegacao.anteriores]);
 
   const avancarNavegacao = useCallback(() => {
+    if (solicitarNavegacaoInterna(1)) return;
+
     const [destino] = historicoNavegacao.proximas;
     if (!destino) return;
 
@@ -309,12 +316,12 @@ export default function App() {
     const navegarPeloTeclado = (evento: KeyboardEvent) => {
       if (!evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return;
 
-      if (evento.key === "ArrowLeft" && historicoNavegacao.anteriores.length > 0) {
+      if (evento.key === "ArrowLeft") {
         evento.preventDefault();
         voltarNavegacao();
       }
 
-      if (evento.key === "ArrowRight" && historicoNavegacao.proximas.length > 0) {
+      if (evento.key === "ArrowRight") {
         evento.preventDefault();
         avancarNavegacao();
       }
@@ -326,12 +333,12 @@ export default function App() {
 
   useEffect(() => {
     const navegarPeloMouse = (evento: MouseEvent) => {
-      if (evento.button === 3 && historicoNavegacao.anteriores.length > 0) {
+      if (evento.button === 3) {
         evento.preventDefault();
         voltarNavegacao();
       }
 
-      if (evento.button === 4 && historicoNavegacao.proximas.length > 0) {
+      if (evento.button === 4) {
         evento.preventDefault();
         avancarNavegacao();
       }
@@ -1078,7 +1085,7 @@ export default function App() {
           <button
             type="button"
             onClick={voltarNavegacao}
-            disabled={historicoNavegacao.anteriores.length === 0}
+            disabled={historicoNavegacao.anteriores.length === 0 && activeTab !== "instance-manager"}
             aria-label="Voltar"
             title="Voltar (Alt + ←)"
             className={cn(
@@ -1505,7 +1512,12 @@ export default function App() {
               >
                 <Explore
                   onAtualizarPresencaExplore={setContextoExplore}
-                  onAbrirProjeto={(projeto) => abrirProjeto("explore", projeto)}
+                  onAbrirProjeto={(projeto, instalarAgora) => {
+                    setInstalacaoDiretaProjetoId(
+                      instalarAgora && projeto.project_type === "modpack" ? projeto.id : null
+                    );
+                    abrirProjeto("explore", projeto);
+                  }}
                 />
               </motion.div>
             )}
@@ -1543,12 +1555,15 @@ export default function App() {
                   usuarioLogado={Boolean(user)}
                   onSolicitarLogin={() => setIsLoginOpen(true)}
                   onInstanciaCriada={() => void fetchInstances()}
+                  instalarAoAbrir={instalacaoDiretaProjetoId === projetoDetalhe.id}
+                  onInstalacaoAutomaticaIniciada={() => setInstalacaoDiretaProjetoId(null)}
                   rotuloAcao={
                     abaOrigemProjeto === "home" || abaOrigemProjeto === "instances"
                       ? "Baixar"
                       : "Instalar"
                   }
                   onVoltar={() => {
+                    setInstalacaoDiretaProjetoId(null);
                     navegarParaAba(abaOrigemProjeto);
                     setProjetoDetalhe(null);
                   }}
@@ -1733,6 +1748,7 @@ export default function App() {
             </motion.footer>
           )}
         </AnimatePresence>
+        <IndicadorExclusoesInstancias />
       </main>
 
         <div

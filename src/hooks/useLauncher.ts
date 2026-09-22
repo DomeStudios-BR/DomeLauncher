@@ -139,6 +139,7 @@ export function useLauncher() {
       await fetchInstances();
     } catch (error) {
       console.error("Erro ao deletar instância:", error);
+      throw error;
     }
   }, [fetchInstances]);
 

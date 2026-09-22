@@ -1,9 +1,27 @@
 use super::*;
 use base64::Engine as _;
+use tauri::Emitter;
 
 const LIMITE_ICONE_INSTANCIA_BYTES: usize = 1024 * 1024;
 const LIMITE_CAPTURA_PERFIL_BYTES: u64 = 8 * 1024 * 1024;
 const LIMITE_CAPTURAS_PERFIL: usize = 240;
+const EVENTO_PROGRESSO_EXCLUSAO_INSTANCIA: &str = "instancia-exclusao-progresso";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressoExclusaoInstancia {
+    id: String,
+    etapa: String,
+    itens_excluidos: usize,
+    total_itens: usize,
+    porcentagem: u8,
+}
+
+enum AlvoExclusao {
+    Arquivo(std::path::PathBuf),
+    Diretorio(std::path::PathBuf),
+    LinkDiretorio(std::path::PathBuf),
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,42 +168,148 @@ pub(crate) fn listar_capturas_perfil(
     })
 }
 
-#[tauri::command]
-pub(crate) async fn delete_instance(
-    state: State<'_, LauncherState>,
-    id: String,
+fn calcular_porcentagem_exclusao(itens_excluidos: usize, total_itens: usize) -> u8 {
+    if total_itens == 0 {
+        return 0;
+    }
+
+    itens_excluidos
+        .min(total_itens)
+        .saturating_mul(100)
+        .checked_div(total_itens)
+        .unwrap_or(0) as u8
+}
+
+fn emitir_progresso_exclusao(
+    app: &tauri::AppHandle,
+    id: &str,
+    etapa: &str,
+    itens_excluidos: usize,
+    total_itens: usize,
+) {
+    let porcentagem = if etapa == "concluida" {
+        100
+    } else {
+        calcular_porcentagem_exclusao(itens_excluidos, total_itens)
+    };
+    let _ = app.emit(
+        EVENTO_PROGRESSO_EXCLUSAO_INSTANCIA,
+        ProgressoExclusaoInstancia {
+            id: id.to_string(),
+            etapa: etapa.to_string(),
+            itens_excluidos,
+            total_itens,
+            porcentagem,
+        },
+    );
+}
+
+fn coletar_alvos_exclusao(
+    caminho: &std::path::Path,
+    alvos: &mut Vec<AlvoExclusao>,
 ) -> Result<(), String> {
-    let instance_path = caminho_instancia_por_id(&state, &id)?;
-    if instance_path.exists() {
-        std::fs::remove_dir_all(&instance_path)
-            .map_err(|e| format!("Erro ao excluir pasta da instância: {}", e))?;
+    let metadados = std::fs::symlink_metadata(caminho)
+        .map_err(|e| format!("Erro ao inspecionar item da instância: {}", e))?;
+
+    if metadados.file_type().is_symlink() {
+        let link_para_diretorio = std::fs::metadata(caminho)
+            .map(|destino| destino.is_dir())
+            .unwrap_or(false);
+        alvos.push(if link_para_diretorio {
+            AlvoExclusao::LinkDiretorio(caminho.to_path_buf())
+        } else {
+            AlvoExclusao::Arquivo(caminho.to_path_buf())
+        });
         return Ok(());
     }
 
-    // Se a pasta padrão não existir, procurar qualquer pasta que tenha instance.json com esse id
-    if let Ok(raiz) = state.caminho_instancias() {
-        if let Ok(entries) = std::fs::read_dir(&raiz) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let config_path = entry.path().join("instance.json");
-                    if config_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&config_path) {
-                            if let Ok(instancia) = serde_json::from_str::<Instance>(&content) {
-                                if instancia.id == id {
-                                    std::fs::remove_dir_all(entry.path()).map_err(|e| {
-                                        format!("Erro ao excluir pasta da instância: {}", e)
-                                    })?;
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    if !metadados.is_dir() {
+        alvos.push(AlvoExclusao::Arquivo(caminho.to_path_buf()));
+        return Ok(());
+    }
+
+    let entradas = std::fs::read_dir(caminho)
+        .map_err(|e| format!("Erro ao listar conteúdo da instância: {}", e))?;
+    for entrada in entradas {
+        let entrada = entrada.map_err(|e| format!("Erro ao ler item da instância: {}", e))?;
+        coletar_alvos_exclusao(&entrada.path(), alvos)?;
+    }
+    alvos.push(AlvoExclusao::Diretorio(caminho.to_path_buf()));
+    Ok(())
+}
+
+#[cfg(windows)]
+fn excluir_link_diretorio(caminho: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_dir(caminho)
+}
+
+#[cfg(not(windows))]
+fn excluir_link_diretorio(caminho: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_file(caminho)
+}
+
+fn excluir_pasta_instancia_com_progresso(
+    caminho: &std::path::Path,
+    id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    emitir_progresso_exclusao(app, id, "preparando", 0, 0);
+
+    let mut alvos = Vec::new();
+    coletar_alvos_exclusao(caminho, &mut alvos)?;
+    let total_itens = alvos.len();
+    let mut ultima_porcentagem = 0;
+    emitir_progresso_exclusao(app, id, "excluindo", 0, total_itens);
+
+    for (indice, alvo) in alvos.into_iter().enumerate() {
+        match alvo {
+            AlvoExclusao::Arquivo(arquivo) => std::fs::remove_file(&arquivo)
+                .map_err(|e| format!("Erro ao excluir arquivo '{}': {}", arquivo.display(), e))?,
+            AlvoExclusao::Diretorio(diretorio) => std::fs::remove_dir(&diretorio)
+                .map_err(|e| format!("Erro ao excluir pasta '{}': {}", diretorio.display(), e))?,
+            AlvoExclusao::LinkDiretorio(link) => excluir_link_diretorio(&link)
+                .map_err(|e| format!("Erro ao excluir link '{}': {}", link.display(), e))?,
+        }
+
+        let itens_excluidos = indice + 1;
+        let porcentagem = calcular_porcentagem_exclusao(itens_excluidos, total_itens);
+        if porcentagem != ultima_porcentagem {
+            ultima_porcentagem = porcentagem;
+            emitir_progresso_exclusao(app, id, "excluindo", itens_excluidos, total_itens);
         }
     }
 
-    Err(format!("Instância '{}' não encontrada para exclusão.", id))
+    emitir_progresso_exclusao(app, id, "concluida", total_itens, total_itens);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn delete_instance(
+    state: State<'_, LauncherState>,
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let raiz_instancias = state.caminho_instancias()?;
+    let caminho_instancia = caminho_instancia_por_id(&state, &id)?;
+    if !caminho_instancia.exists() {
+        return Err(format!("Instância '{}' não encontrada para exclusão.", id));
+    }
+
+    let raiz_validada = raiz_instancias
+        .canonicalize()
+        .map_err(|e| format!("Falha ao normalizar raiz de segurança: {}", e))?;
+    let caminho_validado = validar_caminho_dentro_raiz(&raiz_instancias, &caminho_instancia)?;
+    if caminho_validado == raiz_validada {
+        return Err("A raiz de instâncias não pode ser excluída.".to_string());
+    }
+
+    let app_tarefa = app.clone();
+    let id_tarefa = id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        excluir_pasta_instancia_com_progresso(&caminho_instancia, &id_tarefa, &app_tarefa)
+    })
+    .await
+    .map_err(|e| format!("Falha ao executar exclusão da instância: {}", e))?
 }
 
 #[tauri::command]
@@ -499,7 +623,17 @@ pub(crate) async fn rename_instance_folder(
 
 #[cfg(test)]
 mod testes {
-    use super::{normalizar_nome_pasta_instancia, validar_icone_instancia};
+    use super::{
+        calcular_porcentagem_exclusao, normalizar_nome_pasta_instancia, validar_icone_instancia,
+    };
+
+    #[test]
+    fn calcula_progresso_da_exclusao_e_limita_em_cem() {
+        assert_eq!(calcular_porcentagem_exclusao(0, 0), 0);
+        assert_eq!(calcular_porcentagem_exclusao(1, 4), 25);
+        assert_eq!(calcular_porcentagem_exclusao(3, 4), 75);
+        assert_eq!(calcular_porcentagem_exclusao(8, 4), 100);
+    }
 
     #[test]
     fn adapta_caracteres_invalidos_para_nome_de_pasta() {
