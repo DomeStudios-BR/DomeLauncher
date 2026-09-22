@@ -8,6 +8,44 @@ function normalizarIdentificadorConteudo(valor: string): string {
     .replace(/^-|-$/g, "");
 }
 
+interface ConteudoComDependencias {
+  fileName: string;
+  identificadores: string[];
+  dependencias: string[];
+}
+
+export function expandirSelecaoComDependentes(
+  arquivosMarcados: Set<string>,
+  mods: ConteudoComDependencias[]
+): Set<string> {
+  const selecionados = new Set(arquivosMarcados);
+  const identificadoresSelecionados = new Set(
+    mods
+      .filter((mod) => selecionados.has(mod.fileName))
+      .flatMap((mod) => mod.identificadores.map((identificador) => identificador.toLowerCase()))
+  );
+
+  let encontrouDependente = true;
+  while (encontrouDependente) {
+    encontrouDependente = false;
+    for (const mod of mods) {
+      if (selecionados.has(mod.fileName)) continue;
+      const dependeDeSelecionado = mod.dependencias.some((dependencia) =>
+        identificadoresSelecionados.has(dependencia.toLowerCase())
+      );
+      if (!dependeDeSelecionado) continue;
+
+      selecionados.add(mod.fileName);
+      mod.identificadores.forEach((identificador) =>
+        identificadoresSelecionados.add(identificador.toLowerCase())
+      );
+      encontrouDependente = true;
+    }
+  }
+
+  return selecionados;
+}
+
 export function arquivoPodePertencerAoProjeto(nomeArquivo: string, slugProjeto: string): boolean {
   const slug = normalizarIdentificadorConteudo(slugProjeto);
   if (!slug) return false;

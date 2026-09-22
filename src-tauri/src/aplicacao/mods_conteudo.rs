@@ -374,14 +374,147 @@ impl ReferenciaModObrigatorio {
 
 struct ArquivoModResolvido {
     chave: String,
+    project_id: String,
+    nome_versao: String,
+    icone_url: Option<String>,
+    versao: String,
+    tipo_versao: String,
+    plataforma: ModPlatform,
     download_url: String,
     file_name: String,
     dependencias: Vec<ReferenciaModObrigatorio>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SelecaoInstalacaoConteudo {
+    id: String,
+    nome: String,
+    icone_url: Option<String>,
+    plataforma: ModPlatform,
+    tipo_projeto: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ItemPlanoInstalacaoConteudo {
+    chave: String,
+    project_id: String,
+    nome: String,
+    icone_url: Option<String>,
+    nome_arquivo: String,
+    versao: String,
+    tipo_versao: String,
+    plataforma: ModPlatform,
+    tipo_projeto: String,
+    requerido_por: Vec<String>,
+    selecionado: bool,
+}
+
+enum EtapaPlanoInstalacao {
+    Resolver {
+        referencia: ReferenciaModObrigatorio,
+        requerido_por: Option<String>,
+    },
+    Adicionar {
+        arquivo: ArquivoModResolvido,
+        requerido_por: Option<String>,
+    },
+}
+
 enum EtapaResolucaoMod {
     Resolver(ReferenciaModObrigatorio),
     AgendarDownload(ArquivoModResolvido),
+}
+
+struct MetadadosProjetoConteudo {
+    nome: String,
+    icone_url: Option<String>,
+}
+
+async fn buscar_metadados_projeto_modrinth(
+    client: &reqwest::Client,
+    project_id: &str,
+) -> Result<MetadadosProjetoConteudo, String> {
+    let url = format!(
+        "{}/project/{}",
+        MODRINTH_API_BASE,
+        urlencoding::encode(project_id)
+    );
+    let resposta = client
+        .get(url)
+        .header("User-Agent", "DomeLauncher/1.0")
+        .send()
+        .await
+        .map_err(|e| {
+            format!(
+                "Erro ao buscar os dados do projeto Modrinth {}: {}",
+                project_id, e
+            )
+        })?;
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "Modrinth retornou {} ao buscar os dados do projeto {}.",
+            resposta.status(),
+            project_id
+        ));
+    }
+
+    let projeto = resposta.json::<serde_json::Value>().await.map_err(|e| {
+        format!(
+            "Erro ao interpretar o projeto Modrinth {}: {}",
+            project_id, e
+        )
+    })?;
+    let nome = projeto["title"]
+        .as_str()
+        .filter(|valor| !valor.trim().is_empty())
+        .ok_or_else(|| format!("O projeto Modrinth {} não informou um nome.", project_id))?;
+
+    Ok(MetadadosProjetoConteudo {
+        nome: nome.to_string(),
+        icone_url: projeto["icon_url"].as_str().map(str::to_string),
+    })
+}
+
+async fn buscar_metadados_projeto_curseforge(
+    client: &reqwest::Client,
+    project_id: &str,
+) -> Result<MetadadosProjetoConteudo, String> {
+    let url = format!("{}/mods/{}", CURSEFORGE_API_BASE, project_id);
+    let resposta = anexar_headers_curseforge(client.get(url))?
+        .send()
+        .await
+        .map_err(|e| {
+            format!(
+                "Erro ao buscar os dados do projeto CurseForge {}: {}",
+                project_id, e
+            )
+        })?;
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "CurseForge retornou {} ao buscar os dados do projeto {}.",
+            resposta.status(),
+            project_id
+        ));
+    }
+
+    let payload = resposta.json::<serde_json::Value>().await.map_err(|e| {
+        format!(
+            "Erro ao interpretar o projeto CurseForge {}: {}",
+            project_id, e
+        )
+    })?;
+    let projeto = &payload["data"];
+    let nome = projeto["name"]
+        .as_str()
+        .filter(|valor| !valor.trim().is_empty())
+        .ok_or_else(|| format!("O projeto CurseForge {} não informou um nome.", project_id))?;
+
+    Ok(MetadadosProjetoConteudo {
+        nome: nome.to_string(),
+        icone_url: projeto["logo"]["url"].as_str().map(str::to_string),
+    })
 }
 
 fn arquivo_jar_modrinth(versao: &serde_json::Value) -> Option<(String, String)> {
@@ -500,6 +633,7 @@ async fn resolver_modrinth_obrigatorio(
         .as_str()
         .or(project_id)
         .ok_or("Versão Modrinth sem identificação do projeto.")?;
+    let metadados = buscar_metadados_projeto_modrinth(client, project_id_resolvido).await?;
     let (download_url, file_name) = arquivo_jar_modrinth(&versao)
         .ok_or("Dependência Modrinth compatível sem arquivo JAR válido.")?;
     let mut dependencias = Vec::new();
@@ -525,6 +659,18 @@ async fn resolver_modrinth_obrigatorio(
 
     Ok(ArquivoModResolvido {
         chave: format!("modrinth:project:{}", project_id_resolvido),
+        project_id: project_id_resolvido.to_string(),
+        nome_versao: metadados.nome,
+        icone_url: metadados.icone_url,
+        versao: versao["version_number"]
+            .as_str()
+            .unwrap_or("Versão compatível")
+            .to_string(),
+        tipo_versao: versao["version_type"]
+            .as_str()
+            .unwrap_or("release")
+            .to_string(),
+        plataforma: ModPlatform::Modrinth,
         download_url,
         file_name,
         dependencias,
@@ -624,6 +770,7 @@ async fn resolver_curseforge_obrigatorio(
         .as_str()
         .ok_or("Dependência CurseForge sem nome de arquivo.")?
         .to_string();
+    let metadados = buscar_metadados_projeto_curseforge(client, project_id).await?;
     let mut dependencias = Vec::new();
     if let Some(itens) = arquivo["dependencies"].as_array() {
         for item in itens {
@@ -647,6 +794,15 @@ async fn resolver_curseforge_obrigatorio(
 
     Ok(ArquivoModResolvido {
         chave: format!("curseforge:project:{}", project_id),
+        project_id: project_id.to_string(),
+        nome_versao: metadados.nome,
+        icone_url: metadados.icone_url,
+        versao: arquivo["displayName"]
+            .as_str()
+            .unwrap_or("Versão compatível")
+            .to_string(),
+        tipo_versao: rotulo_tipo_versao_curseforge(&arquivo).to_string(),
+        plataforma: ModPlatform::CurseForge,
         download_url,
         file_name,
         dependencias,
@@ -668,6 +824,446 @@ async fn resolver_arquivo_mod_obrigatorio(
             resolver_curseforge_obrigatorio(client, referencia, versao_instancia, loader_instancia)
                 .await
         }
+    }
+}
+
+fn rotulo_tipo_versao_curseforge(arquivo: &serde_json::Value) -> &'static str {
+    match arquivo["releaseType"].as_u64() {
+        Some(2) => "beta",
+        Some(3) => "alpha",
+        _ => "release",
+    }
+}
+
+fn arquivo_projeto_modrinth<'a>(
+    versao: &'a serde_json::Value,
+    tipo_projeto: &str,
+) -> Option<&'a serde_json::Value> {
+    let arquivos = versao["files"].as_array()?;
+    arquivos
+        .iter()
+        .find(|arquivo| {
+            arquivo["primary"].as_bool().unwrap_or(false)
+                && arquivo["filename"]
+                    .as_str()
+                    .is_some_and(|nome| nome_arquivo_valido_curseforge(tipo_projeto, nome))
+        })
+        .or_else(|| {
+            arquivos.iter().find(|arquivo| {
+                arquivo["filename"]
+                    .as_str()
+                    .is_some_and(|nome| nome_arquivo_valido_curseforge(tipo_projeto, nome))
+            })
+        })
+}
+
+async fn resolver_projeto_sem_dependencias(
+    client: &reqwest::Client,
+    selecao: &SelecaoInstalacaoConteudo,
+    versao_minecraft: &str,
+    loader: &Option<String>,
+) -> Result<ArquivoModResolvido, String> {
+    match selecao.plataforma {
+        ModPlatform::Modrinth => {
+            let game_versions =
+                urlencoding::encode(&serde_json::json!([versao_minecraft]).to_string()).to_string();
+            let mut url = format!(
+                "{}/project/{}/version?game_versions={}",
+                MODRINTH_API_BASE,
+                urlencoding::encode(&selecao.id),
+                game_versions
+            );
+            if selecao.tipo_projeto == "mod" {
+                if let Some(loader) = loader {
+                    let loaders =
+                        urlencoding::encode(&serde_json::json!([loader]).to_string()).to_string();
+                    url.push_str(&format!("&loaders={}", loaders));
+                }
+            }
+
+            let resposta = client
+                .get(url)
+                .header("User-Agent", "DomeLauncher/1.0")
+                .send()
+                .await
+                .map_err(|e| format!("Erro ao preparar {}: {}", selecao.nome, e))?;
+            if !resposta.status().is_success() {
+                return Err(format!(
+                    "Modrinth retornou HTTP {} ao preparar {}.",
+                    resposta.status().as_u16(),
+                    selecao.nome
+                ));
+            }
+
+            let versoes = resposta
+                .json::<Vec<serde_json::Value>>()
+                .await
+                .map_err(|e| format!("Erro ao interpretar versões de {}: {}", selecao.nome, e))?;
+            let versao = versoes
+                .iter()
+                .find(|item| {
+                    versao_modrinth_compativel(
+                        item,
+                        versao_minecraft,
+                        if selecao.tipo_projeto == "mod" {
+                            loader
+                        } else {
+                            &None
+                        },
+                    )
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "{} não possui versão compatível com Minecraft {}.",
+                        selecao.nome, versao_minecraft
+                    )
+                })?;
+            let arquivo = arquivo_projeto_modrinth(versao, &selecao.tipo_projeto)
+                .ok_or_else(|| format!("{} não possui arquivo compatível.", selecao.nome))?;
+            let file_name = arquivo["filename"]
+                .as_str()
+                .ok_or_else(|| format!("{} retornou um arquivo sem nome.", selecao.nome))?
+                .to_string();
+            let download_url = arquivo["url"]
+                .as_str()
+                .ok_or_else(|| format!("{} retornou um arquivo sem URL.", selecao.nome))?
+                .to_string();
+
+            Ok(ArquivoModResolvido {
+                chave: format!("modrinth:project:{}", selecao.id),
+                project_id: selecao.id.clone(),
+                nome_versao: selecao.nome.clone(),
+                icone_url: selecao.icone_url.clone(),
+                versao: versao["version_number"]
+                    .as_str()
+                    .unwrap_or("Versão compatível")
+                    .to_string(),
+                tipo_versao: versao["version_type"]
+                    .as_str()
+                    .unwrap_or("release")
+                    .to_string(),
+                plataforma: ModPlatform::Modrinth,
+                download_url,
+                file_name,
+                dependencias: Vec::new(),
+            })
+        }
+        ModPlatform::CurseForge => {
+            let mut url = format!(
+                "{}/mods/{}/files?gameVersion={}&pageSize=50&sortField=1&sortOrder=desc",
+                CURSEFORGE_API_BASE,
+                urlencoding::encode(&selecao.id),
+                urlencoding::encode(versao_minecraft)
+            );
+            if selecao.tipo_projeto == "mod" {
+                if let Some(loader_id) = loader.as_deref().and_then(id_loader_curseforge) {
+                    url.push_str(&format!("&modLoaderType={}", loader_id));
+                }
+            }
+            let resposta = anexar_headers_curseforge(client.get(url))?
+                .send()
+                .await
+                .map_err(|e| format!("Erro ao preparar {}: {}", selecao.nome, e))?;
+            if !resposta.status().is_success() {
+                return Err(format!(
+                    "CurseForge retornou HTTP {} ao preparar {}.",
+                    resposta.status().as_u16(),
+                    selecao.nome
+                ));
+            }
+            let payload = resposta
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| format!("Erro ao interpretar arquivos de {}: {}", selecao.nome, e))?;
+            let arquivos = payload["data"]
+                .as_array()
+                .ok_or("CurseForge não retornou uma lista de arquivos.")?;
+            let arquivo = selecionar_arquivo_curseforge_compativel(
+                arquivos,
+                &selecao.tipo_projeto,
+                versao_minecraft,
+                loader,
+            )
+            .ok_or_else(|| {
+                format!(
+                    "{} não possui arquivo compatível com Minecraft {}.",
+                    selecao.nome, versao_minecraft
+                )
+            })?;
+            let file_name = arquivo["fileName"]
+                .as_str()
+                .ok_or_else(|| format!("{} retornou um arquivo sem nome.", selecao.nome))?
+                .to_string();
+            let download_url = arquivo["downloadUrl"]
+                .as_str()
+                .ok_or_else(|| format!("{} retornou um arquivo sem URL.", selecao.nome))?
+                .to_string();
+
+            Ok(ArquivoModResolvido {
+                chave: format!("curseforge:project:{}", selecao.id),
+                project_id: selecao.id.clone(),
+                nome_versao: selecao.nome.clone(),
+                icone_url: selecao.icone_url.clone(),
+                versao: arquivo["displayName"]
+                    .as_str()
+                    .unwrap_or("Versão compatível")
+                    .to_string(),
+                tipo_versao: rotulo_tipo_versao_curseforge(arquivo).to_string(),
+                plataforma: ModPlatform::CurseForge,
+                download_url,
+                file_name,
+                dependencias: Vec::new(),
+            })
+        }
+        ModPlatform::Ftb => Err("A instalação em lote não oferece suporte ao FTB.".to_string()),
+    }
+}
+
+fn adicionar_item_ao_plano(
+    plano: &mut Vec<ItemPlanoInstalacaoConteudo>,
+    arquivo: ArquivoModResolvido,
+    tipo_projeto: &str,
+    nome_selecionado: Option<&str>,
+    icone_selecionado: Option<&str>,
+    requerido_por: Option<String>,
+) {
+    if let Some(existente) = plano.iter_mut().find(|item| item.chave == arquivo.chave) {
+        if let Some(nome) = nome_selecionado {
+            existente.nome = nome.to_string();
+            existente.selecionado = true;
+        }
+        if let Some(icone_url) = icone_selecionado {
+            existente.icone_url = Some(icone_url.to_string());
+        } else if existente.icone_url.is_none() {
+            existente.icone_url = arquivo.icone_url;
+        }
+        if let Some(requerente) = requerido_por {
+            if !existente.requerido_por.contains(&requerente) {
+                existente.requerido_por.push(requerente);
+            }
+        }
+        return;
+    }
+
+    plano.push(ItemPlanoInstalacaoConteudo {
+        chave: arquivo.chave,
+        project_id: arquivo.project_id,
+        nome: nome_selecionado.unwrap_or(&arquivo.nome_versao).to_string(),
+        icone_url: icone_selecionado.map(str::to_string).or(arquivo.icone_url),
+        nome_arquivo: arquivo.file_name,
+        versao: arquivo.versao,
+        tipo_versao: arquivo.tipo_versao,
+        plataforma: arquivo.plataforma,
+        tipo_projeto: tipo_projeto.to_string(),
+        requerido_por: requerido_por.into_iter().collect(),
+        selecionado: nome_selecionado.is_some(),
+    });
+}
+
+async fn adicionar_mod_e_dependencias_ao_plano(
+    client: &reqwest::Client,
+    plano: &mut Vec<ItemPlanoInstalacaoConteudo>,
+    selecao: &SelecaoInstalacaoConteudo,
+    versao_minecraft: &str,
+    loader: &Option<String>,
+) -> Result<(), String> {
+    let referencia_principal = match selecao.plataforma {
+        ModPlatform::Modrinth => ReferenciaModObrigatorio::Modrinth {
+            project_id: Some(selecao.id.clone()),
+            version_id: None,
+        },
+        ModPlatform::CurseForge => ReferenciaModObrigatorio::CurseForge {
+            project_id: selecao.id.clone(),
+            file_id: None,
+        },
+        ModPlatform::Ftb => {
+            return Err("A instalação em lote não oferece suporte ao FTB.".to_string())
+        }
+    };
+    let mut etapas = vec![EtapaPlanoInstalacao::Resolver {
+        referencia: referencia_principal,
+        requerido_por: None,
+    }];
+    let mut visitados = std::collections::HashSet::new();
+
+    while let Some(etapa) = etapas.pop() {
+        match etapa {
+            EtapaPlanoInstalacao::Resolver {
+                referencia,
+                requerido_por,
+            } => {
+                if !visitados.insert(referencia.chave()) {
+                    continue;
+                }
+                let resolvido =
+                    resolver_arquivo_mod_obrigatorio(client, &referencia, versao_minecraft, loader)
+                        .await?;
+                let nome_requerente = if requerido_por.is_none() {
+                    selecao.nome.clone()
+                } else {
+                    resolvido.nome_versao.clone()
+                };
+                let dependencias = resolvido.dependencias.clone();
+                etapas.push(EtapaPlanoInstalacao::Adicionar {
+                    arquivo: resolvido,
+                    requerido_por,
+                });
+                for dependencia in dependencias.into_iter().rev() {
+                    etapas.push(EtapaPlanoInstalacao::Resolver {
+                        referencia: dependencia,
+                        requerido_por: Some(nome_requerente.clone()),
+                    });
+                }
+            }
+            EtapaPlanoInstalacao::Adicionar {
+                arquivo,
+                requerido_por,
+            } => {
+                let principal = requerido_por.is_none();
+                adicionar_item_ao_plano(
+                    plano,
+                    arquivo,
+                    "mod",
+                    principal.then_some(selecao.nome.as_str()),
+                    principal.then_some(selecao.icone_url.as_deref()).flatten(),
+                    requerido_por,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn planejar_instalacao_conteudo(
+    instance_id: String,
+    itens: Vec<SelecaoInstalacaoConteudo>,
+    state: State<'_, LauncherState>,
+) -> Result<Vec<ItemPlanoInstalacaoConteudo>, String> {
+    if itens.is_empty() {
+        return Err("Selecione ao menos um conteúdo para revisar.".to_string());
+    }
+    if itens.len() > 50 {
+        return Err("Selecione no máximo 50 conteúdos por vez.".to_string());
+    }
+
+    let instancia = obter_instancia_por_id(&state, &instance_id)?;
+    let versao_minecraft = instancia.version.clone();
+    let loader = normalizar_loader_para_mods(instancia.loader_type.as_deref());
+    let client = reqwest::Client::new();
+    let mut plano = Vec::new();
+
+    for selecao in itens {
+        if !matches!(
+            selecao.tipo_projeto.as_str(),
+            "mod" | "resourcepack" | "shader"
+        ) {
+            return Err(format!(
+                "Tipo de conteúdo inválido: {}.",
+                selecao.tipo_projeto
+            ));
+        }
+        if selecao.id.trim().is_empty() || selecao.nome.trim().is_empty() {
+            return Err("Um conteúdo selecionado não possui identificação válida.".to_string());
+        }
+
+        if selecao.tipo_projeto == "mod" {
+            adicionar_mod_e_dependencias_ao_plano(
+                &client,
+                &mut plano,
+                &selecao,
+                &versao_minecraft,
+                &loader,
+            )
+            .await?;
+            continue;
+        }
+
+        let arquivo =
+            resolver_projeto_sem_dependencias(&client, &selecao, &versao_minecraft, &loader)
+                .await?;
+        adicionar_item_ao_plano(
+            &mut plano,
+            arquivo,
+            &selecao.tipo_projeto,
+            Some(&selecao.nome),
+            selecao.icone_url.as_deref(),
+            None,
+        );
+    }
+
+    Ok(plano)
+}
+
+#[cfg(test)]
+mod testes_plano_instalacao_conteudo {
+    use super::*;
+
+    fn arquivo_teste(chave: &str, nome: &str) -> ArquivoModResolvido {
+        ArquivoModResolvido {
+            chave: chave.to_string(),
+            project_id: chave.to_string(),
+            nome_versao: nome.to_string(),
+            icone_url: Some(format!(
+                "https://cdn.modrinth.com/data/{}.png",
+                nome.to_lowercase()
+            )),
+            versao: "1.0.0".to_string(),
+            tipo_versao: "release".to_string(),
+            plataforma: ModPlatform::Modrinth,
+            download_url: "https://cdn.modrinth.com/data/teste.jar".to_string(),
+            file_name: format!("{}.jar", nome.to_lowercase()),
+            dependencias: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dependencia_duplicada_vira_selecao_sem_perder_requerentes() {
+        let mut plano = Vec::new();
+        adicionar_item_ao_plano(
+            &mut plano,
+            arquivo_teste("modrinth:project:biblioteca", "Biblioteca"),
+            "mod",
+            None,
+            None,
+            Some("Mod principal".to_string()),
+        );
+        adicionar_item_ao_plano(
+            &mut plano,
+            arquivo_teste("modrinth:project:biblioteca", "Biblioteca"),
+            "mod",
+            Some("Biblioteca escolhida"),
+            Some("https://cdn.modrinth.com/data/biblioteca-escolhida.png"),
+            None,
+        );
+
+        assert_eq!(plano.len(), 1);
+        assert!(plano[0].selecionado);
+        assert_eq!(plano[0].nome, "Biblioteca escolhida");
+        assert_eq!(
+            plano[0].icone_url.as_deref(),
+            Some("https://cdn.modrinth.com/data/biblioteca-escolhida.png")
+        );
+        assert_eq!(plano[0].requerido_por, vec!["Mod principal"]);
+    }
+
+    #[test]
+    fn dependencia_compartilhada_permanece_como_um_unico_download() {
+        let mut plano = Vec::new();
+        for requerente in ["Mod A", "Mod B"] {
+            adicionar_item_ao_plano(
+                &mut plano,
+                arquivo_teste("modrinth:project:biblioteca", "Biblioteca comum"),
+                "mod",
+                None,
+                None,
+                Some(requerente.to_string()),
+            );
+        }
+
+        assert_eq!(plano.len(), 1);
+        assert!(!plano[0].selecionado);
+        assert_eq!(plano[0].requerido_por, vec!["Mod A", "Mod B"]);
     }
 }
 
@@ -828,7 +1424,7 @@ pub(crate) async fn install_mod(
     instance_id: String,
     mod_info: ModInfo,
     state: State<'_, LauncherState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let instances = state.get_instances().map_err(|e| e.to_string())?;
     let instance = instances
         .iter()
@@ -852,9 +1448,11 @@ pub(crate) async fn install_mod(
         },
         _ => return Err("Plataforma não suportada para download".to_string()),
     };
+    let chave_principal = referencia_principal.chave();
     let mut etapas = vec![EtapaResolucaoMod::Resolver(referencia_principal)];
     let mut visitados = std::collections::HashSet::new();
     let mut arquivos = Vec::new();
+    let mut nome_arquivo_principal = None;
 
     while let Some(etapa) = etapas.pop() {
         match etapa {
@@ -874,6 +1472,9 @@ pub(crate) async fn install_mod(
                 {
                     continue;
                 }
+                if referencia.chave() == chave_principal {
+                    nome_arquivo_principal = Some(resolvido.file_name.clone());
+                }
                 let dependencias = resolvido.dependencias.clone();
                 etapas.push(EtapaResolucaoMod::AgendarDownload(resolvido));
                 for dependencia in dependencias.into_iter().rev() {
@@ -884,7 +1485,8 @@ pub(crate) async fn install_mod(
         }
     }
 
-    baixar_e_instalar_arquivos_mod(&client, &mods_dir, arquivos).await
+    baixar_e_instalar_arquivos_mod(&client, &mods_dir, arquivos).await?;
+    nome_arquivo_principal.ok_or_else(|| "Arquivo principal do mod não foi resolvido.".to_string())
 }
 
 #[tauri::command]
@@ -894,7 +1496,7 @@ pub(crate) async fn install_project_file(
     download_url: String,
     file_name: String,
     state: State<'_, LauncherState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let instance = obter_instancia_por_id(&state, &instance_id)?;
     let tipo_normalizado = project_type.trim().to_lowercase();
     let pasta_destino = pasta_destino_conteudo(&instance, &tipo_normalizado)?;
@@ -930,7 +1532,7 @@ async fn baixar_arquivo_para_pasta(
     download_url: String,
     file_name: String,
     prefixo_fallback: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     std::fs::create_dir_all(pasta_destino).map_err(|e| e.to_string())?;
 
     let client = reqwest::Client::builder()
@@ -994,10 +1596,10 @@ async fn baixar_arquivo_para_pasta(
             )
         });
 
-    let caminho_arquivo = pasta_destino.join(nome_arquivo_final);
+    let caminho_arquivo = pasta_destino.join(&nome_arquivo_final);
     std::fs::write(caminho_arquivo, bytes).map_err(|e| e.to_string())?;
 
-    Ok(())
+    Ok(nome_arquivo_final)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1160,70 +1762,28 @@ pub(crate) async fn install_curseforge_project_file(
     project_type: String,
     project_id: String,
     state: State<'_, LauncherState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let instance = obter_instancia_por_id(&state, &instance_id)?;
     let tipo_normalizado = project_type.trim().to_lowercase();
     let pasta_destino = pasta_destino_conteudo(&instance, &tipo_normalizado)?;
-
     let client = reqwest::Client::new();
-    let files_url = format!(
-        "{}/mods/{}/files?pageSize=50&sortField=1&sortOrder=desc",
-        CURSEFORGE_API_BASE, project_id
-    );
-    let request = anexar_headers_curseforge(client.get(&files_url))?;
-    let resposta = request
-        .send()
-        .await
-        .map_err(|e| format!("Erro ao buscar arquivos do CurseForge: {}", e))?;
-
-    if !resposta.status().is_success() {
-        return Err(format!(
-            "CurseForge retornou erro ao listar arquivos: {}",
-            resposta.status()
-        ));
-    }
-
-    let texto_resposta = resposta
-        .text()
-        .await
-        .map_err(|e| format!("Erro ao ler corpo da resposta CurseForge: {}", e))?;
-    let payload: serde_json::Value = serde_json::from_str(&texto_resposta)
-        .map_err(|e| format!("Erro ao parsear JSON CurseForge: {}", e))?;
-
-    let arquivos = payload["data"]
-        .as_array()
-        .ok_or("Resposta inválida do CurseForge (data ausente)")?;
-
     let loader_instancia = normalizar_loader_para_mods(instance.loader_type.as_deref());
-    let versao_instancia = instance.version.clone();
-
-    let arquivo_escolhido = selecionar_arquivo_curseforge_compativel(
-        arquivos,
-        &tipo_normalizado,
-        &versao_instancia,
-        &loader_instancia,
-    )
-    .ok_or_else(|| {
-        format!(
-            "Nenhum arquivo CurseForge compatível com MC {} para o tipo {}.",
-            versao_instancia, tipo_normalizado
-        )
-    })?;
-
-    let download_url = arquivo_escolhido["downloadUrl"]
-        .as_str()
-        .ok_or("Arquivo selecionado do CurseForge sem URL de download")?
-        .to_string();
-    let nome_arquivo = arquivo_escolhido["fileName"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let selecao = SelecaoInstalacaoConteudo {
+        id: project_id.clone(),
+        nome: project_id,
+        icone_url: None,
+        plataforma: ModPlatform::CurseForge,
+        tipo_projeto: tipo_normalizado.clone(),
+    };
+    let arquivo =
+        resolver_projeto_sem_dependencias(&client, &selecao, &instance.version, &loader_instancia)
+            .await?;
 
     baixar_arquivo_para_pasta(
         &pasta_destino,
         &tipo_normalizado,
-        download_url,
-        nome_arquivo,
+        arquivo.download_url,
+        arquivo.file_name,
         "curseforge",
     )
     .await
@@ -1661,11 +2221,204 @@ fn ordenacao_modrinth(ordenacao: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct CategoriaBuscaOnline {
+    id: String,
+    nome: String,
+    modrinth: Option<String>,
+    curseforge: Option<u32>,
+}
+
+#[derive(Default)]
+struct CategoriaBuscaParcial {
+    nome: String,
+    modrinth: Option<String>,
+    curseforge: Option<u32>,
+}
+
+fn chave_categoria_busca(valor: &str) -> String {
+    valor
+        .chars()
+        .filter(|caractere| caractere.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn formatar_nome_categoria(valor: &str) -> String {
+    valor
+        .split(['-', '_'])
+        .filter(|parte| !parte.is_empty())
+        .map(|parte| {
+            let mut caracteres = parte.chars();
+            match caracteres.next() {
+                Some(inicial) => inicial.to_uppercase().chain(caracteres).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn categoria_modrinth_valida(categoria: &str) -> bool {
+    !categoria.is_empty()
+        && categoria.len() <= 80
+        && categoria
+            .chars()
+            .all(|caractere| caractere.is_ascii_alphanumeric() || matches!(caractere, '-' | '_'))
+}
+
+async fn buscar_categorias_modrinth(
+    client: &reqwest::Client,
+    tipo_conteudo: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let url = format!("{}/tag/category", MODRINTH_API_BASE);
+    let resposta = client
+        .get(url)
+        .header("User-Agent", "DomeLauncher/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao buscar categorias do Modrinth: {}", e))?;
+
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "Modrinth retornou HTTP {} ao listar categorias.",
+            resposta.status().as_u16()
+        ));
+    }
+
+    let categorias = resposta
+        .json::<Vec<serde_json::Value>>()
+        .await
+        .map_err(|e| format!("Erro ao interpretar categorias do Modrinth: {}", e))?;
+
+    Ok(categorias
+        .into_iter()
+        .filter(|categoria| categoria["project_type"].as_str() == Some(tipo_conteudo))
+        .filter(|categoria| categoria["header"].as_str() != Some("loaders"))
+        .filter_map(|categoria| {
+            let slug = categoria["name"].as_str()?.trim();
+            categoria_modrinth_valida(slug)
+                .then(|| (slug.to_string(), formatar_nome_categoria(slug)))
+        })
+        .collect())
+}
+
+async fn buscar_categorias_curseforge(
+    client: &reqwest::Client,
+    tipo_conteudo: &str,
+) -> Result<Vec<(u32, String, String)>, String> {
+    let class_id = class_id_por_tipo_conteudo(tipo_conteudo);
+    let url = format!(
+        "{}/categories?gameId=432&classId={}",
+        CURSEFORGE_API_BASE, class_id
+    );
+    let resposta = anexar_headers_curseforge(client.get(url))?
+        .send()
+        .await
+        .map_err(|e| format!("Erro ao buscar categorias do CurseForge: {}", e))?;
+
+    if !resposta.status().is_success() {
+        return Err(format!(
+            "CurseForge retornou HTTP {} ao listar categorias.",
+            resposta.status().as_u16()
+        ));
+    }
+
+    let corpo = resposta
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Erro ao interpretar categorias do CurseForge: {}", e))?;
+
+    Ok(corpo["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|categoria| categoria["isClass"].as_bool() != Some(true))
+        .filter_map(|categoria| {
+            let id = categoria["id"].as_u64()?.try_into().ok()?;
+            let nome = categoria["name"].as_str()?.trim().to_string();
+            let slug = categoria["slug"]
+                .as_str()
+                .unwrap_or(&nome)
+                .trim()
+                .to_string();
+            Some((id, nome, slug))
+        })
+        .collect())
+}
+
+fn mesclar_categorias_busca(
+    modrinth: Vec<(String, String)>,
+    curseforge: Vec<(u32, String, String)>,
+) -> Vec<CategoriaBuscaOnline> {
+    let mut categorias = std::collections::BTreeMap::<String, CategoriaBuscaParcial>::new();
+
+    for (slug, nome) in modrinth {
+        let chave = chave_categoria_busca(&slug);
+        let categoria = categorias.entry(chave).or_default();
+        categoria.nome = nome;
+        categoria.modrinth = Some(slug);
+    }
+
+    for (id, nome, slug) in curseforge {
+        let chave_slug = chave_categoria_busca(&slug);
+        let chave_nome = chave_categoria_busca(&nome);
+        let chave = if categorias.contains_key(&chave_slug) {
+            chave_slug
+        } else {
+            chave_nome
+        };
+        let categoria = categorias.entry(chave).or_default();
+        categoria.nome = nome;
+        categoria.curseforge = Some(id);
+    }
+
+    let mut resultado = categorias
+        .into_iter()
+        .filter(|(_, categoria)| !categoria.nome.is_empty())
+        .map(|(id, categoria)| CategoriaBuscaOnline {
+            id,
+            nome: categoria.nome,
+            modrinth: categoria.modrinth,
+            curseforge: categoria.curseforge,
+        })
+        .collect::<Vec<_>>();
+    resultado.sort_by_key(|categoria| categoria.nome.to_lowercase());
+    resultado
+}
+
+#[tauri::command]
+pub(crate) async fn listar_categorias_busca_online(
+    content_type: Option<String>,
+) -> Result<Vec<CategoriaBuscaOnline>, String> {
+    let tipo_conteudo = normalizar_tipo_conteudo(content_type);
+    let client = reqwest::Client::new();
+    let (modrinth, curseforge) = tokio::join!(
+        buscar_categorias_modrinth(&client, &tipo_conteudo),
+        buscar_categorias_curseforge(&client, &tipo_conteudo)
+    );
+
+    match (modrinth, curseforge) {
+        (Ok(modrinth), Ok(curseforge)) => Ok(mesclar_categorias_busca(modrinth, curseforge)),
+        (Ok(modrinth), Err(_)) => Ok(mesclar_categorias_busca(modrinth, Vec::new())),
+        (Err(_), Ok(curseforge)) => Ok(mesclar_categorias_busca(Vec::new(), curseforge)),
+        (Err(erro_modrinth), Err(erro_curseforge)) => Err(format!(
+            "Não foi possível carregar categorias. {} | {}",
+            erro_modrinth, erro_curseforge
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
 pub(crate) struct FiltrosBuscaOnline {
     game_version: Option<String>,
     loader: Option<String>,
+    categorias_modrinth: Vec<String>,
+    categorias_curseforge: Vec<u32>,
+    categorias_negadas_modrinth: Vec<String>,
+    categorias_negadas_curseforge: Vec<u32>,
     sort: Option<String>,
     offset: Option<u32>,
     limit: Option<u32>,
@@ -1676,9 +2429,52 @@ struct ParametrosBuscaOnline<'a> {
     tipo_conteudo: &'a str,
     game_version: Option<&'a str>,
     loader: Option<&'a str>,
+    categorias_modrinth: &'a [String],
+    categorias_curseforge: &'a [u32],
+    categorias_negadas_modrinth: &'a [String],
+    categorias_negadas_curseforge: &'a [u32],
     ordenacao: &'a str,
     offset: u32,
     limit: u32,
+}
+
+fn criar_facetas_categorias_modrinth(
+    categorias_incluidas: &[String],
+    categorias_negadas: &[String],
+) -> Vec<Vec<String>> {
+    let mut facetas = Vec::new();
+    if !categorias_incluidas.is_empty() {
+        facetas.push(
+            categorias_incluidas
+                .iter()
+                .map(|categoria| format!("categories:{}", categoria))
+                .collect(),
+        );
+    }
+    facetas.extend(
+        categorias_negadas
+            .iter()
+            .map(|categoria| vec![format!("categories!={}", categoria)])
+            .collect::<Vec<_>>(),
+    );
+    facetas
+}
+
+fn serializar_categorias_curseforge(categorias: &[u32]) -> Option<String> {
+    (!categorias.is_empty()).then(|| {
+        let ids = categorias.iter().map(u32::to_string).collect::<Vec<_>>();
+        format!("[{}]", ids.join(","))
+    })
+}
+
+fn possui_categoria_curseforge(projeto: &serde_json::Value, categorias_proibidas: &[u32]) -> bool {
+    projeto["categories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|categoria| categoria["id"].as_u64())
+        .filter_map(|id| u32::try_from(id).ok())
+        .any(|id| categorias_proibidas.contains(&id))
 }
 
 #[cfg(test)]
@@ -1702,6 +2498,45 @@ mod testes_filtros_busca {
         assert_eq!(ordenacao_curseforge("relevancia"), 2);
         assert_eq!(ordenacao_modrinth("relevancia"), "relevance");
     }
+
+    #[test]
+    fn mescla_categorias_equivalentes_sem_confundir_taxonomias() {
+        let categorias = mesclar_categorias_busca(
+            vec![("technology".to_string(), "Technology".to_string())],
+            vec![(123, "Technology".to_string(), "technology".to_string())],
+        );
+
+        assert_eq!(categorias.len(), 1);
+        assert_eq!(categorias[0].modrinth.as_deref(), Some("technology"));
+        assert_eq!(categorias[0].curseforge, Some(123));
+    }
+
+    #[test]
+    fn rejeita_categoria_modrinth_que_possa_injetar_facet() {
+        assert!(categoria_modrinth_valida("world-generation"));
+        assert!(!categoria_modrinth_valida("technology\"]]"));
+    }
+
+    #[test]
+    fn prepara_multiplas_categorias_para_as_duas_plataformas() {
+        let categorias_incluidas = vec!["technology".to_string(), "adventure".to_string()];
+        let categorias_negadas = vec!["magic".to_string(), "storage".to_string()];
+        assert_eq!(
+            criar_facetas_categorias_modrinth(&categorias_incluidas, &categorias_negadas),
+            vec![
+                vec!["categories:technology", "categories:adventure"],
+                vec!["categories!=magic"],
+                vec!["categories!=storage"]
+            ]
+        );
+        assert_eq!(
+            serializar_categorias_curseforge(&[6, 12]).as_deref(),
+            Some("[6,12]")
+        );
+        let projeto = serde_json::json!({ "categories": [{ "id": 6 }, { "id": 18 }] });
+        assert!(possui_categoria_curseforge(&projeto, &[6, 12]));
+        assert!(!possui_categoria_curseforge(&projeto, &[12]));
+    }
 }
 
 #[tauri::command]
@@ -1713,12 +2548,77 @@ pub(crate) async fn search_mods_online(
 ) -> Result<Vec<ModSearchResult>, String> {
     let tipo_conteudo = normalizar_tipo_conteudo(content_type);
     let filtros = filtros.unwrap_or_default();
+    let mut categorias_modrinth = filtros
+        .categorias_modrinth
+        .iter()
+        .map(|categoria| categoria.trim().to_string())
+        .filter(|categoria| !categoria.is_empty())
+        .collect::<Vec<_>>();
+    categorias_modrinth.sort();
+    categorias_modrinth.dedup();
+    if categorias_modrinth.len() > 10
+        || !categorias_modrinth
+            .iter()
+            .all(|categoria| categoria_modrinth_valida(categoria))
+    {
+        return Err("Categorias Modrinth inválidas.".to_string());
+    }
+    let mut categorias_curseforge = filtros
+        .categorias_curseforge
+        .iter()
+        .copied()
+        .filter(|id| *id > 0)
+        .collect::<Vec<_>>();
+    categorias_curseforge.sort_unstable();
+    categorias_curseforge.dedup();
+    if categorias_curseforge.len() > 10 {
+        return Err("O CurseForge permite no máximo 10 categorias por busca.".to_string());
+    }
+    let mut categorias_negadas_modrinth = filtros
+        .categorias_negadas_modrinth
+        .iter()
+        .map(|categoria| categoria.trim().to_string())
+        .filter(|categoria| !categoria.is_empty())
+        .collect::<Vec<_>>();
+    categorias_negadas_modrinth.sort();
+    categorias_negadas_modrinth.dedup();
+    if categorias_negadas_modrinth.len() > 10
+        || !categorias_negadas_modrinth
+            .iter()
+            .all(|categoria| categoria_modrinth_valida(categoria))
+    {
+        return Err("Categorias negadas do Modrinth inválidas.".to_string());
+    }
+    let mut categorias_negadas_curseforge = filtros
+        .categorias_negadas_curseforge
+        .iter()
+        .copied()
+        .filter(|id| *id > 0)
+        .collect::<Vec<_>>();
+    categorias_negadas_curseforge.sort_unstable();
+    categorias_negadas_curseforge.dedup();
+    if categorias_negadas_curseforge.len() > 10 {
+        return Err("O CurseForge permite negar no máximo 10 categorias por busca.".to_string());
+    }
+    if categorias_modrinth
+        .iter()
+        .any(|categoria| categorias_negadas_modrinth.contains(categoria))
+        || categorias_curseforge
+            .iter()
+            .any(|categoria| categorias_negadas_curseforge.contains(categoria))
+    {
+        return Err("Uma categoria não pode ser incluída e negada ao mesmo tempo.".to_string());
+    }
     let ordenacao = normalizar_ordenacao_busca(filtros.sort);
     let parametros = ParametrosBuscaOnline {
         query: &query,
         tipo_conteudo: &tipo_conteudo,
         game_version: filtros.game_version.as_deref(),
         loader: filtros.loader.as_deref(),
+        categorias_modrinth: &categorias_modrinth,
+        categorias_curseforge: &categorias_curseforge,
+        categorias_negadas_modrinth: &categorias_negadas_modrinth,
+        categorias_negadas_curseforge: &categorias_negadas_curseforge,
         ordenacao: &ordenacao,
         offset: filtros.offset.unwrap_or(0),
         limit: filtros.limit.unwrap_or(20).clamp(1, 50),
@@ -1789,11 +2689,17 @@ async fn search_curseforge_conteudo(
             "&gameVersion={}",
             urlencoding::encode(game_version)
         ));
-        if matches!(parametros.tipo_conteudo, "mod" | "modpack") {
-            if let Some(loader_id) = parametros.loader.and_then(id_loader_curseforge) {
-                search_url.push_str(&format!("&modLoaderType={}", loader_id));
-            }
+    }
+    if matches!(parametros.tipo_conteudo, "mod" | "modpack") {
+        if let Some(loader_id) = parametros.loader.and_then(id_loader_curseforge) {
+            search_url.push_str(&format!("&modLoaderType={}", loader_id));
         }
+    }
+    if let Some(categorias) = serializar_categorias_curseforge(parametros.categorias_curseforge) {
+        search_url.push_str(&format!(
+            "&categoryIds={}",
+            urlencoding::encode(&categorias)
+        ));
     }
 
     let request = anexar_headers_curseforge(client.get(&search_url))?;
@@ -1876,6 +2782,10 @@ async fn search_curseforge_conteudo(
                 slug,
                 project_type: Some(parametros.tipo_conteudo.to_string()),
                 file_name: None,
+                oculto_por_categoria: possui_categoria_curseforge(
+                    mod_data,
+                    parametros.categorias_negadas_curseforge,
+                ),
             });
         }
     }
@@ -1903,6 +2813,10 @@ async fn search_modrinth_conteudo(
             facets.push(vec![format!("categories:{}", loader.to_lowercase())]);
         }
     }
+    facets.extend(criar_facetas_categorias_modrinth(
+        parametros.categorias_modrinth,
+        parametros.categorias_negadas_modrinth,
+    ));
     let facets = serde_json::to_string(&facets)
         .map_err(|e| format!("Erro ao preparar filtros do Modrinth: {}", e))?;
     let indice_ordenacao = ordenacao_modrinth(parametros.ordenacao);
@@ -1968,6 +2882,7 @@ async fn search_modrinth_conteudo(
                         .to_string(),
                 ),
                 file_name: None,
+                oculto_por_categoria: false,
             });
         }
     }
@@ -1993,4 +2908,5 @@ pub(crate) struct ModSearchResult {
     pub slug: Option<String>,
     pub project_type: Option<String>,
     pub file_name: Option<String>,
+    pub oculto_por_categoria: bool,
 }

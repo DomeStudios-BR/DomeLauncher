@@ -112,6 +112,9 @@ e limpeza temporária explicitamente.
 
 ## Downloads e instâncias
 
+A exclusão de instâncias exige confirmação e continua em segundo plano. O progresso percentual e erros aparecem
+em um indicador compacto, inclusive após navegar para outra aba. Exclusões adicionais aguardam em fila.
+
 `aplicacao/downloads_instancias.rs` prepara cliente, bibliotecas e assets com até 32 transferências simultâneas.
 O cache fica em `pasta_dados_launcher()/cache/arquivos-minecraft` (`%APPDATA%\dome` no Windows,
 `~/.local/share/dome` no Linux), com chave SHA-1 do manifesto ou URL sem hash.

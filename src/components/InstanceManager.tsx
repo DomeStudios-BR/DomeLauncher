@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Play,
   Search,
@@ -13,7 +13,10 @@ import {
   Image,
   Sparkles,
   Loader2,
+  Check,
+  ChevronDown,
   ChevronLeft,
+  Filter,
   X,
   FolderOpen,
   FileText,
@@ -28,10 +31,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn } from "../lib/utils";
 import { ICONE_DOME_LAUNCHER } from "../lib/imagemProjeto";
-import { arquivoPodePertencerAoProjeto } from "../lib/conteudoInstalado";
+import {
+  arquivoPodePertencerAoProjeto,
+  expandirSelecaoComDependentes,
+} from "../lib/conteudoInstalado";
+import { EVENTO_NAVEGACAO_INTERNA, type DirecaoNavegacaoInterna } from "../lib/navegacaoInterna";
 import Configuracao from "../pages/instance/Configuracao";
+import Servidores from "../pages/instance/Servidores";
 import type { ProjetoConteudo } from "./ProjetoDetalheModal";
+import RevisaoInstalacaoConteudo, {
+  type ItemPlanoInstalacaoConteudo,
+} from "./instance/RevisaoInstalacaoConteudo";
 import EditorIconeModal from "./editor-icone/EditorIconeModal";
+import ModalExclusaoInstancia from "./ModalExclusaoInstancia";
 import {
   CabecalhoMenuContextual,
   ItemMenuContextual,
@@ -83,6 +95,8 @@ interface InstalledMod {
   updateFileName?: string;
   updateDownloadUrl?: string;
   updating?: boolean;
+  identificadores: string[];
+  dependencias: string[];
 }
 
 interface ArquivoVersaoConteudo {
@@ -134,9 +148,11 @@ interface ConteudoInstaladoDetalhado {
   author: string;
   icon?: string;
   enabled: boolean;
+  identificadores: string[];
+  dependencias: string[];
 }
 
-interface SearchResult {
+interface VarianteResultadoBusca {
   id: string;
   title: string;
   description: string;
@@ -144,12 +160,44 @@ interface SearchResult {
   author: string;
   downloads?: number;
   slug: string;
-  project_type: string;
+  project_type: TipoProjetoCache;
+  source: BrowseSource;
   latest_version?: string;
   file_name?: string;
-  source: BrowseSource;
-  fontes?: BrowseSource[];
-  idsPorFonte?: Partial<Record<BrowseSource, string>>;
+}
+
+interface SearchResult extends VarianteResultadoBusca {
+  chave: string;
+  fontes: BrowseSource[];
+  variantes: Partial<Record<BrowseSource, VarianteResultadoBusca>>;
+}
+
+interface ResultadoBuscaOnline {
+  id?: string | number;
+  name?: string;
+  title?: string;
+  description?: string;
+  iconUrl?: string;
+  icon_url?: string;
+  author?: string;
+  downloadCount?: number;
+  download_count?: number;
+  slug?: string;
+  projectType?: TipoProjetoCache;
+  project_type?: TipoProjetoCache;
+  platform?: BrowseSource;
+  latestVersion?: string;
+  latest_version?: string;
+  fileName?: string;
+  file_name?: string;
+  ocultoPorCategoria?: boolean;
+}
+
+interface CategoriaBuscaOnline {
+  id: string;
+  nome: string;
+  modrinth?: string;
+  curseforge?: number;
 }
 
 interface WorldInfo {
@@ -172,12 +220,129 @@ interface ConfiguracoesGlobais {
   close_on_launch?: boolean;
 }
 
-type ContentTab = "content" | "worlds" | "configuration" | "logs";
+type ContentTab = "content" | "worlds" | "servers" | "configuration" | "logs";
 type ContentFilter = "mods" | "resourcepacks" | "shaders";
 type ViewMode = "installed" | "browse";
 type BrowseSource = "modrinth" | "curseforge";
-type FiltroFonteBusca = BrowseSource | "ambas";
+type FontesBusca = Record<BrowseSource, boolean>;
 type TipoProjetoCache = "mod" | "resourcepack" | "shader";
+type OrdenacaoBusca = "relevancia" | "popularidade" | "downloads" | "atualizados" | "recentes";
+
+const ORDENACOES_BUSCA: Array<{ id: OrdenacaoBusca; nome: string }> = [
+  { id: "relevancia", nome: "Relevância" },
+  { id: "popularidade", nome: "Popularidade" },
+  { id: "downloads", nome: "Mais baixados" },
+  { id: "atualizados", nome: "Atualizados recentemente" },
+  { id: "recentes", nome: "Mais novos" },
+];
+
+const FONTES_BUSCA: BrowseSource[] = ["modrinth", "curseforge"];
+const FONTE_BUSCA_PRIORITARIA: BrowseSource = "modrinth";
+const FONTES_BUSCA_INICIAIS: FontesBusca = {
+  modrinth: false,
+  curseforge: false,
+};
+const LIMITE_RESULTADOS_BUSCA = 20;
+const LIMITE_CORRESPONDENCIA_FONTES = 50;
+
+const normalizarIdentificadorBusca = (valor: string) =>
+  valor
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+
+const obterChavesCorrespondenciaBusca = (item: VarianteResultadoBusca) => {
+  const chaves = [`id:${item.source}:${item.id}`];
+  const slug = normalizarIdentificadorBusca(item.slug);
+  const titulo = normalizarIdentificadorBusca(item.title);
+
+  if (slug) chaves.push(`slug:${slug}`);
+  if (titulo) chaves.push(`titulo:${titulo}`);
+  return chaves;
+};
+
+const mapearResultadoBuscaOnline = (
+  item: ResultadoBuscaOnline,
+  tipoPadrao: TipoProjetoCache
+): VarianteResultadoBusca => {
+  const id = String(item.id || "");
+  return {
+    id,
+    title: String(item.name || item.title || "Sem nome"),
+    description: String(item.description || ""),
+    icon_url: item.iconUrl || item.icon_url || undefined,
+    author: String(item.author || "Desconhecido"),
+    downloads:
+      typeof item.downloadCount === "number"
+        ? item.downloadCount
+        : typeof item.download_count === "number"
+          ? item.download_count
+          : undefined,
+    slug: String(item.slug || "").trim() || id.trim(),
+    project_type: item.projectType || item.project_type || tipoPadrao,
+    source: item.platform === "curseforge" ? "curseforge" : "modrinth",
+    latest_version: item.latestVersion || item.latest_version || undefined,
+    file_name: item.fileName || item.file_name || undefined,
+  };
+};
+
+const criarResultadoBuscaMesclado = (
+  variantes: Partial<Record<BrowseSource, VarianteResultadoBusca>>
+): SearchResult => {
+  const principal = variantes[FONTE_BUSCA_PRIORITARIA] || variantes.curseforge;
+  if (!principal) throw new Error("Resultado sem plataforma de origem.");
+
+  const fontes = FONTES_BUSCA.filter((fonte) => variantes[fonte]);
+  const chave = obterChavesCorrespondenciaBusca(principal).find((valor) => !valor.startsWith("id:"))
+    || `id:${principal.source}:${principal.id}`;
+  const downloads = fontes.reduce((total, fonte) => total + (variantes[fonte]?.downloads || 0), 0);
+
+  return {
+    ...principal,
+    chave,
+    downloads,
+    fontes,
+    variantes,
+  };
+};
+
+const mesclarResultadosBusca = (
+  itens: VarianteResultadoBusca[],
+  ordenacao: OrdenacaoBusca
+): SearchResult[] => {
+  const grupos: Array<Partial<Record<BrowseSource, VarianteResultadoBusca>>> = [];
+  const indicePorChave = new Map<string, number>();
+
+  itens.forEach((item) => {
+    const chaves = obterChavesCorrespondenciaBusca(item);
+    const indice = chaves.map((chave) => indicePorChave.get(chave)).find((valor) => valor !== undefined);
+
+    if (indice === undefined) {
+      const novoIndice = grupos.length;
+      grupos.push({ [item.source]: item });
+      chaves.forEach((chave) => indicePorChave.set(chave, novoIndice));
+      return;
+    }
+
+    grupos[indice][item.source] = item;
+    chaves.forEach((chave) => indicePorChave.set(chave, indice));
+  });
+
+  const resultados = grupos.map(criarResultadoBuscaMesclado);
+  if (ordenacao === "downloads") {
+    resultados.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+  }
+  return resultados;
+};
+
+const extrairVariantesResultadoBusca = (item: SearchResult): VarianteResultadoBusca[] =>
+  item.fontes.flatMap((fonte) => {
+    const variante = item.variantes[fonte];
+    return variante ? [variante] : [];
+  });
+
+const chaveSelecaoDownload = (item: SearchResult) => `${item.source}:project:${item.id}`;
 
 interface RegistroCacheConteudo {
   name: string;
@@ -202,6 +367,7 @@ const TTL_CACHE_CONTEUDO_MS = 1000 * 60 * 60 * 24 * 30;
 const TTL_CACHE_ATUALIZACAO_MS = 1000 * 60 * 60 * 6;
 const TTL_RETENTATIVA_ENRIQUECIMENTO_MS = 1000 * 60 * 60 * 24;
 const LIMITE_ENRIQUECIMENTO_POR_CICLO = 8;
+const LIMITE_CATEGORIAS_BUSCA = 10;
 const VERSAO_IDENTIFICACAO_CONTEUDO = 2;
 
 const tipoProjetoPorFiltro = (filtro: ContentFilter): TipoProjetoCache => {
@@ -209,25 +375,6 @@ const tipoProjetoPorFiltro = (filtro: ContentFilter): TipoProjetoCache => {
   if (filtro === "shaders") return "shader";
   return "mod";
 };
-
-const chaveCorrespondenciaProjeto = (item: Pick<SearchResult, "slug" | "title">): string => {
-  const valor = item.slug || item.title;
-  return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-};
-
-const mesclarResultadosBusca = (atual: SearchResult, novo: SearchResult): SearchResult => ({
-  ...atual,
-  description: atual.description || novo.description,
-  icon_url: atual.icon_url || novo.icon_url,
-  downloads: Math.max(atual.downloads ?? 0, novo.downloads ?? 0),
-  latest_version: atual.latest_version || novo.latest_version,
-  file_name: atual.file_name || novo.file_name,
-  fontes: Array.from(new Set([...(atual.fontes ?? [atual.source]), ...(novo.fontes ?? [novo.source])])),
-  idsPorFonte: {
-    ...(atual.idsPorFonte ?? { [atual.source]: atual.id }),
-    ...(novo.idsPorFonte ?? { [novo.source]: novo.id }),
-  },
-});
 
 async function obterDownloadsFavorito(favorito: FavoriteItem): Promise<number | undefined> {
   try {
@@ -410,7 +557,10 @@ export default function InstanceManager({
   const [activeTab, setActiveTab] = useState<ContentTab>("content");
   const [activeFilter, setActiveFilter] = useState<ContentFilter>("mods");
   const [viewMode, setViewMode] = useState<ViewMode>("installed");
-  const [browseSource, setBrowseSource] = useState<FiltroFonteBusca>("ambas");
+  const [fontesBuscaSelecionadas, setFontesBuscaSelecionadas] = useState<FontesBusca>({
+    ...FONTES_BUSCA_INICIAIS,
+  });
+  const [seletorFontesAberto, setSeletorFontesAberto] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [installedResourcePacks, setInstalledResourcePacks] = useState<InstalledMod[]>([]);
@@ -420,15 +570,33 @@ export default function InstanceManager({
   const [searching, setSearching] = useState(false);
   const [carregandoMaisResultados, setCarregandoMaisResultados] = useState(false);
   const [temMaisResultados, setTemMaisResultados] = useState(true);
-  const [instalacoesEmAndamento, setInstalacoesEmAndamento] = useState<Set<string>>(new Set());
+  const [filtrosBuscaAbertos, setFiltrosBuscaAbertos] = useState(false);
+  const [ordenacaoBusca, setOrdenacaoBusca] = useState<OrdenacaoBusca>("relevancia");
+  const [categoriasBusca, setCategoriasBusca] = useState<CategoriaBuscaOnline[]>([]);
+  const [categoriasIncluidas, setCategoriasIncluidas] = useState<Set<string>>(new Set());
+  const [categoriasNegadas, setCategoriasNegadas] = useState<Set<string>>(new Set());
+  const [seletorCategoriasAberto, setSeletorCategoriasAberto] = useState(false);
+  const [carregandoCategorias, setCarregandoCategorias] = useState(false);
+  const [filaInstalacao, setFilaInstalacao] = useState<Record<string, SearchResult>>({});
+  const [revisaoInstalacaoAberta, setRevisaoInstalacaoAberta] = useState(false);
+  const [planoInstalacao, setPlanoInstalacao] = useState<ItemPlanoInstalacaoConteudo[]>([]);
+  const [carregandoPlanoInstalacao, setCarregandoPlanoInstalacao] = useState(false);
+  const [instalandoFila, setInstalandoFila] = useState(false);
+  const [erroPlanoInstalacao, setErroPlanoInstalacao] = useState<string | null>(null);
+  const [progressoInstalacao, setProgressoInstalacao] = useState<{
+    atual: number;
+    total: number;
+    nome: string;
+  } | null>(null);
   const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [logs, setLogs] = useState<LogFile[]>([]);
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
   const [logContent, setLogContent] = useState("");
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [modalExclusaoAberto, setModalExclusaoAberto] = useState(false);
   const [updatingAll, setUpdatingAll] = useState(false);
   const [modoSelecaoLote, setModoSelecaoLote] = useState(false);
-  const [arquivosSelecionados, setArquivosSelecionados] = useState<Set<string>>(new Set());
+  const [arquivosMarcados, setArquivosMarcados] = useState<Set<string>>(new Set());
   const [processandoLote, setProcessandoLote] = useState(false);
   const [menuConteudo, setMenuConteudo] = useState<{
     item: InstalledMod;
@@ -457,22 +625,34 @@ export default function InstanceManager({
   const [editorIconeAberto, setEditorIconeAberto] = useState(false);
   const editorIconeAbriuEdicaoRef = useRef(false);
 
-  const lastSearch = useRef({ query: "", filter: "", source: "" });
-  const offsetsBuscaPorFonteRef = useRef<Record<BrowseSource, number>>({ modrinth: 0, curseforge: 0 });
+  const lastSearch = useRef({ query: "", filter: "", source: "", opcoes: "" });
   const carregandoMaisResultadosRef = useRef(false);
-  const instalacoesEmAndamentoRef = useRef<Set<string>>(new Set());
   const listaConteudoRef = useRef<HTMLDivElement | null>(null);
+  const seletorFontesRef = useRef<HTMLDivElement | null>(null);
+  const seletorCategoriasRef = useRef<HTMLDivElement | null>(null);
+  const proximosOffsetsBuscaRef = useRef<Record<BrowseSource, number>>({ modrinth: 0, curseforge: 0 });
+  const temMaisPorFonteBuscaRef = useRef<Record<BrowseSource, boolean>>({ modrinth: true, curseforge: true });
+  const geracaoBuscaRef = useRef(0);
   const nomeInstanciaRef = useRef<HTMLInputElement | null>(null);
   const arrasteIndicadorRef = useRef<{
     ponteiroId: number;
     inicioY: number;
     scrollInicial: number;
   } | null>(null);
+  const assinaturaCategoriasIncluidas = Array.from(categoriasIncluidas).sort().join("|");
+  const assinaturaCategoriasNegadas = Array.from(categoriasNegadas).sort().join("|");
+  const assinaturaCategorias = `${assinaturaCategoriasIncluidas}::${assinaturaCategoriasNegadas}`;
+  const assinaturaFontesBusca = FONTES_BUSCA.filter((fonte) => fontesBuscaSelecionadas[fonte]).join("|");
 
   useEffect(() => {
     setActiveTab("content");
     setActiveFilter("mods");
     setViewMode("installed");
+    setFilaInstalacao({});
+    setCategoriasIncluidas(new Set());
+    setCategoriasNegadas(new Set());
+    setSeletorCategoriasAberto(false);
+    setOrdenacaoBusca("relevancia");
     loadInstanceDetails();
   }, [instanceId]);
 
@@ -499,27 +679,106 @@ export default function InstanceManager({
     if (viewMode === "browse") {
       searchContent(searchQuery);
     }
-  }, [viewMode, activeFilter, browseSource, instanceDetails?.version, instanceDetails?.loaderType]);
+  }, [
+    viewMode,
+    activeFilter,
+    assinaturaFontesBusca,
+    instanceDetails?.version,
+    instanceDetails?.loaderType,
+    ordenacaoBusca,
+    assinaturaCategorias,
+  ]);
 
   useEffect(() => {
-    setArquivosSelecionados(new Set());
+    if (viewMode !== "browse") return;
+
+    const carregarCategoriasBusca = async () => {
+      setCarregandoCategorias(true);
+      try {
+        const tipoConteudo = tipoProjetoPorFiltro(activeFilter);
+        const categorias = await invoke<CategoriaBuscaOnline[]>("listar_categorias_busca_online", {
+          contentType: tipoConteudo,
+        });
+        setCategoriasBusca(categorias);
+      } catch (error) {
+        console.error("Erro ao carregar categorias:", error);
+        setCategoriasBusca([]);
+      } finally {
+        setCarregandoCategorias(false);
+      }
+    };
+
+    void carregarCategoriasBusca();
+  }, [activeFilter, viewMode]);
+
+  useEffect(() => {
+    const navegarInternamente = (evento: Event) => {
+      const direcao = (evento as CustomEvent<DirecaoNavegacaoInterna>).detail;
+      if (activeTab !== "content" || direcao !== -1) return;
+
+      if (revisaoInstalacaoAberta && !instalandoFila) {
+        evento.preventDefault();
+        setRevisaoInstalacaoAberta(false);
+        return;
+      }
+      if (viewMode === "browse") {
+        evento.preventDefault();
+        setViewMode("installed");
+      }
+    };
+
+    window.addEventListener(EVENTO_NAVEGACAO_INTERNA, navegarInternamente);
+    return () => window.removeEventListener(EVENTO_NAVEGACAO_INTERNA, navegarInternamente);
+  }, [activeTab, instalandoFila, revisaoInstalacaoAberta, viewMode]);
+
+  useEffect(() => {
+    setArquivosMarcados(new Set());
+    setCategoriasIncluidas(new Set());
+    setCategoriasNegadas(new Set());
+    setSeletorCategoriasAberto(false);
     if (viewMode !== "installed") {
       setModoSelecaoLote(false);
     }
-  }, [activeFilter, viewMode, instanceId]);
+  }, [activeFilter, assinaturaFontesBusca, viewMode, instanceId]);
+
+  useEffect(() => {
+    if (!seletorFontesAberto) return;
+
+    const fecharAoClicarFora = (evento: MouseEvent) => {
+      if (!seletorFontesRef.current?.contains(evento.target as Node)) {
+        setSeletorFontesAberto(false);
+      }
+    };
+
+    document.addEventListener("mousedown", fecharAoClicarFora);
+    return () => document.removeEventListener("mousedown", fecharAoClicarFora);
+  }, [seletorFontesAberto]);
+
+  useEffect(() => {
+    if (!seletorCategoriasAberto) return;
+
+    const fecharAoClicarFora = (evento: MouseEvent) => {
+      if (!seletorCategoriasRef.current?.contains(evento.target as Node)) {
+        setSeletorCategoriasAberto(false);
+      }
+    };
+
+    document.addEventListener("mousedown", fecharAoClicarFora);
+    return () => document.removeEventListener("mousedown", fecharAoClicarFora);
+  }, [seletorCategoriasAberto]);
 
   // Debounce na busca
   useEffect(() => {
     if (viewMode !== "browse") return;
     if (lastSearch.current.query === searchQuery &&
         lastSearch.current.filter === activeFilter &&
-        lastSearch.current.source === browseSource) return;
+        lastSearch.current.source === assinaturaFontesBusca) return;
     
     const timer = setTimeout(() => {
       searchContent(searchQuery);
     }, 400);
     return () => clearTimeout(timer);
-  }, [searchQuery, viewMode]);
+  }, [assinaturaFontesBusca, searchQuery, viewMode]);
 
   const loadInstanceDetails = async () => {
     try {
@@ -581,6 +840,8 @@ export default function InstanceManager({
           updateFileName: atualizacaoCacheValida ? registro?.updateFileName : undefined,
           updateDownloadUrl: atualizacaoCacheValida ? registro?.updateDownloadUrl : undefined,
           enabled: detalhe.enabled,
+          identificadores: detalhe.identificadores || [],
+          dependencias: detalhe.dependencias || [],
         };
       });
       
@@ -859,6 +1120,78 @@ export default function InstanceManager({
     }
   };
 
+  const substituirItemNaLista = (
+    tipoProjeto: TipoProjetoCache,
+    nomeArquivoAnterior: string,
+    itemAtualizado: InstalledMod
+  ) => {
+    atualizarListaPorTipo(tipoProjeto, (lista) => {
+      const indice = lista.findIndex((item) => item.fileName === nomeArquivoAnterior);
+      if (indice < 0) return [...lista, itemAtualizado];
+
+      const proximaLista = [...lista];
+      proximaLista[indice] = itemAtualizado;
+      return proximaLista;
+    });
+    setArquivosMarcados((selecionados) => {
+      if (!selecionados.has(nomeArquivoAnterior)) return selecionados;
+
+      const proximos = new Set(selecionados);
+      proximos.delete(nomeArquivoAnterior);
+      proximos.add(itemAtualizado.fileName);
+      return proximos;
+    });
+  };
+
+  const atualizarSomenteItemInstalado = (
+    itemAnterior: InstalledMod,
+    tipoProjeto: TipoProjetoCache,
+    nomeArquivo: string,
+    versao: string,
+    atualizacaoConcluida: boolean
+  ) => {
+    const atualizacaoDisponivel = !atualizacaoConcluida && Boolean(
+      itemAnterior.latestVersion && itemAnterior.latestVersion !== versao
+    );
+    const itemAtualizado: InstalledMod = {
+      ...itemAnterior,
+      fileName: nomeArquivo,
+      version: versao,
+      enabled: true,
+      latestVersion: atualizacaoConcluida ? versao : itemAnterior.latestVersion,
+      updateAvailable: atualizacaoDisponivel,
+      updateFileName: atualizacaoConcluida ? undefined : itemAnterior.updateFileName,
+      updateDownloadUrl: atualizacaoConcluida ? undefined : itemAnterior.updateDownloadUrl,
+      updating: false,
+    };
+
+    substituirItemNaLista(tipoProjeto, itemAnterior.fileName, itemAtualizado);
+
+    const cacheConteudo = lerCacheConteudoInstalado();
+    const registroAnterior = obterRegistroCacheConteudo(
+      cacheConteudo,
+      instanceId,
+      tipoProjeto,
+      itemAnterior.fileName
+    );
+    removerRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, itemAnterior.fileName);
+    definirRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, nomeArquivo, {
+      name: itemAtualizado.name,
+      author: itemAtualizado.author,
+      icon: itemAtualizado.icon,
+      projectId: itemAtualizado.projectId,
+      source: itemAtualizado.source,
+      projectType: tipoProjeto,
+      latestVersion: itemAtualizado.latestVersion,
+      updateAvailable: itemAtualizado.updateAvailable,
+      updateFileName: itemAtualizado.updateFileName,
+      updateDownloadUrl: itemAtualizado.updateDownloadUrl,
+      atualizacaoVerificadaEm: atualizacaoConcluida ? Date.now() : undefined,
+      versaoIdentificacao: registroAnterior?.versaoIdentificacao,
+    });
+    salvarCacheConteudoInstalado(cacheConteudo);
+  };
+
   const verificarAtualizacoesConteudo = async (
     itens: InstalledMod[],
     tipoProjeto: TipoProjetoCache
@@ -1044,9 +1377,35 @@ export default function InstanceManager({
   const searchContent = async (query: string, acumular = false) => {
     if (!instanceDetails) return;
     if (acumular && carregandoMaisResultadosRef.current) return;
-    if (!acumular) offsetsBuscaPorFonteRef.current = { modrinth: 0, curseforge: 0 };
-    const assinaturaBusca = { query, filter: activeFilter, source: browseSource };
+    const fontesMarcadas = FONTES_BUSCA.filter((fonte) => fontesBuscaSelecionadas[fonte]);
+    const fontesAtivas = fontesMarcadas.length > 0 ? fontesMarcadas : FONTES_BUSCA;
+    const fonteCategoria = fontesMarcadas.length === 1 ? fontesMarcadas[0] : null;
+    const categoriasIncluidasAtivas = categoriasBusca.filter((categoria) => categoriasIncluidas.has(categoria.id));
+    const categoriasNegadasAtivas = categoriasBusca.filter((categoria) => categoriasNegadas.has(categoria.id));
+    const opcoesBusca = JSON.stringify({ ordenacaoBusca, categorias: assinaturaCategorias });
+    const assinaturaBusca = {
+      query,
+      filter: activeFilter,
+      source: assinaturaFontesBusca,
+      opcoes: opcoesBusca,
+    };
     lastSearch.current = assinaturaBusca;
+    const geracaoBusca = acumular ? geracaoBuscaRef.current : ++geracaoBuscaRef.current;
+
+    if (!acumular) {
+      proximosOffsetsBuscaRef.current = { modrinth: 0, curseforge: 0 };
+      temMaisPorFonteBuscaRef.current = {
+        modrinth: fontesAtivas.includes("modrinth"),
+        curseforge: fontesAtivas.includes("curseforge"),
+      };
+    }
+
+    const fontesConsultadas = fontesAtivas.filter((fonte) => temMaisPorFonteBuscaRef.current[fonte]);
+    if (fontesConsultadas.length === 0) {
+      setTemMaisResultados(false);
+      return;
+    }
+
     if (acumular) {
       carregandoMaisResultadosRef.current = true;
       setCarregandoMaisResultados(true);
@@ -1055,114 +1414,131 @@ export default function InstanceManager({
       setTemMaisResultados(true);
     }
     try {
-      const typeMap: Record<ContentFilter, string> = {
+      const typeMap: Record<ContentFilter, TipoProjetoCache> = {
         mods: "mod",
         resourcepacks: "resourcepack",
         shaders: "shader",
       };
       const tipoConteudo = typeMap[activeFilter];
       const loaderInstancia = instanceDetails.loaderType?.trim().toLowerCase();
-      const fontes: BrowseSource[] = browseSource === "ambas"
-        ? ["modrinth", "curseforge"]
-        : [browseSource];
       const promessaFavoritos = acumular
         ? Promise.resolve([] as FavoriteItem[])
         : hidratarDownloadsFavoritos(loadFavorites()
             .filter((item) => item.type === tipoConteudo)
-            .filter((item) => browseSource === "ambas" || item.source === browseSource)
+            .filter((item) => fontesAtivas.includes(item.source))
             .filter((item) => !query.trim()
               || `${item.title} ${item.author}`.toLowerCase().includes(query.trim().toLowerCase())));
-      const paginas = await Promise.all(fontes.map(async (fonte) => {
-        const resultados: any[] = await invoke("search_mods_online", {
-          query,
-          platform: fonte,
-          contentType: tipoConteudo,
-          filtros: {
-            gameVersion: instanceDetails.version,
-            loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
-            offset: offsetsBuscaPorFonteRef.current[fonte],
-            limit: 20,
-          },
-        });
-        return { fonte, resultados };
+      const limiteConsulta = fontesConsultadas.length > 1
+        ? LIMITE_CORRESPONDENCIA_FONTES
+        : LIMITE_RESULTADOS_BUSCA;
+      const respostas = await Promise.allSettled(
+        fontesConsultadas.map(async (fonte) => {
+          const resultados = await invoke<ResultadoBuscaOnline[]>("search_mods_online", {
+            query,
+            platform: fonte,
+            contentType: tipoConteudo,
+            filtros: {
+              gameVersion: instanceDetails.version,
+              loader: tipoConteudo === "mod" && loaderInstancia ? loaderInstancia : null,
+              categoriasModrinth: fonteCategoria === "modrinth"
+                ? categoriasIncluidasAtivas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
+                : [],
+              categoriasCurseforge: fonteCategoria === "curseforge"
+                ? categoriasIncluidasAtivas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
+                : [],
+              categoriasNegadasModrinth: fonteCategoria === "modrinth"
+                ? categoriasNegadasAtivas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
+                : [],
+              categoriasNegadasCurseforge: fonteCategoria === "curseforge"
+                ? categoriasNegadasAtivas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
+                : [],
+              sort: ordenacaoBusca,
+              offset: proximosOffsetsBuscaRef.current[fonte],
+              limit: limiteConsulta,
+            },
+          });
+          return { fonte, resultados };
+        })
+      );
+      if (lastSearch.current.query !== assinaturaBusca.query
+          || lastSearch.current.filter !== assinaturaBusca.filter
+          || lastSearch.current.source !== assinaturaBusca.source
+          || lastSearch.current.opcoes !== assinaturaBusca.opcoes) {
+        return;
+      }
+      const sucessos = respostas.flatMap((resposta) => resposta.status === "fulfilled" ? [resposta.value] : []);
+      if (sucessos.length === 0) {
+        const motivos = respostas.flatMap((resposta) =>
+          resposta.status === "rejected" ? [String(resposta.reason)] : []
+        );
+        throw new Error(motivos.join(" | ") || "Não foi possível consultar os catálogos.");
+      }
+
+      respostas.forEach((resposta, indice) => {
+        if (resposta.status === "rejected") {
+          temMaisPorFonteBuscaRef.current[fontesConsultadas[indice]] = false;
+        }
+      });
+      const paginas = sucessos.map(({ fonte, resultados }) => ({
+        fonte,
+        resultados: resultados.slice(0, LIMITE_RESULTADOS_BUSCA),
       }));
+      paginas.forEach(({ fonte, resultados }) => {
+        proximosOffsetsBuscaRef.current[fonte] += resultados.length;
+        temMaisPorFonteBuscaRef.current[fonte] = resultados.length === LIMITE_RESULTADOS_BUSCA;
+      });
 
       const maiorPagina = Math.max(...paginas.map(({ resultados }) => resultados.length));
-      const resultadosIntercalados = Array.from({ length: maiorPagina }).flatMap((_, indice) =>
-        paginas.flatMap(({ fonte, resultados }) => resultados[indice] ? [{ fonte, item: resultados[indice] }] : [])
-      );
-      const paginaApiBruta = resultadosIntercalados.map(({ fonte, item }: { fonte: BrowseSource; item: any }) => ({
-          id: String(item.id || ""),
-          title: String(item.name || item.title || "Sem nome"),
-          description: String(item.description || ""),
-          icon_url: item.iconUrl || item.icon_url || undefined,
-          author: String(item.author || "Desconhecido"),
-          downloads:
-            typeof item.downloadCount === "number"
-              ? item.downloadCount
-              : typeof item.download_count === "number"
-                ? item.download_count
-                : undefined,
-          slug:
-            String(item.slug || "").trim() ||
-            String(item.id || "").trim(),
-          project_type: String(item.projectType || item.project_type || tipoConteudo),
-          latest_version: item.latestVersion || item.latest_version || undefined,
-          file_name: item.fileName || item.file_name || undefined,
-          source: fonte,
-          fontes: [fonte],
-          idsPorFonte: { [fonte]: String(item.id || "") },
-        } satisfies SearchResult));
-      const paginaApi = Array.from(paginaApiBruta.reduce((mapa, item) => {
-        const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
-        const existente = mapa.get(chave);
-        mapa.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
-        return mapa;
-      }, new Map<string, SearchResult>()).values());
-      const favoritos = (await promessaFavoritos)
-        .map((item) => ({
+      const resultadosPrincipais = Array.from({ length: maiorPagina })
+        .flatMap((_, indice) => paginas.flatMap(({ resultados }) => resultados[indice] ? [resultados[indice]] : []))
+        .filter((item) => !item.ocultoPorCategoria)
+        .map((item) => mapearResultadoBuscaOnline(item, tipoConteudo));
+      const chavesPrincipaisPorFonte: Record<BrowseSource, Set<string>> = {
+        modrinth: new Set(),
+        curseforge: new Set(),
+      };
+      resultadosPrincipais.forEach((item) => {
+        obterChavesCorrespondenciaBusca(item).forEach((chave) => chavesPrincipaisPorFonte[item.source].add(chave));
+      });
+      const resultadosComplementares = sucessos.flatMap(({ fonte, resultados }) => {
+        const outraFonte: BrowseSource = fonte === "modrinth" ? "curseforge" : "modrinth";
+        return resultados
+          .slice(LIMITE_RESULTADOS_BUSCA)
+          .filter((item) => !item.ocultoPorCategoria)
+          .map((item) => mapearResultadoBuscaOnline(item, tipoConteudo))
+          .filter((item) => obterChavesCorrespondenciaBusca(item)
+            .some((chave) => chavesPrincipaisPorFonte[outraFonte].has(chave)));
+      });
+      const resultadosFavoritos = (await promessaFavoritos)
+        .map((item): VarianteResultadoBusca => ({
           id: item.id,
           title: item.title,
           description: item.description,
           icon_url: item.icon_url || undefined,
           author: item.author,
           slug: item.slug,
-          project_type: item.type,
+          project_type: tipoConteudo,
           source: item.source,
-          fontes: [item.source],
           downloads: item.downloads,
-          idsPorFonte: { [item.source]: item.id },
-        } satisfies SearchResult))
-        .filter((item) => !projetoJaInstalado(item));
-      const pagina = Array.from([...favoritos, ...paginaApi].reduce((mapa, item) => {
-        const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
-        const existente = mapa.get(chave);
-        mapa.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
-        return mapa;
-      }, new Map<string, SearchResult>()).values());
-      if (lastSearch.current.query !== assinaturaBusca.query
-          || lastSearch.current.filter !== assinaturaBusca.filter
-          || lastSearch.current.source !== assinaturaBusca.source) {
-        return;
-      }
-      paginas.forEach(({ fonte, resultados }) => {
-        offsetsBuscaPorFonteRef.current[fonte] += resultados.length;
-      });
-      setTemMaisResultados(paginas.some(({ resultados }) => resultados.length === 20));
+        }))
+        .filter((item) => !projetoJaInstalado(criarResultadoBuscaMesclado({ [item.source]: item })));
+      const novosResultados = [
+        ...resultadosFavoritos,
+        ...resultadosPrincipais,
+        ...resultadosComplementares,
+      ];
+
+      setTemMaisResultados(fontesAtivas.some((fonte) => temMaisPorFonteBuscaRef.current[fonte]));
       setSearchResults((atuais) => {
-        if (!acumular) return pagina;
-        const resultados = new Map<string, SearchResult>();
-        for (const item of [...atuais, ...pagina]) {
-          const chave = chaveCorrespondenciaProjeto(item) || `${item.source}:${item.id}`;
-          const existente = resultados.get(chave);
-          resultados.set(chave, existente ? mesclarResultadosBusca(existente, item) : item);
-        }
-        return Array.from(resultados.values());
+        if (!acumular) return mesclarResultadosBusca(novosResultados, ordenacaoBusca);
+        const resultadosExistentes = atuais.flatMap(extrairVariantesResultadoBusca);
+        return mesclarResultadosBusca([...resultadosExistentes, ...novosResultados], ordenacaoBusca);
       });
     } catch (error) {
       console.error("Erro ao buscar:", error);
-      if (!acumular) setSearchResults([]);
+      if (!acumular && geracaoBuscaRef.current === geracaoBusca) setSearchResults([]);
     } finally {
+      if (geracaoBuscaRef.current !== geracaoBusca) return;
       if (acumular) {
         carregandoMaisResultadosRef.current = false;
         setCarregandoMaisResultados(false);
@@ -1172,23 +1548,11 @@ export default function InstanceManager({
     }
   };
 
-  const installContent = async (item: SearchResult) => {
+  const instalarConteudoSelecionado = async (item: SearchResult) => {
     if (!instanceDetails) return;
-    const chaveInstalacao = `${item.source}:${item.id}`;
-    if (instalacoesEmAndamentoRef.current.has(chaveInstalacao)) return;
+    const tipoProjeto = item.project_type;
 
-    instalacoesEmAndamentoRef.current.add(chaveInstalacao);
-    setInstalacoesEmAndamento(new Set(instalacoesEmAndamentoRef.current));
-
-    try {
-      const typeMap: Record<ContentFilter, string> = {
-        mods: "mod",
-        resourcepacks: "resourcepack",
-        shaders: "shader",
-      };
-      const tipoProjeto = typeMap[activeFilter];
-
-      if (item.source === "curseforge") {
+    if (item.source === "curseforge") {
         if (tipoProjeto === "mod") {
           await invoke("install_mod", {
             instanceId,
@@ -1226,119 +1590,197 @@ export default function InstanceManager({
           updateAvailable: false,
         });
         salvarCacheConteudoInstalado(cacheConteudo);
-
-        await loadInstalledContent(activeFilter);
         return;
-      }
+    }
 
-      // Determinar o loader correto para filtrar versões
-      const loaderType = instanceDetails.loaderType?.toLowerCase() || "";
-      const loadersSuportados = ["fabric", "forge", "quilt", "neoforge"];
-      const params = new URLSearchParams();
-      params.set("game_versions", JSON.stringify([instanceDetails.version]));
-      if (activeFilter === "mods" && loadersSuportados.includes(loaderType)) {
-        params.set("loaders", JSON.stringify([loaderType]));
-      }
-      
-      // Buscar versões compatíveis com versão do MC E loader
-      const versionsRes = await fetch(
-        `https://api.modrinth.com/v2/project/${item.id}/version?${params.toString()}`
-      );
-      const versions = await versionsRes.json();
+    const loaderType = instanceDetails.loaderType?.toLowerCase() || "";
+    const loadersSuportados = ["fabric", "forge", "quilt", "neoforge"];
+    const params = new URLSearchParams();
+    params.set("game_versions", JSON.stringify([instanceDetails.version]));
+    if (tipoProjeto === "mod" && loadersSuportados.includes(loaderType)) {
+      params.set("loaders", JSON.stringify([loaderType]));
+    }
 
-      if (versions.length === 0) {
-        const alvoCompat = loaderType ? `${loaderType} ${instanceDetails.version}` : instanceDetails.version;
-        alert(`Nenhuma versão compatível com ${alvoCompat}`);
-        return;
-      }
+    const versionsRes = await fetch(
+      `https://api.modrinth.com/v2/project/${item.id}/version?${params.toString()}`
+    );
+    if (!versionsRes.ok) {
+      throw new Error(`Modrinth retornou HTTP ${versionsRes.status} para ${item.title}.`);
+    }
+    const versions = await versionsRes.json();
 
-      const version = versions[0];
-      const file = version.files.find((f: any) => f.primary) || version.files[0];
+    if (versions.length === 0) {
+      const alvoCompat = loaderType ? `${loaderType} ${instanceDetails.version}` : instanceDetails.version;
+      throw new Error(`Nenhuma versão de ${item.title} é compatível com ${alvoCompat}.`);
+    }
 
-      if (!file) {
-        alert("Arquivo não encontrado");
-        return;
-      }
+    const version = versions[0];
+    const file = version.files.find((arquivo: { primary?: boolean }) => arquivo.primary) || version.files[0];
 
-      if (tipoProjeto === "mod") {
-        await invoke("install_mod", {
-          instanceId,
-          modInfo: {
-            id: item.id,
-            name: item.title,
-            description: item.description,
-            author: item.author,
-            version: version.version_number,
-            download_url: file.url,
-            file_name: file.filename,
-            platform: "modrinth",
-            dependencies: [],
-            version_id: version.id,
-          },
-        });
-      } else {
-        await invoke("install_project_file", {
-          instanceId,
-          projectType: tipoProjeto,
-          downloadUrl: file.url,
-          fileName: file.filename,
-        });
-      }
+    if (!file) throw new Error(`Arquivo compatível de ${item.title} não encontrado.`);
 
-      const cacheConteudo = lerCacheConteudoInstalado();
-      const tipoProjetoCache = tipoProjeto as TipoProjetoCache;
-      const nomeArquivoCache = file.filename || item.file_name || item.slug || item.id;
-      definirRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjetoCache, nomeArquivoCache, {
-        name: item.title,
-        author: item.author,
-        icon: item.icon_url,
-        projectId: item.id,
-        source: "modrinth",
-        projectType: tipoProjetoCache,
-        latestVersion: version.version_number,
-        updateAvailable: false,
-        updateFileName: undefined,
-        updateDownloadUrl: undefined,
-        atualizacaoVerificadaEm: Date.now(),
+    if (tipoProjeto === "mod") {
+      await invoke("install_mod", {
+        instanceId,
+        modInfo: {
+          id: item.id,
+          name: item.title,
+          description: item.description,
+          author: item.author,
+          version: version.version_number,
+          download_url: file.url,
+          file_name: file.filename,
+          platform: "modrinth",
+          dependencies: [],
+          version_id: version.id,
+        },
       });
-      salvarCacheConteudoInstalado(cacheConteudo);
+    } else {
+      await invoke("install_project_file", {
+        instanceId,
+        projectType: tipoProjeto,
+        downloadUrl: file.url,
+        fileName: file.filename,
+      });
+    }
 
-      await loadInstalledContent(activeFilter);
+    const cacheConteudo = lerCacheConteudoInstalado();
+    const nomeArquivoCache = file.filename || item.file_name || item.slug || item.id;
+    definirRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, nomeArquivoCache, {
+      name: item.title,
+      author: item.author,
+      icon: item.icon_url,
+      projectId: item.id,
+      source: "modrinth",
+      projectType: tipoProjeto,
+      latestVersion: version.version_number,
+      updateAvailable: false,
+      updateFileName: undefined,
+      updateDownloadUrl: undefined,
+      atualizacaoVerificadaEm: Date.now(),
+    });
+    salvarCacheConteudoInstalado(cacheConteudo);
+  };
+
+  const alternarItemFilaInstalacao = (item: SearchResult) => {
+    const chave = chaveSelecaoDownload(item);
+    setFilaInstalacao((atual) => {
+      if (atual[chave]) {
+        const proxima = { ...atual };
+        delete proxima[chave];
+        return proxima;
+      }
+      return { ...atual, [chave]: item };
+    });
+  };
+
+  const revisarFilaInstalacao = async () => {
+    const itens = Object.values(filaInstalacao);
+    if (itens.length === 0) return;
+
+    setRevisaoInstalacaoAberta(true);
+    setCarregandoPlanoInstalacao(true);
+    setErroPlanoInstalacao(null);
+    setPlanoInstalacao([]);
+    try {
+      const plano = await invoke<ItemPlanoInstalacaoConteudo[]>("planejar_instalacao_conteudo", {
+        instanceId,
+        itens: itens.map((item) => ({
+          id: item.id,
+          nome: item.title,
+          iconeUrl: item.icon_url || null,
+          plataforma: item.source,
+          tipoProjeto: item.project_type,
+        })),
+      });
+      setPlanoInstalacao(plano);
     } catch (error) {
-      console.error("Erro ao instalar:", error);
-      alert(`Erro: ${error}`);
+      console.error("Erro ao planejar instalação:", error);
+      setErroPlanoInstalacao(String(error));
     } finally {
-      instalacoesEmAndamentoRef.current.delete(chaveInstalacao);
-      setInstalacoesEmAndamento(new Set(instalacoesEmAndamentoRef.current));
+      setCarregandoPlanoInstalacao(false);
     }
   };
 
-  const toggleMod = async (mod: InstalledMod) => {
-    const tipoProjeto = tipoProjetoPorFiltro(activeFilter);
-    try {
-      const novoNomeArquivo = await invoke<string>("toggle_project_file_enabled", {
-        instanceId,
-        projectType: tipoProjeto,
-        fileName: mod.fileName,
-        enabled: !mod.enabled,
-      });
+  const instalarFilaSelecionada = async () => {
+    const itens = Object.values(filaInstalacao);
+    if (itens.length === 0 || instalandoFila) return;
 
-      const cacheConteudo = lerCacheConteudoInstalado();
-      const registroAtual = obterRegistroCacheConteudo(
-        cacheConteudo,
-        instanceId,
-        tipoProjeto,
-        mod.fileName
-      );
-      if (registroAtual) {
-        removerRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, mod.fileName);
-        definirRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, novoNomeArquivo, {
-          ...registroAtual,
+    setInstalandoFila(true);
+    setErroPlanoInstalacao(null);
+    const tiposAlterados = new Set<ContentFilter>();
+    try {
+      for (let indice = 0; indice < itens.length; indice += 1) {
+        const item = itens[indice];
+        setProgressoInstalacao({ atual: indice + 1, total: itens.length, nome: item.title });
+        await instalarConteudoSelecionado(item);
+        tiposAlterados.add(
+          item.project_type === "resourcepack"
+            ? "resourcepacks"
+            : item.project_type === "shader"
+              ? "shaders"
+              : "mods"
+        );
+        const chave = chaveSelecaoDownload(item);
+        setFilaInstalacao((atual) => {
+          const proxima = { ...atual };
+          delete proxima[chave];
+          return proxima;
         });
-        salvarCacheConteudoInstalado(cacheConteudo);
       }
 
-      await loadInstalledContent(activeFilter);
+      for (const tipo of tiposAlterados) {
+        await loadInstalledContent(tipo, true);
+      }
+      setRevisaoInstalacaoAberta(false);
+      setPlanoInstalacao([]);
+    } catch (error) {
+      console.error("Erro ao instalar fila:", error);
+      setErroPlanoInstalacao(`A instalação foi interrompida: ${String(error)}`);
+    } finally {
+      setInstalandoFila(false);
+      setProgressoInstalacao(null);
+    }
+  };
+
+  const definirEstadoItemInstalado = async (
+    mod: InstalledMod,
+    filtro: ContentFilter,
+    enabled: boolean
+  ) => {
+    const tipoProjeto = tipoProjetoPorFiltro(filtro);
+    const novoNomeArquivo = await invoke<string>("toggle_project_file_enabled", {
+      instanceId,
+      projectType: tipoProjeto,
+      fileName: mod.fileName,
+      enabled,
+    });
+
+    const cacheConteudo = lerCacheConteudoInstalado();
+    const registroAtual = obterRegistroCacheConteudo(
+      cacheConteudo,
+      instanceId,
+      tipoProjeto,
+      mod.fileName
+    );
+    if (registroAtual) {
+      removerRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, mod.fileName);
+      definirRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, novoNomeArquivo, {
+        ...registroAtual,
+      });
+      salvarCacheConteudoInstalado(cacheConteudo);
+    }
+
+    substituirItemNaLista(tipoProjeto, mod.fileName, {
+      ...mod,
+      fileName: novoNomeArquivo,
+      enabled,
+    });
+  };
+
+  const toggleMod = async (mod: InstalledMod) => {
+    try {
+      await definirEstadoItemInstalado(mod, activeFilter, !mod.enabled);
     } catch (error) {
       console.error("Erro ao alternar estado do arquivo:", error);
       alert(`Erro ao alterar estado: ${error}`);
@@ -1371,10 +1813,10 @@ export default function InstanceManager({
   };
 
   const alternarSelecaoArquivo = (fileName: string) => {
-    const selecionando = !arquivosSelecionados.has(fileName);
+    const selecionando = !arquivosMarcados.has(fileName);
     if (selecionando) setModoSelecaoLote(true);
 
-    setArquivosSelecionados((anterior) => {
+    setArquivosMarcados((anterior) => {
       const proximo = new Set(anterior);
       if (proximo.has(fileName)) {
         proximo.delete(fileName);
@@ -1390,7 +1832,7 @@ export default function InstanceManager({
     const todosSelecionados = nomesVisiveis.every((nome) => arquivosSelecionados.has(nome));
     if (!todosSelecionados) setModoSelecaoLote(true);
 
-    setArquivosSelecionados((anterior) => {
+    setArquivosMarcados((anterior) => {
       const proximo = new Set(anterior);
       if (todosSelecionados) {
         nomesVisiveis.forEach((nome) => proximo.delete(nome));
@@ -1406,7 +1848,6 @@ export default function InstanceManager({
     itensAlvo: InstalledMod[]
   ) => {
     if (itensAlvo.length === 0 || processandoLote) return;
-    const tipoProjeto = tipoProjetoPorFiltro(activeFilter);
     setProcessandoLote(true);
     try {
       for (const item of itensAlvo) {
@@ -1417,16 +1858,10 @@ export default function InstanceManager({
 
         const deveFicarAtivo = acao === "ativar";
         if (item.enabled === deveFicarAtivo) continue;
-        await invoke("toggle_project_file_enabled", {
-          instanceId,
-          projectType: tipoProjeto,
-          fileName: item.fileName,
-          enabled: deveFicarAtivo,
-        });
+        await definirEstadoItemInstalado(item, activeFilter, deveFicarAtivo);
       }
 
-      setArquivosSelecionados(new Set());
-      await loadInstalledContent(activeFilter);
+      setArquivosMarcados(new Set());
     } catch (error) {
       console.error("Erro ao executar ação em lote:", error);
       alert(`Erro ao processar itens selecionados: ${error}`);
@@ -1445,9 +1880,12 @@ export default function InstanceManager({
     );
 
     try {
+      let nomeArquivoAtualizado = item.updateFileName || item.fileName;
+      let versaoAtualizada = item.latestVersion || item.version;
+
       if (item.source === "curseforge") {
         if (tipoProjeto === "mod") {
-          await invoke("install_mod", {
+          nomeArquivoAtualizado = await invoke<string>("install_mod", {
             instanceId,
             modInfo: {
               id: item.projectId,
@@ -1462,7 +1900,7 @@ export default function InstanceManager({
             },
           });
         } else {
-          await invoke("install_curseforge_project_file", {
+          nomeArquivoAtualizado = await invoke<string>("install_curseforge_project_file", {
             instanceId,
             projectType: tipoProjeto,
             projectId: item.projectId,
@@ -1501,7 +1939,7 @@ export default function InstanceManager({
         }
 
         if (tipoProjeto === "mod") {
-          await invoke("install_mod", {
+          nomeArquivoAtualizado = await invoke<string>("install_mod", {
             instanceId,
             modInfo: {
               id: item.projectId,
@@ -1517,20 +1955,31 @@ export default function InstanceManager({
             },
           });
         } else {
-          await invoke("install_project_file", {
+          nomeArquivoAtualizado = await invoke<string>("install_project_file", {
             instanceId,
             projectType: tipoProjeto,
             downloadUrl,
             fileName,
           });
         }
+        versaoAtualizada = latestVersion || item.version;
       }
 
-      if (item.updateFileName && item.updateFileName !== item.fileName) {
-        await removerConteudoInstalado(item, filtro);
+      if (nomeArquivoAtualizado !== item.fileName) {
+        await invoke("remove_project_file", {
+          instanceId,
+          projectType: tipoProjeto,
+          fileName: item.fileName,
+        });
       }
 
-      await loadInstalledContent(filtro);
+      atualizarSomenteItemInstalado(
+        item,
+        tipoProjeto,
+        nomeArquivoAtualizado,
+        versaoAtualizada,
+        true
+      );
     } catch (error) {
       console.error("Erro ao atualizar conteúdo:", error);
       alert(`Erro ao atualizar "${item.name}": ${error}`);
@@ -1646,8 +2095,9 @@ export default function InstanceManager({
     setTrocandoVersaoConteudo(true);
     setErroTrocaVersao(null);
     try {
+      let nomeArquivoInstalado = arquivo.filename;
       if (tipoProjeto === "mod") {
-        await invoke("install_mod", {
+        nomeArquivoInstalado = await invoke<string>("install_mod", {
           instanceId,
           modInfo: {
             id: itemTrocaVersao.projectId,
@@ -1663,7 +2113,7 @@ export default function InstanceManager({
           },
         });
       } else {
-        await invoke("install_project_file", {
+        nomeArquivoInstalado = await invoke<string>("install_project_file", {
           instanceId,
           projectType: tipoProjeto,
           downloadUrl: arquivo.url,
@@ -1671,10 +2121,20 @@ export default function InstanceManager({
         });
       }
 
-      if (arquivo.filename !== itemTrocaVersao.fileName) {
-        await removerConteudoInstalado(itemTrocaVersao, filtroTrocaVersao);
+      if (nomeArquivoInstalado !== itemTrocaVersao.fileName) {
+        await invoke("remove_project_file", {
+          instanceId,
+          projectType: tipoProjeto,
+          fileName: itemTrocaVersao.fileName,
+        });
       }
-      await loadInstalledContent(filtroTrocaVersao);
+      atualizarSomenteItemInstalado(
+        itemTrocaVersao,
+        tipoProjeto,
+        nomeArquivoInstalado,
+        versao.version_number,
+        false
+      );
       setItemTrocaVersao(null);
     } catch (erro) {
       console.error("Erro ao trocar versão do conteúdo:", erro);
@@ -1770,7 +2230,7 @@ export default function InstanceManager({
       author: item.author,
       slug: item.slug,
       source: item.source,
-      project_type: tipoProjetoPorFiltro(activeFilter),
+      project_type: item.project_type,
       downloads: item.downloads,
     });
   };
@@ -1826,21 +2286,22 @@ export default function InstanceManager({
     }
   };
 
-  const deleteInstance = async () => {
-    if (!confirm(`Excluir instância "${instanceDetails?.name}"? Esta ação não pode ser desfeita.`)) return;
+  const deleteInstance = () => {
+    setShowMoreMenu(false);
+    setModalExclusaoAberto(true);
+  };
+
+  const excluirInstanciaConfirmada = async (id: string) => {
+    await invoke("delete_instance", { id });
+
     try {
-      await invoke("delete_instance", { id: instanceId });
-
       const cacheConteudo = lerCacheConteudoInstalado();
-      removerCacheInstanciaInteira(cacheConteudo, instanceId);
+      removerCacheInstanciaInteira(cacheConteudo, id);
       salvarCacheConteudoInstalado(cacheConteudo);
-
-      onBack();
-      onInstanceUpdate?.();
-    } catch (error) {
-      console.error("Erro ao excluir:", error);
-      alert(`Erro: ${error}`);
+    } catch (erro) {
+      console.error("Instância apagada, mas houve falha ao limpar o cache de conteúdo:", erro);
     }
+    onInstanceUpdate?.();
   };
 
   const abrirPastaMundo = async (worldPath: string) => {
@@ -1856,6 +2317,12 @@ export default function InstanceManager({
     activeFilter === "mods" ? installedMods :
     activeFilter === "resourcepacks" ? installedResourcePacks :
     installedShaders;
+  const arquivosSelecionados = useMemo(
+    () => activeFilter === "mods"
+      ? expandirSelecaoComDependentes(arquivosMarcados, installedMods)
+      : new Set(arquivosMarcados),
+    [activeFilter, arquivosMarcados, installedMods]
+  );
 
   // Filtrar conteúdo instalado
   const filteredContent = currentContent.filter((item) =>
@@ -1870,6 +2337,70 @@ export default function InstanceManager({
     filteredContent.every((item) => arquivosSelecionados.has(item.fileName));
   const quantidadeAtualizaveis = filteredContent.filter((item) => item.updateAvailable).length;
   const mostrarControlesAtualizacao = quantidadeAtualizaveis > 0 || updatingAll;
+  const itensFilaInstalacao = Object.values(filaInstalacao);
+  const fontesBuscaMarcadas = FONTES_BUSCA.filter((fonte) => fontesBuscaSelecionadas[fonte]);
+  const fonteCategorias = fontesBuscaMarcadas.length === 1 ? fontesBuscaMarcadas[0] : null;
+  const categoriasDaFonte = fonteCategorias
+    ? categoriasBusca.filter((categoria) => Boolean(categoria[fonteCategorias]))
+    : [];
+  const quantidadeFiltrosBusca = categoriasIncluidas.size
+    + categoriasNegadas.size
+    + fontesBuscaMarcadas.length
+    + Number(ordenacaoBusca !== "relevancia");
+  const resumoFontesBusca = (() => {
+    if (fontesBuscaMarcadas.length === 0) return "Todas as fontes";
+    if (fontesBuscaMarcadas.length === 2) return "Modrinth e CurseForge";
+    return fontesBuscaMarcadas[0] === "modrinth" ? "Modrinth" : "CurseForge";
+  })();
+  const resumoCategorias = (() => {
+    if (categoriasIncluidas.size === 0 && categoriasNegadas.size === 0) return "Todas as categorias";
+    if (categoriasNegadas.size === 0) return `${categoriasIncluidas.size} incluídas`;
+    if (categoriasIncluidas.size === 0) return `${categoriasNegadas.size} negadas`;
+    return `${categoriasIncluidas.size} incluídas • ${categoriasNegadas.size} negadas`;
+  })();
+
+  const limparFiltrosBusca = () => {
+    setFontesBuscaSelecionadas({ ...FONTES_BUSCA_INICIAIS });
+    setSeletorFontesAberto(false);
+    setCategoriasIncluidas(new Set());
+    setCategoriasNegadas(new Set());
+    setSeletorCategoriasAberto(false);
+    setOrdenacaoBusca("relevancia");
+  };
+
+  const alternarCategoriaBusca = (categoriaId: string, acao: "incluir" | "negar") => {
+    const categoriasAlvo = acao === "incluir" ? categoriasIncluidas : categoriasNegadas;
+    if (!categoriasAlvo.has(categoriaId) && categoriasAlvo.size >= LIMITE_CATEGORIAS_BUSCA) return;
+
+    const atualizarAlvo = acao === "incluir" ? setCategoriasIncluidas : setCategoriasNegadas;
+    const atualizarOpostas = acao === "incluir" ? setCategoriasNegadas : setCategoriasIncluidas;
+    atualizarAlvo((categoriasAtuais) => {
+      const proximas = new Set(categoriasAtuais);
+      if (proximas.has(categoriaId)) {
+        proximas.delete(categoriaId);
+      } else {
+        proximas.add(categoriaId);
+      }
+      return proximas;
+    });
+    if (!categoriasAlvo.has(categoriaId)) {
+      atualizarOpostas((categoriasAtuais) => {
+        const proximas = new Set(categoriasAtuais);
+        proximas.delete(categoriaId);
+        return proximas;
+      });
+    }
+  };
+
+  const alternarFonteBusca = (fonte: BrowseSource) => {
+    setFontesBuscaSelecionadas((fontesAtuais) => ({
+      ...fontesAtuais,
+      [fonte]: !fontesAtuais[fonte],
+    }));
+    setCategoriasIncluidas(new Set());
+    setCategoriasNegadas(new Set());
+    setSeletorCategoriasAberto(false);
+  };
 
   const sincronizarIndicadorRolagem = useCallback(() => {
     const lista = listaConteudoRef.current;
@@ -1996,26 +2527,28 @@ export default function InstanceManager({
   const favoritosAtuais = loadFavorites();
 
   const projetoJaInstalado = (item: SearchResult) => {
-    const idsProjeto = new Set([
-      item.id,
-      ...Object.values(item.idsPorFonte ?? {}),
-    ].filter((id): id is string => Boolean(id)).map((id) => id.toLowerCase()));
-    if ([...idsProjeto].some((id) => idsProjetosInstalados.has(id))) return true;
+    const variantes = extrairVariantesResultadoBusca(item);
+    if (variantes.some((variante) => idsProjetosInstalados.has(variante.id.toLowerCase()))) return true;
 
-    return currentContent.some((instalado) =>
-      arquivoPodePertencerAoProjeto(instalado.fileName, item.slug)
-    );
+    return currentContent.some((instalado) => variantes.some((variante) =>
+      arquivoPodePertencerAoProjeto(instalado.fileName, variante.slug)
+    ));
   };
 
   const projetoFavorito = (item: SearchResult) => {
-    const idsProjeto = new Set([
-      item.id,
-      ...Object.values(item.idsPorFonte ?? {}),
-    ].filter((id): id is string => Boolean(id)));
-    const chaveProjeto = chaveCorrespondenciaProjeto(item);
-    return favoritosAtuais.some((favorito) =>
-      idsProjeto.has(favorito.id) || chaveCorrespondenciaProjeto(favorito) === chaveProjeto
-    );
+    const variantes = extrairVariantesResultadoBusca(item);
+    const idsProjeto = new Set(variantes.map((variante) => variante.id));
+    const chavesProjeto = new Set(variantes.flatMap((variante) => [
+      normalizarIdentificadorBusca(variante.slug),
+      normalizarIdentificadorBusca(variante.title),
+    ]).filter(Boolean));
+
+    return favoritosAtuais.some((favorito) => {
+      if (idsProjeto.has(favorito.id)) return true;
+      return [favorito.slug, favorito.title]
+        .map(normalizarIdentificadorBusca)
+        .some((chave) => chave.length > 0 && chavesProjeto.has(chave));
+    });
   };
 
   // Filtros disponíveis baseado no tipo de instância
@@ -2200,8 +2733,8 @@ export default function InstanceManager({
         <div className="flex gap-1">
           {(
             isVanilla
-              ? (["content", "worlds", "logs"] as ContentTab[])
-              : (["content", "worlds", "configuration", "logs"] as ContentTab[])
+              ? (["content", "worlds", "servers", "logs"] as ContentTab[])
+              : (["content", "worlds", "servers", "configuration", "logs"] as ContentTab[])
           ).map((tab) => (
             <button
               key={tab}
@@ -2217,6 +2750,8 @@ export default function InstanceManager({
                 ? "Conteúdo"
                 : tab === "worlds"
                   ? "Mundos"
+                  : tab === "servers"
+                    ? "Servidores"
                   : tab === "configuration"
                     ? "Configuração"
                     : "Logs"}
@@ -2249,9 +2784,9 @@ export default function InstanceManager({
                   placeholder={
                     viewMode === "installed"
                       ? `Buscar em ${filteredContent.length} projetos...`
-                      : browseSource === "ambas"
-                        ? "Buscar no Modrinth e CurseForge..."
-                        : `Buscar no ${browseSource === "modrinth" ? "Modrinth" : "CurseForge"}...`
+                      : fontesBuscaMarcadas.length === 1
+                        ? `Buscar no ${fontesBuscaMarcadas[0] === "modrinth" ? "Modrinth" : "CurseForge"}...`
+                        : "Buscar no Modrinth e CurseForge..."
                   }
                   className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-10 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                 />
@@ -2270,7 +2805,7 @@ export default function InstanceManager({
                   <button
                     onClick={() => {
                       setModoSelecaoLote((anterior) => !anterior);
-                      setArquivosSelecionados(new Set());
+                      setArquivosMarcados(new Set());
                     }}
                     className={cn(
                       "px-3 py-2 rounded-lg text-xs font-bold border transition-all",
@@ -2289,37 +2824,7 @@ export default function InstanceManager({
                     Adicionar conteúdo
                   </button>
                 </div>
-              ) : (
-                <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
-                  <button
-                    onClick={() => setBrowseSource("ambas")}
-                    className={cn(
-                      "px-3 py-1.5 rounded text-xs font-bold transition-all",
-                      browseSource === "ambas" ? "bg-white/15 text-white" : "text-white/40"
-                    )}
-                  >
-                    Ambos
-                  </button>
-                  <button
-                    onClick={() => setBrowseSource("modrinth")}
-                    className={cn(
-                      "px-3 py-1.5 rounded text-xs font-bold transition-all",
-                      browseSource === "modrinth" ? "bg-emerald-500 text-black" : "text-white/40"
-                    )}
-                  >
-                    Modrinth
-                  </button>
-                  <button
-                    onClick={() => setBrowseSource("curseforge")}
-                    className={cn(
-                      "px-3 py-1.5 rounded text-xs font-bold transition-all",
-                      browseSource === "curseforge" ? "bg-[#f16436] text-white" : "text-white/40"
-                    )}
-                  >
-                    CurseForge
-                  </button>
-                </div>
-              )}
+              ) : null}
             </div>
 
             {/* Filters */}
@@ -2352,6 +2857,55 @@ export default function InstanceManager({
               </div>
 
               <div className="flex items-center gap-2">
+                {viewMode === "browse" && (
+                  <>
+                    {quantidadeFiltrosBusca > 0 && (
+                      <button
+                        type="button"
+                        onClick={limparFiltrosBusca}
+                        aria-label="Limpar filtros"
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold",
+                          "text-white/40 transition-colors hover:bg-white/5 hover:text-white"
+                        )}
+                      >
+                        <X size={12} />
+                        Limpar
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setFiltrosBuscaAbertos((abertos) => {
+                        if (abertos) {
+                          setSeletorFontesAberto(false);
+                          setSeletorCategoriasAberto(false);
+                        }
+                        return !abertos;
+                      })}
+                      aria-expanded={filtrosBuscaAbertos}
+                      className={cn(
+                        "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors",
+                        filtrosBuscaAbertos || quantidadeFiltrosBusca > 0
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                          : "border-white/10 bg-white/5 text-white/45 hover:text-white"
+                      )}
+                    >
+                      <Filter size={13} />
+                      Filtros
+                      {quantidadeFiltrosBusca > 0 && (
+                        <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] text-black">
+                          {quantidadeFiltrosBusca}
+                        </span>
+                      )}
+                      <ChevronDown
+                        size={12}
+                        className={cn("transition-transform", filtrosBuscaAbertos && "rotate-180")}
+                      />
+                    </button>
+                  </>
+                )}
+
                 {viewMode === "installed" && mostrarControlesAtualizacao && (
                   <button
                     onClick={atualizarTodosConteudos}
@@ -2402,13 +2956,247 @@ export default function InstanceManager({
               </div>
             </div>
 
+            {viewMode === "browse" && filtrosBuscaAbertos && (
+              <div className={cn(
+                "grid shrink-0 grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.65fr)]",
+                "gap-2 border-b border-white/5 bg-white/[0.018] px-6 py-3"
+              )}>
+                <div className="order-2 min-w-0">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[0.14em] text-white/30">
+                    Fonte
+                  </span>
+                  <div ref={seletorFontesRef} className="relative">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={seletorFontesAberto}
+                      onClick={() => setSeletorFontesAberto((aberto) => !aberto)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-lg border border-white/10",
+                        "bg-[#171719] px-3 py-2 text-left text-xs font-bold text-white outline-none",
+                        "focus:border-emerald-400/40"
+                      )}
+                    >
+                      <span className="truncate">{resumoFontesBusca}</span>
+                      <ChevronDown
+                        size={12}
+                        className={cn(
+                          "shrink-0 text-white/35 transition-transform",
+                          seletorFontesAberto && "rotate-180"
+                        )}
+                      />
+                    </button>
+
+                    {seletorFontesAberto && (
+                      <div
+                        role="listbox"
+                        aria-label="Fontes do conteúdo"
+                        aria-multiselectable="true"
+                        className={cn(
+                          "absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-white/10",
+                          "bg-[#171719] p-1 shadow-2xl"
+                        )}
+                      >
+                        {FONTES_BUSCA.map((fonte) => {
+                          const ativa = fontesBuscaSelecionadas[fonte];
+                          const nomeFonte = fonte === "modrinth" ? "Modrinth" : "CurseForge";
+
+                          return (
+                            <button
+                              key={fonte}
+                              type="button"
+                              role="option"
+                              aria-selected={ativa}
+                              onClick={() => alternarFonteBusca(fonte)}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold",
+                                "transition-colors hover:bg-white/5",
+                                ativa && fonte === "modrinth" && "bg-[#1bd96a]/10 text-[#1bd96a]",
+                                ativa && fonte === "curseforge" && "bg-orange-400/10 text-orange-300",
+                                !ativa && "text-white/60"
+                              )}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className={cn(
+                                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                  ativa ? "border-current bg-current/10" : "border-white/20 bg-black/20"
+                                )}
+                              >
+                                {ativa && <Check size={11} strokeWidth={3} />}
+                              </span>
+                              <span className="truncate">{nomeFonte}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <label className="order-1 min-w-0">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[0.14em] text-white/30">
+                    Ordenar por
+                  </span>
+                  <span className="relative block">
+                    <select
+                      value={ordenacaoBusca}
+                      onChange={(evento) => setOrdenacaoBusca(evento.target.value as OrdenacaoBusca)}
+                      className={cn(
+                        "w-full appearance-none rounded-lg border border-white/10 bg-[#171719]",
+                        "px-3 py-2 pr-8 text-xs font-bold text-white outline-none focus:border-emerald-400/40"
+                      )}
+                    >
+                      {ORDENACOES_BUSCA.map((ordenacao) => (
+                        <option key={ordenacao.id} value={ordenacao.id}>{ordenacao.nome}</option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={12}
+                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-white/35"
+                    />
+                  </span>
+                </label>
+
+                <div className="order-3 min-w-0">
+                  <span className="mb-1.5 block text-[9px] font-black uppercase tracking-[0.14em] text-white/30">
+                    Categorias
+                  </span>
+                  <div ref={seletorCategoriasRef} className="relative">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={seletorCategoriasAberto}
+                      disabled={carregandoCategorias || categoriasDaFonte.length === 0}
+                      onClick={() => setSeletorCategoriasAberto((aberto) => !aberto)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-lg border border-white/10",
+                        "bg-[#171719] px-3 py-2 text-left text-xs font-bold text-white outline-none",
+                        "focus:border-emerald-400/40 disabled:cursor-not-allowed disabled:opacity-35"
+                      )}
+                    >
+                      <span className="truncate">
+                        {!fonteCategorias
+                          ? "Marque uma única fonte"
+                          : carregandoCategorias
+                            ? "Carregando categorias..."
+                            : resumoCategorias}
+                      </span>
+                      {carregandoCategorias ? (
+                        <Loader2 size={12} className="shrink-0 animate-spin text-white/35" />
+                      ) : (
+                        <ChevronDown
+                          size={12}
+                          className={cn(
+                            "shrink-0 text-white/35 transition-transform",
+                            seletorCategoriasAberto && "rotate-180"
+                          )}
+                        />
+                      )}
+                    </button>
+
+                    {seletorCategoriasAberto && (
+                      <div
+                        role="group"
+                        aria-label="Categorias incluídas e negadas"
+                        className={cn(
+                          "scrollbar-custom absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto",
+                          "rounded-xl border border-white/10 bg-[#171719] p-1 shadow-2xl"
+                        )}
+                      >
+                        {(categoriasIncluidas.size > 0 || categoriasNegadas.size > 0) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCategoriasIncluidas(new Set());
+                              setCategoriasNegadas(new Set());
+                            }}
+                            className={cn(
+                              "w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/45",
+                              "hover:bg-white/5 hover:text-white/70"
+                            )}
+                          >
+                            Limpar categorias
+                          </button>
+                        )}
+                        {categoriasDaFonte.map((categoria) => {
+                          const incluida = categoriasIncluidas.has(categoria.id);
+                          const negada = categoriasNegadas.has(categoria.id);
+                          const limiteInclusoesAtingido = !incluida
+                            && categoriasIncluidas.size >= LIMITE_CATEGORIAS_BUSCA;
+                          const limiteNegacoesAtingido = !negada
+                            && categoriasNegadas.size >= LIMITE_CATEGORIAS_BUSCA;
+
+                          return (
+                            <div
+                              key={categoria.id}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold",
+                                incluida && "bg-emerald-500/[0.08]",
+                                negada && "bg-red-500/[0.08]",
+                                !incluida && !negada && "hover:bg-white/5"
+                              )}
+                            >
+                              <button
+                                type="button"
+                                aria-label={`${incluida ? "Remover inclusão de" : "Incluir"} ${categoria.nome}`}
+                                aria-pressed={incluida}
+                                disabled={limiteInclusoesAtingido}
+                                title={limiteInclusoesAtingido ? "Limite de 10 inclusões atingido" : "Incluir"}
+                                onClick={() => alternarCategoriaBusca(categoria.id, "incluir")}
+                                className={cn(
+                                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                  "disabled:cursor-not-allowed disabled:opacity-25",
+                                  incluida
+                                    ? "border-emerald-400/50 bg-emerald-400/15 text-emerald-300"
+                                    : "border-white/15 text-white/30 hover:border-emerald-400/35 hover:text-emerald-300"
+                                )}
+                              >
+                                <Check size={11} strokeWidth={3} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`${negada ? "Remover negação de" : "Negar"} ${categoria.nome}`}
+                                aria-pressed={negada}
+                                disabled={limiteNegacoesAtingido}
+                                title={limiteNegacoesAtingido ? "Limite de 10 negações atingido" : "Negar"}
+                                onClick={() => alternarCategoriaBusca(categoria.id, "negar")}
+                                className={cn(
+                                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                  "disabled:cursor-not-allowed disabled:opacity-25",
+                                  negada
+                                    ? "border-red-400/50 bg-red-400/15 text-red-300"
+                                    : "border-white/15 text-white/30 hover:border-red-400/35 hover:text-red-300"
+                                )}
+                              >
+                                <X size={11} strokeWidth={3} />
+                              </button>
+                              <span className={cn(
+                                "min-w-0 flex-1 truncate px-1",
+                                incluida ? "text-emerald-200" : negada ? "text-red-200" : "text-white/60"
+                              )}>
+                                {categoria.nome}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* List */}
             <div className="relative min-h-0 flex-1">
               <div
                 id="lista-conteudo-instancia"
                 ref={listaConteudoRef}
                 onScroll={aoRolarListaConteudo}
-                className="h-full overflow-y-auto scrollbar-hide"
+                className={cn(
+                  "h-full overflow-y-auto scrollbar-hide",
+                  viewMode === "browse" && itensFilaInstalacao.length > 0 && "pb-24"
+                )}
               >
               {viewMode === "installed" ? (
                 loading ? (
@@ -2432,7 +3220,7 @@ export default function InstanceManager({
                   <div>
                     <div
                       className={cn(
-                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_8rem]",
+                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_8rem]",
                         "items-center gap-x-4 border-b border-white/5",
                         "bg-[#0d0d0e] px-6 py-2 text-xs text-white/40"
                       )}
@@ -2453,12 +3241,13 @@ export default function InstanceManager({
                       <div />
                       <div className="min-w-0">Nome</div>
                       <div className="text-right">Ativo</div>
+                      <div className="text-center">Versão</div>
                       <div />
                     </div>
 
                     {filteredContent.map((mod: InstalledMod) => (
                       <div
-                        key={mod.fileName}
+                        key={mod.fileName.replace(/\.disabled$/i, "").toLowerCase()}
                         onContextMenu={(evento) => {
                           evento.preventDefault();
                           evento.stopPropagation();
@@ -2470,7 +3259,7 @@ export default function InstanceManager({
                           });
                         }}
                         className={cn(
-                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_8rem]",
+                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_8rem]",
                           "items-center gap-x-4 border-b border-white/5 px-6 py-3 hover:bg-white/2"
                         )}
                       >
@@ -2486,7 +3275,23 @@ export default function InstanceManager({
                             type="checkbox"
                             checked={arquivosSelecionados.has(mod.fileName)}
                             onChange={() => alternarSelecaoArquivo(mod.fileName)}
-                            className="w-4 h-4 rounded border-white/20 bg-white/5"
+                            disabled={
+                              arquivosSelecionados.has(mod.fileName) && !arquivosMarcados.has(mod.fileName)
+                            }
+                            aria-label={
+                              arquivosSelecionados.has(mod.fileName) && !arquivosMarcados.has(mod.fileName)
+                                ? `${mod.name} selecionado porque depende de outro mod marcado`
+                                : `Selecionar ${mod.name}`
+                            }
+                            title={
+                              arquivosSelecionados.has(mod.fileName) && !arquivosMarcados.has(mod.fileName)
+                                ? "Selecionado porque depende de outro mod marcado"
+                                : undefined
+                            }
+                            className={cn(
+                              "h-4 w-4 rounded border-white/20 bg-white/5",
+                              "disabled:cursor-not-allowed disabled:opacity-60"
+                            )}
                           />
                         </div>
 
@@ -2536,6 +3341,26 @@ export default function InstanceManager({
                           </button>
                         </div>
 
+                        <div className="flex items-center justify-center">
+                          <button
+                            type="button"
+                            onClick={() => abrirTrocaVersao(mod, activeFilter)}
+                            disabled={!mod.projectId || !mod.source}
+                            aria-label={`Trocar versão de ${mod.name}. Versão atual ${mod.version || "desconhecida"}`}
+                            title="Trocar versão"
+                            className={cn(
+                              "flex w-full max-w-[7rem] items-center justify-center gap-1.5 overflow-hidden",
+                              "whitespace-nowrap rounded border px-2.5 py-1.5",
+                              "border-white/10 bg-white/[0.035] text-[11px] font-bold text-white/55",
+                              "transition-colors hover:bg-white/[0.07] hover:text-white",
+                              "disabled:cursor-not-allowed disabled:opacity-30"
+                            )}
+                          >
+                            <RefreshCw size={11} className="shrink-0" />
+                            <span className="truncate tabular-nums">{mod.version || "—"}</span>
+                          </button>
+                        </div>
+
                         <div className="flex items-center justify-end gap-1 border-l border-white/5 pl-4">
                           {(mod.updateAvailable || mod.updating) && (
                             <button
@@ -2582,7 +3407,7 @@ export default function InstanceManager({
                   <div className="p-4 grid grid-cols-1 gap-3">
                     {searchResults.map((item) => (
                       <div
-                        key={`${item.source}:${item.id}`}
+                        key={item.chave}
                         className={cn(
                           "rounded-xl border p-4 flex gap-4 transition-all group",
                           projetoFavorito(item)
@@ -2618,7 +3443,7 @@ export default function InstanceManager({
                               </div>
                               <div className="flex flex-wrap items-center gap-1 text-xs text-white/40">
                                 <span>por {item.author} • via</span>
-                                {(item.fontes ?? [item.source]).map((fonte) => (
+                                {item.fontes.map((fonte) => (
                                   <span
                                     key={fonte}
                                     className={fonte === "modrinth" ? "text-emerald-400" : "text-orange-400"}
@@ -2640,24 +3465,24 @@ export default function InstanceManager({
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() => installContent(item)}
-                                  disabled={instalacoesEmAndamento.has(`${item.source}:${item.id}`)}
+                                  onClick={() => alternarItemFilaInstalacao(item)}
                                   className={cn(
-                                    "px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shrink-0",
-                                    instalacoesEmAndamento.has(`${item.source}:${item.id}`)
-                                      ? "bg-white/10 text-white/40"
-                                      : "bg-emerald-500 hover:bg-emerald-400 text-black active:scale-95"
+                                    "flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2",
+                                    "text-sm font-bold transition-all active:scale-95",
+                                    filaInstalacao[chaveSelecaoDownload(item)]
+                                      ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-200"
+                                      : "border-transparent bg-emerald-500 text-black hover:bg-emerald-400"
                                   )}
                                 >
-                                  {instalacoesEmAndamento.has(`${item.source}:${item.id}`) ? (
+                                  {filaInstalacao[chaveSelecaoDownload(item)] ? (
                                     <>
-                                      <Loader2 size={14} className="animate-spin" />
-                                      Instalando...
+                                      <Check size={14} />
+                                      Marcado
                                     </>
                                   ) : (
                                     <>
-                                      <Download size={14} />
-                                      Instalar
+                                      <Plus size={14} />
+                                      Marcar
                                     </>
                                   )}
                                 </button>
@@ -2694,6 +3519,41 @@ export default function InstanceManager({
                 )
               )}
               </div>
+
+              {viewMode === "browse" && itensFilaInstalacao.length > 0 && (
+                <div className={cn(
+                  "absolute inset-x-4 bottom-3 z-30 flex flex-wrap items-center gap-3 rounded-xl border",
+                  "border-emerald-400/20 bg-[#17191a]/95 px-4 py-3 shadow-2xl backdrop-blur-md"
+                )}>
+                  <div className="grid h-8 w-8 place-items-center rounded-lg bg-emerald-400/12 text-emerald-300">
+                    <Check size={15} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black text-white">
+                      {itensFilaInstalacao.length} conteúdo{itensFilaInstalacao.length === 1 ? "" : "s"} na fila
+                    </p>
+                    <p className="text-[10px] text-white/35">Dependências serão incluídas durante a revisão.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFilaInstalacao({})}
+                    className="px-2 py-1.5 text-[10px] font-bold text-white/35 hover:text-white"
+                  >
+                    Limpar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void revisarFilaInstalacao()}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg bg-emerald-400 px-3.5 py-2",
+                      "text-xs font-black text-black hover:bg-emerald-300"
+                    )}
+                  >
+                    Revisar e confirmar
+                    <ChevronDown size={12} className="-rotate-90" />
+                  </button>
+                </div>
+              )}
 
               {indicadorRolagem.visivel && (
                 <div
@@ -2787,6 +3647,8 @@ export default function InstanceManager({
             )}
           </div>
         )}
+
+        {activeTab === "servers" && <Servidores instanceId={instanceId} />}
 
         {activeTab === "configuration" && instanceDetails && (
           <Configuracao
@@ -2916,8 +3778,15 @@ export default function InstanceManager({
             <ItemMenuContextual icone={<Plus size={13} />} onClick={() => {
               alternarSelecaoArquivo(menuConteudo.item.fileName);
               setMenuConteudo(null);
-            }}>
-              {arquivosSelecionados.has(menuConteudo.item.fileName) ? "Remover da seleção" : "Selecionar"}
+            }} disabled={
+              arquivosSelecionados.has(menuConteudo.item.fileName)
+                && !arquivosMarcados.has(menuConteudo.item.fileName)
+            }>
+              {arquivosSelecionados.has(menuConteudo.item.fileName)
+                ? arquivosMarcados.has(menuConteudo.item.fileName)
+                  ? "Remover da seleção"
+                  : "Selecionado por dependência"
+                : "Selecionar"}
             </ItemMenuContextual>
             <SeparadorMenuContextual />
             <ItemMenuContextual icone={<Trash2 size={13} />} perigo onClick={() => {
@@ -2942,7 +3811,7 @@ export default function InstanceManager({
             role="dialog"
             aria-modal="true"
             aria-labelledby="titulo-trocar-versao"
-            className="isolate flex max-h-[78vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#151516] shadow-2xl"
+            className="isolate flex h-[78vh] max-h-[44rem] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#151516] shadow-2xl"
             onMouseDown={(evento) => evento.stopPropagation()}
           >
             <div className="relative z-10 flex shrink-0 items-start justify-between gap-4 border-b border-white/8 bg-[#151516] px-5 py-4">
@@ -2979,7 +3848,7 @@ export default function InstanceManager({
             </div>
 
             <AreaRolagemPersonalizada
-              className="flex-1"
+              className="min-h-0 flex-1"
               classNameConteudo="p-3 pb-5"
               rotulo="Lista de versões disponíveis"
             >
@@ -3086,6 +3955,14 @@ export default function InstanceManager({
           </div>
         </div>
       )}
+      {modalExclusaoAberto && instanceDetails && (
+        <ModalExclusaoInstancia
+          instancias={[{ id: instanceId, nome: instanceDetails.name }]}
+          aoFechar={() => setModalExclusaoAberto(false)}
+          aoExcluir={excluirInstanciaConfirmada}
+          aoIniciar={onBack}
+        />
+      )}
       <EditorIconeModal
         aberto={editorIconeAberto}
         iconeAtual={editIcon || instanceDetails?.icon}
@@ -3100,6 +3977,18 @@ export default function InstanceManager({
           setEditorIconeAberto(false);
         }}
         aoSalvar={salvarIconeDiretamente}
+      />
+      <RevisaoInstalacaoConteudo
+        aberto={revisaoInstalacaoAberta}
+        plano={planoInstalacao}
+        carregando={carregandoPlanoInstalacao}
+        instalando={instalandoFila}
+        erro={erroPlanoInstalacao}
+        progresso={progressoInstalacao}
+        onFechar={() => {
+          if (!instalandoFila) setRevisaoInstalacaoAberta(false);
+        }}
+        onConfirmar={() => void instalarFilaSelecionada()}
       />
     </div>
   );

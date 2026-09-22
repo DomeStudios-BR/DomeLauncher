@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -6,6 +6,8 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Gamepad2,
   Loader2,
@@ -34,7 +36,7 @@ export type AbaOrigemProjeto =
   | "favorites"
   | "instances"
   | "instance-manager";
-type AbaConteudoProjeto = "descricao" | "versoes" | "galeria" | "analises";
+type AbaConteudoProjeto = "descricao" | "versoes" | "galeria";
 
 interface ImagemGaleriaProjeto {
   url: string;
@@ -116,6 +118,8 @@ interface ProjetoDetalhePaginaProps {
   usuarioLogado?: boolean;
   onSolicitarLogin?: () => void;
   onInstanciaCriada?: () => void;
+  instalarAoAbrir?: boolean;
+  onInstalacaoAutomaticaIniciada?: () => void;
   onVoltar: () => void;
   rotuloAcao?: string;
 }
@@ -475,6 +479,8 @@ export default function ProjetoDetalheModal({
   usuarioLogado = false,
   onSolicitarLogin,
   onInstanciaCriada,
+  instalarAoAbrir = false,
+  onInstalacaoAutomaticaIniciada,
   onVoltar,
   rotuloAcao = "Instalar",
 }: ProjetoDetalhePaginaProps) {
@@ -497,10 +503,12 @@ export default function ProjetoDetalheModal({
   const [erro, setErro] = useState<string | null>(null);
   const [favorito, setFavorito] = useState(() => isFavorite(projeto.id));
   const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
+  const [indiceAnalise, setIndiceAnalise] = useState(0);
   const [carregandoAnalises, setCarregandoAnalises] = useState(false);
   const [erroAnalises, setErroAnalises] = useState<string | null>(null);
   const [tokenSocial, setTokenSocial] = useState<string | null | undefined>(undefined);
   const [curtindoId, setCurtindoId] = useState<string | null>(null);
+  const instalacaoAutomaticaIniciada = useRef(false);
 
   useEffect(() => {
     const voltarComEscape = (evento: KeyboardEvent) => {
@@ -553,12 +561,12 @@ export default function ProjetoDetalheModal({
 
   useEffect(() => {
     setAnalises([]);
+    setIndiceAnalise(0);
     setErroAnalises(null);
     setTokenSocial(undefined);
   }, [projeto.id, projeto.source]);
 
   useEffect(() => {
-    if (abaConteudo !== "analises" || projeto.project_type !== "modpack") return;
     let cancelado = false;
     setCarregandoAnalises(true);
     setErroAnalises(null);
@@ -595,7 +603,7 @@ export default function ProjetoDetalheModal({
     return () => {
       cancelado = true;
     };
-  }, [abaConteudo, projeto.id, projeto.source, projeto.project_type]);
+  }, [projeto.id, projeto.source]);
 
   const curtirAnalise = async (analise: AnaliseModpack) => {
     if (!tokenSocial || curtindoId) return;
@@ -1238,6 +1246,23 @@ export default function ProjetoDetalheModal({
     }
   };
 
+  useEffect(() => {
+    if (!instalarAoAbrir || instalacaoAutomaticaIniciada.current) return;
+    if (projeto.project_type !== "modpack" || carregandoVersoes) return;
+    if (!versaoSelecionada || !arquivoVersaoSelecionada) return;
+
+    instalacaoAutomaticaIniciada.current = true;
+    onInstalacaoAutomaticaIniciada?.();
+    void instalarProjeto();
+  }, [
+    arquivoVersaoSelecionada,
+    carregandoVersoes,
+    instalarAoAbrir,
+    onInstalacaoAutomaticaIniciada,
+    projeto.project_type,
+    versaoSelecionada,
+  ]);
+
   return (
     <div className="min-h-full space-y-6">
       <section className="border border-white/10 bg-[#141416]">
@@ -1381,19 +1406,6 @@ export default function ProjetoDetalheModal({
             >
               Galeria
             </button>
-            {projeto.project_type === "modpack" && (
-              <button
-                onClick={() => setAbaConteudo("analises")}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
-                  abaConteudo === "analises"
-                    ? "bg-emerald-500 text-black"
-                    : "text-white/60 hover:text-white"
-                )}
-              >
-                Análises
-              </button>
-            )}
           </div>
         </div>
 
@@ -1413,6 +1425,110 @@ export default function ProjetoDetalheModal({
           >
             {abaConteudo === "descricao" && (
               <>
+                <section
+                  className="mx-auto w-full max-w-5xl space-y-3"
+                  aria-label="Análises da comunidade"
+                >
+                  {carregandoAnalises && analises.length === 0 && (
+                    <div className="flex items-center gap-2 text-sm text-white/50">
+                      <Loader2 size={14} className="animate-spin" />
+                      Carregando análises...
+                    </div>
+                  )}
+                  {erroAnalises && <p className="text-xs text-orange-200">{erroAnalises}</p>}
+                  {!carregandoAnalises && !erroAnalises && analises.length === 0 && (
+                    <p className="text-sm text-white/55">
+                      Nenhum amigo publicou análise deste projeto ainda. Clique com o botão direito
+                      na instância, na biblioteca, para escrever a primeira.
+                    </p>
+                  )}
+                  {analises[indiceAnalise] && (() => {
+                    const analise = analises[indiceAnalise];
+                    return (
+                      <article className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {analises.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setIndiceAnalise((atual) => (atual - 1 + analises.length) % analises.length)
+                                }
+                                aria-label="Análise anterior"
+                                title="Análise anterior"
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                              >
+                                <ChevronLeft size={15} />
+                              </button>
+                            )}
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-bold text-white/90">
+                                {analise.autorNome}
+                                {analise.autorHandle && (
+                                  <span className="ml-1 font-normal text-white/40">@{analise.autorHandle}</span>
+                                )}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-white/40">
+                                <span
+                                  className={
+                                    analise.recomendado
+                                      ? "font-bold text-emerald-300"
+                                      : "font-bold text-red-300"
+                                  }
+                                >
+                                  {analise.recomendado ? "◆ Recomendo" : "◆ Não recomendo"}
+                                </span>
+                                {typeof analise.horasRegistradas === "number" && (
+                                  <span>
+                                    {" "}· {analise.horasRegistradas.toLocaleString("pt-BR", {
+                                      maximumFractionDigits: 1,
+                                    })} h registradas
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {analises.length > 1 && (
+                              <span className="text-[11px] text-white/40">
+                                {indiceAnalise + 1}/{analises.length}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void curtirAnalise(analise)}
+                              disabled={!tokenSocial || curtindoId === analise.id}
+                              title={analise.curtidoPorMim ? "Remover curtida" : "Achar útil"}
+                              className={cn(
+                                "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-colors disabled:opacity-40",
+                                analise.curtidoPorMim
+                                  ? "border-pink-400/50 bg-pink-500/15 text-pink-300"
+                                  : "border-white/10 bg-white/5 text-white/55 hover:text-white"
+                              )}
+                            >
+                              <Heart size={12} fill={analise.curtidoPorMim ? "currentColor" : "none"} />
+                              {analise.totalCurtidas}
+                            </button>
+                            {analises.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setIndiceAnalise((atual) => (atual + 1) % analises.length)
+                                }
+                                aria-label="Próxima análise"
+                                title="Próxima análise"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                              >
+                                <ChevronRight size={15} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-white/80">“{analise.conteudo}”</p>
+                      </article>
+                    );
+                  })()}
+                </section>
                 {carregandoDetalhes && !descricaoCompletaProjeto && (
                   <div className="flex items-center gap-2 text-sm text-white/50">
                     <Loader2 size={14} className="animate-spin" />
@@ -1567,66 +1683,6 @@ export default function ProjetoDetalheModal({
                 </div>
               ))}
 
-            {abaConteudo === "analises" && projeto.project_type === "modpack" && (
-              <div className="mx-auto w-full max-w-3xl space-y-3">
-                {carregandoAnalises && analises.length === 0 && (
-                  <div className="flex items-center gap-2 text-sm text-white/50">
-                    <Loader2 size={14} className="animate-spin" />
-                    Carregando análises...
-                  </div>
-                )}
-                {erroAnalises && <p className="text-xs text-orange-200">{erroAnalises}</p>}
-                {!carregandoAnalises && !erroAnalises && analises.length === 0 && (
-                  <p className="text-sm text-white/55">
-                    Nenhum amigo publicou análise deste modpack ainda. Clique com o botão direito
-                    na instância, na biblioteca, para escrever a primeira.
-                  </p>
-                )}
-                {analises.map((analise) => (
-                  <article
-                    key={analise.id}
-                    className="rounded-2xl border border-white/10 bg-black/25 p-4"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-bold text-white/90">
-                          {analise.autorNome}
-                          {analise.autorHandle && (
-                            <span className="ml-1 font-normal text-white/40">@{analise.autorHandle}</span>
-                          )}
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-white/40">
-                          <span className={analise.recomendado ? "font-bold text-emerald-300" : "font-bold text-red-300"}>
-                            {analise.recomendado ? "◆ Recomendo" : "◆ Não recomendo"}
-                          </span>
-                          {typeof analise.horasRegistradas === "number" && (
-                            <span>
-                              {" "}· {analise.horasRegistradas.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h registradas
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void curtirAnalise(analise)}
-                        disabled={!tokenSocial || curtindoId === analise.id}
-                        title={analise.curtidoPorMim ? "Remover curtida" : "Achar útil"}
-                        className={cn(
-                          "inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-colors disabled:opacity-40",
-                          analise.curtidoPorMim
-                            ? "border-pink-400/50 bg-pink-500/15 text-pink-300"
-                            : "border-white/10 bg-white/5 text-white/55 hover:text-white"
-                        )}
-                      >
-                        <Heart size={12} fill={analise.curtidoPorMim ? "currentColor" : "none"} />
-                        {analise.totalCurtidas}
-                      </button>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-white/80">“{analise.conteudo}”</p>
-                  </article>
-                ))}
-              </div>
-            )}
           </div>
 
           {abaConteudo === "versoes" && projeto.project_type !== "modpack" && (

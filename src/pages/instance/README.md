@@ -23,6 +23,10 @@ import { Overview } from './pages/instance'
 ### Mods
 Componente para gerenciamento de mods da instância, incluindo instalação, atualização e remoção.
 
+O gerenciador principal também oferece `Adicionar conteúdo` para mods, resource packs e shaders. A busca aplica a
+versão do Minecraft e o loader da instância automaticamente, permite filtros adicionais e monta uma fila revisável
+antes de baixar. Dependências obrigatórias de mods aparecem nessa revisão e são instaladas antes do item principal.
+
 ```tsx
 import { Mods } from './pages/instance'
 
@@ -53,7 +57,7 @@ import { Logs } from './pages/instance'
 ```
 
 ### Worlds
-Componente para gerenciamento de mundos e servidores.
+Componente para gerenciamento de mundos locais.
 
 ```tsx
 import { Worlds } from './pages/instance'
@@ -66,6 +70,16 @@ import { Worlds } from './pages/instance'
   versions={[]}
   installed={true}
 />
+```
+
+### Servidores
+Componente usado pela aba Servidores para listar, verificar, adicionar, remover e acessar os servidores salvos
+na lista multiplayer de uma instância.
+
+```tsx
+import { Servidores } from './pages/instance'
+
+<Servidores instanceId={instanceId} />
 ```
 
 ### ContextMenu

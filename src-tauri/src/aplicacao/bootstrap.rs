@@ -56,9 +56,11 @@ pub fn run() {
             crate::skin::equipar_capa,
             // Gerenciador de mods
             super::mods_conteudo::search_mods_online,
+            super::mods_conteudo::listar_categorias_busca_online,
             super::mods_conteudo::buscar_detalhes_projeto_curseforge,
             super::mods_conteudo::listar_versoes_projeto_curseforge,
             super::mods_conteudo::obter_versao_projeto_curseforge,
+            super::mods_conteudo::planejar_instalacao_conteudo,
             super::mods_conteudo::install_mod,
             super::mods_conteudo::install_project_file,
             super::mods_conteudo::install_curseforge_project_file,

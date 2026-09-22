@@ -10,7 +10,6 @@ protegida no arquivo nativo `social-session.dat`.
 As etapas de token e perfil do Minecraft validam o status HTTP e repetem até três vezes somente falhas transitórias
 de conexão, limite de requisições e erros 5xx. Uma resposta 404 do perfil indica que a conta Microsoft ainda não tem
 um perfil Minecraft Java; ela não é tratada como falha genérica nem cria uma identidade Dome incompleta.
-
 Contas Minecraft adicionais são vinculadas ao perfil Dome já autenticado por
 `POST /api/launcher/social/minecraft/link`. Trocar a conta ativa usada para jogar não altera automaticamente
 `contaMinecraftPrincipalUuid`, que representa apenas o avatar público escolhido para o perfil.
@@ -430,6 +429,30 @@ Não existe uma camada global de retry para essas chamadas.
 
 Microsoft/Xbox/Minecraft, skins, manifests Mojang, loaders e conteúdo Modrinth/CurseForge têm integrações
 próprias, fora da DomeAPI. Consulte `auth*.rs`, `skin.rs` e módulos de `aplicacao/`.
+Na aba Explorar, `listar_categorias_busca_online` consulta as taxonomias atuais das duas plataformas, mantendo
+separadamente o slug do Modrinth e o ID numérico do CurseForge. A fonte é escolhida por botões de marcação para
+`Modrinth` e `CurseForge`; sem nenhuma marcação, a busca não restringe a origem e consulta ambas as plataformas.
+Resultados equivalentes exibem a soma dos downloads das fontes consultadas. Assim, uma única fonte marcada mostra
+somente a contagem dessa plataforma, enquanto ambas marcadas ou nenhuma marcação somam Modrinth e CurseForge.
+Quando as duas fontes são consultadas, cada página mantém 20 itens visíveis, mas usa até 50 respostas de cada
+catálogo para reconhecer equivalências posicionadas de forma diferente; itens extras sem par não são exibidos.
+A interface mantém o título único `Categorias` e permite incluir até 10 opções e negar até 10 opções quando
+exatamente uma fonte está ativa. Uma mesma categoria não pode ocupar os dois grupos. Sem marcação ou com ambas as
+fontes marcadas, o filtro de categoria fica desativado para não tratar taxonomias diferentes como equivalentes.
+`search_mods_online` recebe as inclusões em `filtros.categoriasModrinth` e
+`filtros.categoriasCurseforge`, e as negações em `filtros.categoriasNegadasModrinth` e
+`filtros.categoriasNegadasCurseforge`, além de versão, loader, ordenação e paginação. O backend valida os slugs,
+combina inclusão e negação nas facetas do Modrinth, envia somente as inclusões em `categoryIds` ao CurseForge e
+remove localmente os resultados das categorias negadas. Se uma taxonomia estiver temporariamente indisponível,
+a outra ainda pode preencher o seletor.
+No Explorar, o botão `Instalar` de um modpack inicia a criação da instância usando sua versão publicada mais recente
+compatível com os loaders aceitos pelo launcher e que tenha um arquivo instalável; abrir o cartão do projeto continua
+mostrando os detalhes sem iniciar a instalação.
+Em `Adicionar conteúdo`, a interface sempre envia a versão do Minecraft da instância e, para mods, o loader atual;
+esses dois filtros de compatibilidade não são editáveis. Ordenação e categorias continuam opcionais. Antes de uma
+instalação em lote, `planejar_instalacao_conteudo` resolve o arquivo compatível de cada seleção e expande as
+dependências obrigatórias de mods, deduplicadas e posicionadas antes do conteúdo que as exige. Resource packs e
+shaders usam o mesmo fluxo de fila e revisão, sem inventar dependências que os provedores não declaram.
 Versões exatas de arquivos CurseForge são resolvidas pelo comando
 `obter_versao_projeto_curseforge`; isso permite selecionar inclusive uma versão social que já saiu da primeira
 página da listagem. Instâncias de modpacks públicos são identificadas pelo `modpack.json`, com fonte, projeto,
