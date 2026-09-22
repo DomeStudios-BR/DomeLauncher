@@ -578,6 +578,7 @@ export default function InstanceManager({
   const [seletorCategoriasAberto, setSeletorCategoriasAberto] = useState(false);
   const [carregandoCategorias, setCarregandoCategorias] = useState(false);
   const [filaInstalacao, setFilaInstalacao] = useState<Record<string, SearchResult>>({});
+  const [instalacoesDiretas, setInstalacoesDiretas] = useState<Set<string>>(new Set());
   const [revisaoInstalacaoAberta, setRevisaoInstalacaoAberta] = useState(false);
   const [planoInstalacao, setPlanoInstalacao] = useState<ItemPlanoInstalacaoConteudo[]>([]);
   const [carregandoPlanoInstalacao, setCarregandoPlanoInstalacao] = useState(false);
@@ -1674,6 +1675,34 @@ export default function InstanceManager({
     });
   };
 
+  const instalarConteudoDiretamente = async (item: SearchResult) => {
+    const chave = chaveSelecaoDownload(item);
+    if (instalacoesDiretas.has(chave)) return;
+
+    setInstalacoesDiretas((atuais) => new Set(atuais).add(chave));
+    try {
+      await instalarConteudoSelecionado(item);
+      await loadInstalledContent(
+        item.project_type === "resourcepack" ? "resourcepacks" : item.project_type === "shader" ? "shaders" : "mods",
+        true
+      );
+      setFilaInstalacao((atual) => {
+        const proxima = { ...atual };
+        delete proxima[chave];
+        return proxima;
+      });
+    } catch (erro) {
+      console.error("Erro ao instalar conteúdo:", erro);
+      alert(`Não foi possível instalar "${item.title}": ${erro}`);
+    } finally {
+      setInstalacoesDiretas((atuais) => {
+        const proximas = new Set(atuais);
+        proximas.delete(chave);
+        return proximas;
+      });
+    }
+  };
+
   const revisarFilaInstalacao = async () => {
     const itens = Object.values(filaInstalacao);
     if (itens.length === 0) return;
@@ -1704,34 +1733,54 @@ export default function InstanceManager({
 
   const instalarFilaSelecionada = async () => {
     const itens = Object.values(filaInstalacao);
-    if (itens.length === 0 || instalandoFila) return;
+    if (itens.length === 0 || planoInstalacao.length === 0 || carregandoPlanoInstalacao || instalandoFila) return;
 
     setInstalandoFila(true);
     setErroPlanoInstalacao(null);
     const tiposAlterados = new Set<ContentFilter>();
     try {
-      for (let indice = 0; indice < itens.length; indice += 1) {
-        const item = itens[indice];
-        setProgressoInstalacao({ atual: indice + 1, total: itens.length, nome: item.title });
-        await instalarConteudoSelecionado(item);
+      for (let indice = 0; indice < planoInstalacao.length; indice += 1) {
+        const item = planoInstalacao[indice];
+        setProgressoInstalacao({ atual: indice, total: planoInstalacao.length, nome: item.nome });
+        const nomeArquivo = await invoke<string>("install_project_file", {
+          instanceId,
+          projectType: item.tipoProjeto,
+          downloadUrl: item.downloadUrl,
+          fileName: item.nomeArquivo,
+        });
+        const selecionado = itens.find(
+          (atual) => atual.id === item.projectId && atual.source === item.plataforma
+        );
+        const cacheConteudo = lerCacheConteudoInstalado();
+        definirRegistroCacheConteudo(cacheConteudo, instanceId, item.tipoProjeto, nomeArquivo, {
+          name: item.nome,
+          author: selecionado?.author || "Desconhecido",
+          icon: item.iconeUrl || undefined,
+          projectId: item.projectId,
+          source: item.plataforma,
+          projectType: item.tipoProjeto,
+          latestVersion: item.versao,
+          updateAvailable: false,
+        });
+        salvarCacheConteudoInstalado(cacheConteudo);
+        setProgressoInstalacao({ atual: indice + 1, total: planoInstalacao.length, nome: item.nome });
         tiposAlterados.add(
-          item.project_type === "resourcepack"
+          item.tipoProjeto === "resourcepack"
             ? "resourcepacks"
-            : item.project_type === "shader"
+            : item.tipoProjeto === "shader"
               ? "shaders"
               : "mods"
         );
-        const chave = chaveSelecaoDownload(item);
-        setFilaInstalacao((atual) => {
-          const proxima = { ...atual };
-          delete proxima[chave];
-          return proxima;
-        });
       }
 
       for (const tipo of tiposAlterados) {
         await loadInstalledContent(tipo, true);
       }
+      setFilaInstalacao((atual) => {
+        const proxima = { ...atual };
+        for (const item of itens) delete proxima[chaveSelecaoDownload(item)];
+        return proxima;
+      });
       setRevisaoInstalacaoAberta(false);
       setPlanoInstalacao([]);
     } catch (error) {
@@ -3409,29 +3458,46 @@ export default function InstanceManager({
                       <div
                         key={item.chave}
                         className={cn(
-                          "rounded-xl border p-4 flex gap-4 transition-all group",
+                          "relative rounded-xl border p-4 flex gap-4 transition-all group",
+                          filaInstalacao[chaveSelecaoDownload(item)] && "ring-1 ring-emerald-400/50",
                           projetoFavorito(item)
                             ? "border-pink-400/55 bg-pink-500/[0.06] shadow-[inset_0_0_0_1px_rgba(244,114,182,0.08)] hover:bg-pink-500/[0.09]"
                             : "border-white/5 bg-white/3 hover:bg-white/5"
                         )}
                       >
+                        {!projetoJaInstalado(item) && (
+                          <button
+                            type="button"
+                            aria-label={`${filaInstalacao[chaveSelecaoDownload(item)] ? "Desmarcar" : "Marcar"} ${item.title} para instalar depois`}
+                            aria-pressed={Boolean(filaInstalacao[chaveSelecaoDownload(item)])}
+                            onClick={() => alternarItemFilaInstalacao(item)}
+                            className="absolute inset-0 rounded-xl focus-visible:outline-2 focus-visible:outline-emerald-400"
+                          />
+                        )}
                         <img
                           src={item.icon_url || `https://api.dicebear.com/9.x/shapes/svg?seed=${item.id}`}
                           alt=""
-                          className="w-14 h-14 rounded-xl bg-black/40 object-cover shrink-0"
+                          className="pointer-events-none relative w-14 h-14 rounded-xl bg-black/40 object-cover shrink-0"
                         />
 
-                        <div className="flex-1 min-w-0">
+                        <div className="pointer-events-none relative flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-4">
                             <div>
                               <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => abrirPaginaProjeto(item)}
-                                  className="cursor-pointer text-left font-bold text-white transition-colors hover:text-emerald-400"
-                                >
+                                <span className="font-bold text-white">
                                   {item.title}
-                                </button>
+                                </span>
+                                {onAbrirProjeto && (
+                                  <button
+                                    type="button"
+                                    onClick={() => abrirPaginaProjeto(item)}
+                                    aria-label={`Ver detalhes de ${item.title}`}
+                                    title="Ver detalhes"
+                                    className="pointer-events-auto text-white/35 transition-colors hover:text-emerald-400"
+                                  >
+                                    <FileText size={13} />
+                                  </button>
+                                )}
                                 {projetoFavorito(item) && (
                                   <Heart
                                     size={14}
@@ -3465,26 +3531,19 @@ export default function InstanceManager({
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() => alternarItemFilaInstalacao(item)}
+                                  type="button"
+                                  onClick={() => void instalarConteudoDiretamente(item)}
+                                  disabled={instalacoesDiretas.has(chaveSelecaoDownload(item))}
                                   className={cn(
                                     "flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2",
-                                    "text-sm font-bold transition-all active:scale-95",
-                                    filaInstalacao[chaveSelecaoDownload(item)]
-                                      ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-200"
-                                      : "border-transparent bg-emerald-500 text-black hover:bg-emerald-400"
+                                    "pointer-events-auto border-transparent bg-emerald-500 text-sm font-bold text-black",
+                                    "transition-all hover:bg-emerald-400 active:scale-95 disabled:cursor-wait disabled:opacity-60"
                                   )}
                                 >
-                                  {filaInstalacao[chaveSelecaoDownload(item)] ? (
-                                    <>
-                                      <Check size={14} />
-                                      Marcado
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Plus size={14} />
-                                      Marcar
-                                    </>
-                                  )}
+                                  {instalacoesDiretas.has(chaveSelecaoDownload(item))
+                                    ? <Loader2 size={14} className="animate-spin" />
+                                    : <Download size={14} />}
+                                  Instalar
                                 </button>
                               )}
                             </div>

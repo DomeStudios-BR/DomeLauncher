@@ -403,6 +403,7 @@ pub(crate) struct ItemPlanoInstalacaoConteudo {
     nome: String,
     icone_url: Option<String>,
     nome_arquivo: String,
+    download_url: String,
     versao: String,
     tipo_versao: String,
     plataforma: ModPlatform,
@@ -1051,6 +1052,7 @@ fn adicionar_item_ao_plano(
         nome: nome_selecionado.unwrap_or(&arquivo.nome_versao).to_string(),
         icone_url: icone_selecionado.map(str::to_string).or(arquivo.icone_url),
         nome_arquivo: arquivo.file_name,
+        download_url: arquivo.download_url,
         versao: arquivo.versao,
         tipo_versao: arquivo.tipo_versao,
         plataforma: arquivo.plataforma,
@@ -1265,6 +1267,22 @@ mod testes_plano_instalacao_conteudo {
         assert!(!plano[0].selecionado);
         assert_eq!(plano[0].requerido_por, vec!["Mod A", "Mod B"]);
     }
+
+    #[test]
+    fn atualizacao_substitui_arquivo_com_o_mesmo_nome() {
+        let pasta = std::env::temp_dir().join(format!("dome-mod-teste-{}", uuid::Uuid::new_v4()));
+        let temporaria = pasta.join("temporaria");
+        std::fs::create_dir_all(&temporaria).unwrap();
+        let destino = pasta.join("mod.jar");
+        let novo = temporaria.join("mod.jar");
+        std::fs::write(&destino, b"versao antiga").unwrap();
+        std::fs::write(&novo, b"versao nova").unwrap();
+
+        publicar_arquivos_mod(vec![(novo, destino.clone())], &temporaria).unwrap();
+
+        assert_eq!(std::fs::read(&destino).unwrap(), b"versao nova");
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
 }
 
 fn nome_arquivo_mod_seguro(file_name: &str) -> Result<String, String> {
@@ -1294,8 +1312,12 @@ async fn baixar_e_instalar_arquivos_mod(
     let mut nomes_agendados = std::collections::HashSet::new();
 
     for (indice, (download_url, nome)) in arquivos.into_iter().enumerate() {
-        if !nomes_agendados.insert(nome.to_lowercase()) || mods_dir.join(&nome).exists() {
-            continue;
+        if !nomes_agendados.insert(nome.to_lowercase()) {
+            let _ = std::fs::remove_dir_all(&pasta_temporaria);
+            return Err(format!(
+                "O plano contém mais de um mod com o nome de arquivo {}.",
+                nome
+            ));
         }
         let resposta = match client.get(&download_url).send().await {
             Ok(resposta) => resposta,
@@ -1324,23 +1346,46 @@ async fn baixar_e_instalar_arquivos_mod(
         temporarios.push((caminho_temporario, mods_dir.join(nome)));
     }
 
-    let mut instalados = Vec::new();
-    for (temporario, destino) in temporarios {
-        if let Err(e) = std::fs::rename(&temporario, &destino) {
-            if destino.is_file() {
-                let _ = std::fs::remove_file(&temporario);
-                continue;
-            }
-            for instalado in instalados {
-                let _ = std::fs::remove_file(instalado);
-            }
-            let _ = std::fs::remove_dir_all(&pasta_temporaria);
-            return Err(format!("Erro ao concluir instalação de mods: {}", e));
-        }
-        instalados.push(destino);
-    }
+    publicar_arquivos_mod(temporarios, &pasta_temporaria)?;
     let _ = std::fs::remove_dir_all(pasta_temporaria);
     Ok(())
+}
+
+fn publicar_arquivos_mod(
+    temporarios: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    pasta_temporaria: &std::path::Path,
+) -> Result<(), String> {
+    let mut publicados: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)> = Vec::new();
+    for (indice, (temporario, destino)) in temporarios.into_iter().enumerate() {
+        let backup = if destino.exists() {
+            let caminho = pasta_temporaria.join(format!("backup-{}", indice));
+            if let Err(erro) = std::fs::rename(&destino, &caminho) {
+                reverter_publicacao_mods(&publicados);
+                return Err(format!("Erro ao preservar mod anterior: {}", erro));
+            }
+            Some(caminho)
+        } else {
+            None
+        };
+        if let Err(erro) = std::fs::rename(&temporario, &destino) {
+            if let Some(caminho) = &backup {
+                let _ = std::fs::rename(caminho, &destino);
+            }
+            reverter_publicacao_mods(&publicados);
+            return Err(format!("Erro ao concluir instalação de mods: {}", erro));
+        }
+        publicados.push((destino, backup));
+    }
+    Ok(())
+}
+
+fn reverter_publicacao_mods(publicados: &[(std::path::PathBuf, Option<std::path::PathBuf>)]) {
+    for (destino, backup) in publicados.iter().rev() {
+        let _ = std::fs::remove_file(destino);
+        if let Some(caminho) = backup {
+            let _ = std::fs::rename(caminho, destino);
+        }
+    }
 }
 
 pub(super) async fn instalar_mod_modrinth_compativel(
@@ -1596,8 +1641,18 @@ async fn baixar_arquivo_para_pasta(
             )
         });
 
-    let caminho_arquivo = pasta_destino.join(&nome_arquivo_final);
-    std::fs::write(caminho_arquivo, bytes).map_err(|e| e.to_string())?;
+    let pasta_temporaria = pasta_destino.join(format!(".dome-install-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&pasta_temporaria).map_err(|e| e.to_string())?;
+    let temporario = pasta_temporaria.join(&nome_arquivo_final);
+    if let Err(erro) = std::fs::write(&temporario, bytes) {
+        let _ = std::fs::remove_dir_all(&pasta_temporaria);
+        return Err(erro.to_string());
+    }
+    publicar_arquivos_mod(
+        vec![(temporario, pasta_destino.join(&nome_arquivo_final))],
+        &pasta_temporaria,
+    )?;
+    let _ = std::fs::remove_dir_all(&pasta_temporaria);
 
     Ok(nome_arquivo_final)
 }
@@ -2776,6 +2831,7 @@ async fn search_curseforge_conteudo(
                 author: authors,
                 platform: ModPlatform::CurseForge,
                 download_count,
+                follows: None,
                 icon_url: logo,
                 project_url: website_url,
                 latest_version: None, // CurseForge não retorna versão na busca básica
@@ -2871,6 +2927,7 @@ async fn search_modrinth_conteudo(
                 author,
                 platform: ModPlatform::Modrinth,
                 download_count,
+                follows: hit["follows"].as_u64(),
                 icon_url,
                 project_url,
                 latest_version: hit["latest_version"].as_str().map(|s| s.to_string()),
@@ -2902,6 +2959,7 @@ pub(crate) struct ModSearchResult {
     pub author: String,
     pub platform: ModPlatform,
     pub download_count: Option<u64>,
+    pub follows: Option<u64>,
     pub icon_url: Option<String>,
     pub project_url: String,
     pub latest_version: Option<String>,

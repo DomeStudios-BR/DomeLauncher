@@ -24,8 +24,9 @@ import { Overview } from './pages/instance'
 Componente para gerenciamento de mods da instância, incluindo instalação, atualização e remoção.
 
 O gerenciador principal também oferece `Adicionar conteúdo` para mods, resource packs e shaders. A busca aplica a
-versão do Minecraft e o loader da instância automaticamente, permite filtros adicionais e monta uma fila revisável
-antes de baixar. Dependências obrigatórias de mods aparecem nessa revisão e são instaladas antes do item principal.
+versão do Minecraft e o loader da instância automaticamente e permite filtros adicionais. O botão `Instalar` baixa
+o conteúdo imediatamente com suas dependências obrigatórias; clicar no cartão marca o item para uma fila revisável.
+Na fila, as dependências aparecem na revisão e são instaladas antes do item principal.
 
 ```tsx
 import { Mods } from './pages/instance'

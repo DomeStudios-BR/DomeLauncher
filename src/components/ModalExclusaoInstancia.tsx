@@ -72,12 +72,12 @@ export default function ModalExclusaoInstancia({
                     </div>
                     <div className="min-w-0 flex-1">
                         <p className="text-[9px] font-black uppercase tracking-[0.2em] text-red-300/70">
-                            Zona de segurança
+                            Você está apagando a instância
                         </p>
                         <h2 id="titulo-exclusao-instancia" className="mt-1 truncate text-base font-black text-white">
                             {umaInstancia
-                                ? `Apagar ${instancias[0]?.nome}?`
-                                : `Apagar ${instancias.length} instâncias?`}
+                                ? instancias[0]?.nome
+                                : `${instancias.length} instâncias`}
                         </h2>
                     </div>
                     <button

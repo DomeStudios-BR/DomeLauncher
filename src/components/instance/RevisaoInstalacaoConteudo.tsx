@@ -16,6 +16,7 @@ export interface ItemPlanoInstalacaoConteudo {
     nome: string;
     iconeUrl?: string | null;
     nomeArquivo: string;
+    downloadUrl: string;
     versao: string;
     tipoVersao: string;
     plataforma: "modrinth" | "curseforge";

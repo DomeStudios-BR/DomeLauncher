@@ -504,7 +504,6 @@ export default function ProjetoDetalheModal({
   const [favorito, setFavorito] = useState(() => isFavorite(projeto.id));
   const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
   const [indiceAnalise, setIndiceAnalise] = useState(0);
-  const [carregandoAnalises, setCarregandoAnalises] = useState(false);
   const [erroAnalises, setErroAnalises] = useState<string | null>(null);
   const [tokenSocial, setTokenSocial] = useState<string | null | undefined>(undefined);
   const [curtindoId, setCurtindoId] = useState<string | null>(null);
@@ -568,7 +567,6 @@ export default function ProjetoDetalheModal({
 
   useEffect(() => {
     let cancelado = false;
-    setCarregandoAnalises(true);
     setErroAnalises(null);
     const carregar = async () => {
       try {
@@ -595,8 +593,6 @@ export default function ProjetoDetalheModal({
         if (!cancelado) setAnalises(Array.isArray(lista) ? lista : []);
       } catch (e) {
         if (!cancelado) setErroAnalises(extrairMensagemErro(e, "Não foi possível carregar as análises."));
-      } finally {
-        if (!cancelado) setCarregandoAnalises(false);
       }
     };
     void carregar();
@@ -1265,7 +1261,7 @@ export default function ProjetoDetalheModal({
 
   return (
     <div className="min-h-full space-y-6">
-      <section className="border border-white/10 bg-[#141416]">
+      <section>
         <div className="border-b border-white/10 p-5">
           <div className="flex items-start gap-4">
             <img
@@ -1425,23 +1421,11 @@ export default function ProjetoDetalheModal({
           >
             {abaConteudo === "descricao" && (
               <>
-                <section
+                {analises.length > 0 && <section
                   className="mx-auto w-full max-w-5xl space-y-3"
                   aria-label="Análises da comunidade"
                 >
-                  {carregandoAnalises && analises.length === 0 && (
-                    <div className="flex items-center gap-2 text-sm text-white/50">
-                      <Loader2 size={14} className="animate-spin" />
-                      Carregando análises...
-                    </div>
-                  )}
                   {erroAnalises && <p className="text-xs text-orange-200">{erroAnalises}</p>}
-                  {!carregandoAnalises && !erroAnalises && analises.length === 0 && (
-                    <p className="text-sm text-white/55">
-                      Nenhum amigo publicou análise deste projeto ainda. Clique com o botão direito
-                      na instância, na biblioteca, para escrever a primeira.
-                    </p>
-                  )}
                   {analises[indiceAnalise] && (() => {
                     const analise = analises[indiceAnalise];
                     return (
@@ -1528,7 +1512,7 @@ export default function ProjetoDetalheModal({
                       </article>
                     );
                   })()}
-                </section>
+                </section>}
                 {carregandoDetalhes && !descricaoCompletaProjeto && (
                   <div className="flex items-center gap-2 text-sm text-white/50">
                     <Loader2 size={14} className="animate-spin" />

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Search,
   Download,
-  Star,
   Heart,
   Package,
   Image,
@@ -368,7 +367,6 @@ export default function Explore({
     const fontesSelecionadas = fontesMarcadas.length > 0
       ? fontes.filter((fonte) => filtros.fontes[fonte])
       : fontes;
-    const fonteCategoria = fontesMarcadas.length === 1 ? fontesMarcadas[0] : null;
     const categoriasFiltradas = [...filtros.categoriasIncluidas, ...filtros.categoriasNegadas];
     const fontesConsultadas = categoriasFiltradas.length > 0
       ? fontesSelecionadas.filter((fonte) => categoriasFiltradas.some((categoria) => Boolean(categoria[fonte])))
@@ -394,16 +392,16 @@ export default function Explore({
           filtros: {
             gameVersion: filtros.versaoMinecraft || null,
             loader: filtros.loader || null,
-            categoriasModrinth: fonteCategoria === "modrinth"
+            categoriasModrinth: fonte === "modrinth"
               ? filtros.categoriasIncluidas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
               : [],
-            categoriasCurseforge: fonteCategoria === "curseforge"
+            categoriasCurseforge: fonte === "curseforge"
               ? filtros.categoriasIncluidas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
               : [],
-            categoriasNegadasModrinth: fonteCategoria === "modrinth"
+            categoriasNegadasModrinth: fonte === "modrinth"
               ? filtros.categoriasNegadas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
               : [],
-            categoriasNegadasCurseforge: fonteCategoria === "curseforge"
+            categoriasNegadasCurseforge: fonte === "curseforge"
               ? filtros.categoriasNegadas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
               : [],
             sort: filtros.ordenacao,
@@ -698,7 +696,6 @@ export default function Explore({
   };
 
   const fontesMarcadas = FONTES.filter((fonte) => fontesSelecionadas[fonte]);
-  const fonteCategorias = fontesMarcadas.length === 1 ? fontesMarcadas[0] : null;
   const quantidadeFiltrosAtivos = Number(Boolean(versaoMinecraft))
     + Number(Boolean(loader))
     + categoriasIncluidas.length
@@ -717,9 +714,10 @@ export default function Explore({
     setOrdenacao("relevancia");
   };
 
-  const categoriasDaFonte = fonteCategorias
-    ? categorias.filter((item) => Boolean(item[fonteCategorias]))
-    : [];
+  const fontesCategorias = fontesMarcadas.length > 0 ? fontesMarcadas : FONTES;
+  const categoriasDaFonte = categorias.filter((item) =>
+    fontesCategorias.some((fonte) => Boolean(item[fonte]))
+  );
   const alternarFonte = (fonte: Source) => {
     setFontesSelecionadas((fontesAtuais) => ({
       ...fontesAtuais,
@@ -863,7 +861,7 @@ export default function Explore({
                 "grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)]",
                 "gap-2 rounded-2xl border border-white/10 bg-white/[0.035] p-3"
               )}>
-                <div className="order-2 min-w-0">
+                <div className="order-3 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Minecraft
                   </span>
@@ -958,7 +956,7 @@ export default function Explore({
                   </div>
                 </div>
 
-                <label className="order-3 min-w-0">
+                <label className="order-4 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Modloader
                   </span>
@@ -986,7 +984,7 @@ export default function Explore({
                   </div>
                 </label>
 
-                <div className="order-4 min-w-0">
+                <div className="order-5 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Fonte
                   </span>
@@ -1063,7 +1061,7 @@ export default function Explore({
                   </div>
                 </div>
 
-                <div className="order-5 min-w-0">
+                <div className="order-2 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Categorias
                   </span>
@@ -1072,7 +1070,7 @@ export default function Explore({
                       type="button"
                       aria-haspopup="listbox"
                       aria-expanded={seletorCategoriasAberto}
-                      disabled={!fonteCategorias || carregandoCategorias || categoriasDaFonte.length === 0}
+                      disabled={carregandoCategorias || categoriasDaFonte.length === 0}
                       onClick={() => setSeletorCategoriasAberto((aberto) => !aberto)}
                       className={cn(
                         "flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#171717]",
@@ -1081,13 +1079,11 @@ export default function Explore({
                       )}
                     >
                       <span className="truncate">
-                        {!fonteCategorias
-                          ? "Marque uma única fonte"
-                          : carregandoCategorias
-                            ? "Carregando categorias..."
-                            : erroCategorias
-                              ? "Categorias indisponíveis"
-                              : resumoCategorias}
+                        {carregandoCategorias
+                          ? "Carregando categorias..."
+                          : erroCategorias
+                            ? "Categorias indisponíveis"
+                            : resumoCategorias}
                       </span>
                       <ChevronDown
                         size={14}
@@ -1314,15 +1310,12 @@ export default function Explore({
                       return qtdDownloads;
                     })()}
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] font-bold">
-                    <Star size={12} className="text-yellow-500/50" />
-                    {(() => {
-                      const qtdSeguidores = item.follows || 0;
-                      return qtdSeguidores >= 1000
-                        ? `${(qtdSeguidores / 1000).toFixed(1)}K`
-                        : qtdSeguidores;
-                    })()}
-                  </div>
+                  {typeof item.follows === "number" && (
+                    <div className="flex items-center gap-1 text-[10px] font-bold" title="Seguidores no Modrinth">
+                      <Heart size={12} className="text-pink-400/60" />
+                      {item.follows >= 1000 ? `${(item.follows / 1000).toFixed(1)}K` : item.follows}
+                    </div>
+                  )}
                 </div>
 
                 <div className="ml-auto flex shrink-0 gap-2">
