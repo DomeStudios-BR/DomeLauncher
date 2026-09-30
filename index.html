@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/src-tauri/icons/icon.png" />
+    <link rel="stylesheet" href="/inicializacao.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
@@ -12,6 +13,70 @@
   </head>
 
   <body>
+    <div id="inicializacao" class="tela-inicializacao" role="status" aria-label="Carregando Dome Launcher">
+        <aside class="esqueleto-menu" aria-hidden="true">
+          <div class="esqueleto-navegacao">
+            <i class="esqueleto-linha esqueleto-seta"></i>
+            <i class="esqueleto-linha esqueleto-seta"></i>
+          </div>
+          <div class="esqueleto-atalhos">
+            <i class="esqueleto-linha esqueleto-atalho esqueleto-atalho-ativo"></i>
+            <i class="esqueleto-linha esqueleto-atalho"></i>
+            <i class="esqueleto-linha esqueleto-atalho"></i>
+            <i class="esqueleto-linha esqueleto-atalho"></i>
+          </div>
+          <div class="esqueleto-rodape-menu">
+            <i class="esqueleto-linha esqueleto-atalho"></i>
+            <i class="esqueleto-linha esqueleto-atalho"></i>
+          </div>
+        </aside>
+
+        <div class="esqueleto-corpo" aria-hidden="true">
+          <main class="esqueleto-principal">
+            <header class="esqueleto-topo">
+              <i class="esqueleto-linha esqueleto-titulo-topo"></i>
+            </header>
+            <div class="esqueleto-conteudo">
+              <i class="esqueleto-linha esqueleto-saudacao"></i>
+              <section class="esqueleto-secao">
+                <i class="esqueleto-linha esqueleto-titulo-secao"></i>
+                <div class="esqueleto-noticias">
+                  <div class="esqueleto-noticia">
+                    <i class="esqueleto-linha esqueleto-noticia-tag"></i>
+                    <i class="esqueleto-linha esqueleto-noticia-titulo"></i>
+                  </div>
+                  <div class="esqueleto-noticia">
+                    <i class="esqueleto-linha esqueleto-noticia-tag"></i>
+                    <i class="esqueleto-linha esqueleto-noticia-titulo"></i>
+                  </div>
+                </div>
+              </section>
+              <section class="esqueleto-secao">
+                <div class="esqueleto-cabecalho-biblioteca">
+                  <i class="esqueleto-linha esqueleto-titulo-secao"></i>
+                  <i class="esqueleto-linha esqueleto-acoes"></i>
+                </div>
+                <div class="esqueleto-biblioteca">
+                  <div class="esqueleto-instancia">
+                    <i></i><span><i></i><i></i></span>
+                  </div>
+                  <div class="esqueleto-instancia">
+                    <i></i><span><i></i><i></i></span>
+                  </div>
+                  <div class="esqueleto-instancia">
+                    <i></i><span><i></i><i></i></span>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </main>
+          <aside class="esqueleto-social">
+            <i class="esqueleto-linha esqueleto-avatar"></i>
+            <i class="esqueleto-linha esqueleto-avatar"></i>
+            <i class="esqueleto-linha esqueleto-avatar"></i>
+          </aside>
+        </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

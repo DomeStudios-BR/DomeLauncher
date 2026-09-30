@@ -48,6 +48,20 @@ Windows e Linux são os alvos atuais de release.
 | `vite.config.ts` | Build e configuração social pública |
 | `.github/workflows/` | Validação e publicação |
 
+## Inicialização
+
+`index.html` e `public/inicializacao.css` mostram um skeleton da tela inicial até React carregar as instâncias e a conta. A leitura das instâncias
+usa uma tarefa bloqueante fora da thread da janela. `LauncherState::new()` carrega apenas os dados necessários para
+o primeiro uso; a migração de pastas auxiliares e capas antigas do Modrinth é solicitada pela interface depois da
+primeira carga e, ao terminar, atualiza a lista de instâncias. A verificação de jogos abertos também roda fora da
+thread da janela e consulta comandos e diretórios só dos processos Java. Telas fechadas, notícias e editor de ícones
+antigos são carregados sob demanda; o painel social é carregado após a primeira leitura. Preserve essa ordem para
+não atrasar a janela.
+
+No desenvolvimento, o Vite prepara os módulos da tela inicial antes da primeira navegação. Os dados dos ícones
+pixelados usados pela interface ficam reunidos em `src/assets/dadosIconesPixelados.json`, evitando uma requisição por
+ícone na WebView. O DevTools pode ser aberto manualmente quando necessário; ele não abre junto com a janela.
+
 ## Ambiente e comandos
 
 Use Bun, nunca npm. Consulte `package.json` antes de inventar scripts. A CI usa Bun 1.3.5 e Rust estável
@@ -126,6 +140,9 @@ quando disponível; isso não é uma auditoria completa de integridade.
 
 O cache ocupa espaço adicional, não expira automaticamente e pode ser removido sem instalações em andamento.
 Instâncias antigas não alimentam o cache retroativamente. Forge/NeoForge ainda dependem de instaladores externos.
+O Forge 1.12 e 1.12.2 usa perfis com `minecraftArguments`: o launcher extrai o perfil e o JAR do instalador,
+prepara as bibliotecas na criação e reaproveita o mesmo ajuste ao iniciar instâncias existentes. Nesses perfis,
+algumas bibliotecas ficam no Maven do Forge e outras no repositório de bibliotecas do Minecraft.
 Compare desempenho com mesma versão/conexão e cache vazio/preenchido; testes HTTP locais não comprovam velocidade real.
 
 ## Validação e entrega

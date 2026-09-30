@@ -89,8 +89,23 @@ pub(crate) async fn get_minecraft_versions() -> Result<VersionManifest, String> 
 }
 
 #[tauri::command]
-pub(crate) fn get_instances(state: State<LauncherState>) -> Result<Vec<Instance>, String> {
-    state.get_instances().map_err(|e| e.to_string())
+pub(crate) async fn get_instances(
+    state: State<'_, LauncherState>,
+) -> Result<Vec<Instance>, String> {
+    let estado = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || estado.get_instances())
+        .await
+        .map_err(|erro| erro.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn concluir_migracoes_iniciais(
+    state: State<'_, LauncherState>,
+) -> Result<(), String> {
+    let estado = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || estado.concluir_migracoes_iniciais())
+        .await
+        .map_err(|erro| erro.to_string())
 }
 
 #[tauri::command]
