@@ -79,6 +79,15 @@ export default defineConfig(async ({ mode }) => {
       port: 1420,
       strictPort: true,
       host: host || false,
+      warmup: {
+        clientFiles: [
+          "./src/main.tsx",
+          "./src/App.tsx",
+          "./src/iconesPixelados.tsx",
+          "./src/components/HomePage.tsx",
+          "./src/components/LibraryPage.tsx",
+        ],
+      },
       hmr: host
         ? {
             protocol: "ws",

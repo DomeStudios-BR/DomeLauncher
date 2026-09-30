@@ -255,6 +255,78 @@ fn versao_forge_completa(minecraft_version: &str, forge_version: &str) -> String
     format!("{}-{}", minecraft_version, build)
 }
 
+fn extrair_perfil_forge_instalador(bytes: &[u8]) -> Option<serde_json::Value> {
+    let mut arquivo = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+
+    if let Ok(entrada) = arquivo.by_name("version.json") {
+        if let Ok(perfil) = serde_json::from_reader(entrada) {
+            return Some(perfil);
+        }
+    }
+
+    let entrada = arquivo.by_name("install_profile.json").ok()?;
+    let instalacao: serde_json::Value = serde_json::from_reader(entrada).ok()?;
+    instalacao.get("versionInfo").cloned()
+}
+
+fn garantir_jar_forge_legado(
+    bytes_instalador: &[u8],
+    instance_path: &std::path::Path,
+    versao_forge: &str,
+) -> Result<(), String> {
+    let relativo = format!(
+        "net/minecraftforge/forge/{}/forge-{}.jar",
+        versao_forge, versao_forge
+    );
+    let destino = instance_path.join("libraries").join(&relativo);
+    if std::fs::metadata(&destino).is_ok_and(|dados| dados.is_file() && dados.len() > 0) {
+        return Ok(());
+    }
+    if destino.exists() {
+        std::fs::remove_file(&destino).map_err(|erro| erro.to_string())?;
+    }
+
+    let mut instalador = zip::ZipArchive::new(std::io::Cursor::new(bytes_instalador))
+        .map_err(|erro| format!("Instalador Forge inválido: {}", erro))?;
+    let candidatos = [
+        format!("maven/{}", relativo),
+        format!("forge-{}-universal.jar", versao_forge),
+    ];
+    for nome in candidatos {
+        if let Ok(mut jar) = instalador.by_name(&nome) {
+            if let Some(pasta) = destino.parent() {
+                std::fs::create_dir_all(pasta).map_err(|erro| erro.to_string())?;
+            }
+            let temporario = destino.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+            let resultado = (|| -> Result<(), String> {
+                let mut arquivo =
+                    std::fs::File::create(&temporario).map_err(|erro| erro.to_string())?;
+                std::io::copy(&mut jar, &mut arquivo).map_err(|erro| erro.to_string())?;
+                std::fs::rename(&temporario, &destino).map_err(|erro| erro.to_string())
+            })();
+            if resultado.is_err() {
+                let _ = std::fs::remove_file(&temporario);
+            }
+            resultado?;
+            return Ok(());
+        }
+    }
+
+    Err(format!(
+        "Instalador Forge {} terminou sem fornecer o JAR do cliente.",
+        versao_forge
+    ))
+}
+
+fn salvar_perfil_forge(
+    instance_path: &std::path::Path,
+    perfil: &serde_json::Value,
+) -> Result<(), String> {
+    let manifesto = serde_json::to_vec_pretty(perfil).map_err(|erro| erro.to_string())?;
+    std::fs::write(instance_path.join("forge_manifest.json"), manifesto)
+        .map_err(|erro| format!("Erro ao salvar perfil Forge: {}", erro))
+}
+
 pub(super) async fn install_forge_loader(
     instance_path: &std::path::Path,
     minecraft_version: &str,
@@ -272,14 +344,6 @@ pub(super) async fn install_forge_loader(
         versao_forge, versao_forge
     );
 
-    let temp_dir = std::env::temp_dir().join(format!(
-        "dome_launcher_forge_installer_{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
-
-    let installer_path = temp_dir.join("forge-installer.jar");
-
     // Download do installer
     let response = client
         .get(&installer_url)
@@ -287,7 +351,6 @@ pub(super) async fn install_forge_loader(
         .await
         .map_err(|e| format!("Erro ao baixar instalador Forge: {}", e))?;
     if !response.status().is_success() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
         return Err(format!(
             "Falha ao baixar instalador Forge ({}): {}",
             response.status(),
@@ -295,7 +358,34 @@ pub(super) async fn install_forge_loader(
         ));
     }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    std::fs::write(&installer_path, bytes).map_err(|e| e.to_string())?;
+    let perfil_cliente = extrair_perfil_forge_instalador(&bytes);
+    if let Some(perfil) = perfil_cliente
+        .as_ref()
+        .filter(|perfil| perfil.get("minecraftArguments").is_some())
+    {
+        garantir_jar_forge_legado(&bytes, instance_path, &versao_forge)?;
+        salvar_perfil_forge(instance_path, perfil)?;
+        let manifesto = std::fs::read(instance_path.join("version_manifest.json"))
+            .map_err(|erro| format!("Manifesto Minecraft não encontrado para o Forge: {}", erro))?;
+        let mut detalhes: VersionDetail = serde_json::from_slice(&manifesto)
+            .map_err(|erro| format!("Manifesto Minecraft inválido para o Forge: {}", erro))?;
+        Box::pin(adjust_forge_manifest(
+            &mut detalhes,
+            forge_version,
+            instance_path,
+        ))
+        .await?;
+        download_instance_files(instance_path, &detalhes).await?;
+        return Ok(());
+    }
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "dome_launcher_forge_installer_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    let installer_path = temp_dir.join("forge-installer.jar");
+    std::fs::write(&installer_path, &bytes).map_err(|e| e.to_string())?;
 
     preparar_diretorio_launcher_para_instalador(instance_path, minecraft_version)?;
 
@@ -327,6 +417,9 @@ pub(super) async fn install_forge_loader(
         })?;
 
     if output.status.success() {
+        if let Some(perfil) = perfil_cliente.as_ref() {
+            salvar_perfil_forge(instance_path, perfil)?;
+        }
         let _ = std::fs::remove_dir_all(&temp_dir);
         return Ok(());
     }
@@ -1245,7 +1338,7 @@ pub(super) async fn adjust_forge_manifest(
             }
         }
 
-        // 2.2 Tentar extrair version.json de dentro do installer JAR (Forge moderno 1.13+)
+        // 2.2 Extrair version.json ou versionInfo do instalador Forge.
         if forge_json_opt.is_none() {
             println!(
                 "[Forge] Buscando manifesto dentro do instalador Forge {}...",
@@ -1259,21 +1352,14 @@ pub(super) async fn adjust_forge_manifest(
             if let Ok(resposta) = client.get(&installer_url).send().await {
                 if resposta.status().is_success() {
                     if let Ok(bytes) = resposta.bytes().await {
-                        if let Ok(mut arquivo_zip) =
-                            zip::ZipArchive::new(std::io::Cursor::new(bytes))
-                        {
-                            if let Ok(mut entrada) = arquivo_zip.by_name("version.json") {
-                                use std::io::Read;
-                                let mut conteudo = String::new();
-                                if entrada.read_to_string(&mut conteudo).is_ok() {
-                                    if let Ok(parsed) =
-                                        serde_json::from_str::<serde_json::Value>(&conteudo)
-                                    {
-                                        let _ = std::fs::write(&forge_manifest_local, &conteudo);
-                                        forge_json_opt = Some(parsed);
-                                    }
-                                }
+                        if let Some(perfil) = extrair_perfil_forge_instalador(&bytes) {
+                            if perfil.get("minecraftArguments").is_some() {
+                                garantir_jar_forge_legado(&bytes, instance_path, &versao_forge)?;
                             }
+                            if let Ok(conteudo) = serde_json::to_vec_pretty(&perfil) {
+                                let _ = std::fs::write(&forge_manifest_local, conteudo);
+                            }
+                            forge_json_opt = Some(perfil);
                         }
                     }
                 }
@@ -1289,6 +1375,15 @@ pub(super) async fn adjust_forge_manifest(
                 main_class
             );
             details.main_class = main_class.to_string();
+        }
+
+        if let Some(argumentos_legados) = fj
+            .get("minecraftArguments")
+            .and_then(|valor| valor.as_str())
+            .filter(|valor| !valor.trim().is_empty())
+        {
+            details.minecraft_arguments = Some(argumentos_legados.to_string());
+            details.arguments = None;
         }
 
         // Adicionar bibliotecas do Forge
@@ -1313,6 +1408,16 @@ pub(super) async fn adjust_forge_manifest(
                 if let Ok(mut lib) =
                     serde_json::from_value::<crate::launcher::Library>(lib_val.clone())
                 {
+                    let chave_biblioteca = name.split(':').take(2).collect::<Vec<_>>().join(":");
+                    details.libraries.retain(|existente| {
+                        existente
+                            .name
+                            .split(':')
+                            .take(2)
+                            .collect::<Vec<_>>()
+                            .join(":")
+                            != chave_biblioteca
+                    });
                     // Garantir que a biblioteca tenha um download path associado
                     if lib
                         .downloads
@@ -1330,15 +1435,23 @@ pub(super) async fn adjust_forge_manifest(
                                 "{}/{}/{}/{}-{}.jar",
                                 grupo, artefato, versao, artefato, versao
                             );
+                            let repositorio = lib_val
+                                .get("url")
+                                .and_then(|valor| valor.as_str())
+                                .filter(|url| url.starts_with("https://"))
+                                .unwrap_or_else(|| {
+                                    if matches!(partes[0], "net.minecraft" | "lzma" | "java3d") {
+                                        "https://libraries.minecraft.net/"
+                                    } else {
+                                        "https://maven.minecraftforge.net/"
+                                    }
+                                });
                             lib.downloads = Some(crate::launcher::LibraryDownloads {
                                 artifact: Some(crate::launcher::Artifact {
                                     path: Some(caminho_jar.clone()),
                                     sha1: None,
                                     size: None,
-                                    url: format!(
-                                        "https://maven.minecraftforge.net/{}",
-                                        caminho_jar
-                                    ),
+                                    url: format!("{}{}", repositorio, caminho_jar),
                                 }),
                                 classifiers: None,
                             });
@@ -1383,19 +1496,28 @@ pub(super) async fn adjust_forge_manifest(
             }
         }
 
-        // Verificar se os jars de cliente do Forge foram gerados (forge-*-client.jar)
+        // Verificar o JAR do perfil antes de considerar o loader pronto.
+        let nome_jar = if fj.get("minecraftArguments").is_some() {
+            format!("forge-{}.jar", versao_forge)
+        } else {
+            format!("forge-{}-client.jar", versao_forge)
+        };
         let forge_client_jar = instance_path
             .join("libraries")
             .join("net")
             .join("minecraftforge")
             .join("forge")
             .join(&versao_forge)
-            .join(format!("forge-{}-client.jar", versao_forge));
+            .join(nome_jar);
 
         if !forge_client_jar.exists() {
             println!("[Forge] Jars do cliente Forge não encontrados. Executando instalação do cliente...");
-            if let Err(e) = install_forge_loader(instance_path, &details.id, forge_version).await {
-                eprintln!("[Forge] Aviso na instalação do loader: {}", e);
+            install_forge_loader(instance_path, &details.id, forge_version).await?;
+            if !forge_client_jar.exists() {
+                return Err(format!(
+                    "Forge {} foi instalado sem gerar o JAR do cliente esperado.",
+                    versao_forge
+                ));
             }
         }
 
@@ -1826,7 +1948,213 @@ pub(super) fn coletar_argumentos_jvm_manifesto(
 
 #[cfg(test)]
 mod testes {
-    use super::prefixo_neoforge_para_minecraft;
+    use super::{
+        adjust_forge_manifest, extrair_perfil_forge_instalador, garantir_jar_forge_legado,
+        prefixo_neoforge_para_minecraft,
+    };
+    use crate::launcher::VersionDetail;
+    use std::io::Write;
+
+    fn instalador_simulado(nome_perfil: &str, perfil: &str, nome_jar: &str) -> Vec<u8> {
+        let arquivo = std::io::Cursor::new(Vec::new());
+        let mut compactado = zip::ZipWriter::new(arquivo);
+        let opcoes = zip::write::SimpleFileOptions::default();
+        compactado.start_file(nome_perfil, opcoes).unwrap();
+        compactado.write_all(perfil.as_bytes()).unwrap();
+        compactado.start_file(nome_jar, opcoes).unwrap();
+        compactado.write_all(b"jar do Forge").unwrap();
+        compactado.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn extrai_perfis_dos_dois_formatos_do_instalador_forge() {
+        let legado = instalador_simulado(
+            "install_profile.json",
+            r#"{"versionInfo":{"mainClass":"net.minecraft.launchwrapper.Launch","minecraftArguments":"--tweakClass net.minecraftforge.fml.common.launcher.FMLTweaker"}}"#,
+            "forge-1.12-14.21.1.2443-universal.jar",
+        );
+        let perfil = extrair_perfil_forge_instalador(&legado).unwrap();
+        assert!(perfil["minecraftArguments"]
+            .as_str()
+            .unwrap()
+            .contains("FMLTweaker"));
+
+        let recente = instalador_simulado(
+            "version.json",
+            r#"{"mainClass":"net.minecraft.launchwrapper.Launch","minecraftArguments":"--versionType Forge"}"#,
+            "maven/net/minecraftforge/forge/1.12.2-14.23.5.2864/forge-1.12.2-14.23.5.2864.jar",
+        );
+        let perfil = extrair_perfil_forge_instalador(&recente).unwrap();
+        assert_eq!(perfil["minecraftArguments"], "--versionType Forge");
+    }
+
+    #[tokio::test]
+    async fn aplica_perfil_forge_112_e_bibliotecas_minecraft() {
+        let pasta = std::env::temp_dir().join(format!("dome-forge-teste-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let versao = "1.12-14.21.1.2443";
+        let jar = pasta
+            .join("libraries/net/minecraftforge/forge")
+            .join(versao)
+            .join(format!("forge-{}.jar", versao));
+        std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        std::fs::write(&jar, b"jar do Forge").unwrap();
+        std::fs::write(
+            pasta.join("forge_manifest.json"),
+            r#"{"mainClass":"net.minecraft.launchwrapper.Launch","minecraftArguments":"--username ${auth_player_name} --tweakClass net.minecraftforge.fml.common.launcher.FMLTweaker","libraries":[{"name":"net.minecraft:launchwrapper:1.12"}]}"#,
+        )
+        .unwrap();
+        let mut detalhes: VersionDetail = serde_json::from_value(serde_json::json!({
+            "id": "1.12",
+            "type": "release",
+            "downloads": {"client": {"url": "", "size": 0, "sha1": ""}},
+            "mainClass": "net.minecraft.client.main.Main",
+            "libraries": [],
+            "assets": "legacy",
+            "assetIndex": {"id": "legacy", "sha1": "", "size": 0, "url": ""},
+            "minecraftArguments": "--username ${auth_player_name}"
+        }))
+        .unwrap();
+
+        adjust_forge_manifest(&mut detalhes, versao, &pasta)
+            .await
+            .unwrap();
+        assert_eq!(detalhes.main_class, "net.minecraft.launchwrapper.Launch");
+        assert!(detalhes
+            .minecraft_arguments
+            .as_deref()
+            .unwrap()
+            .contains("FMLTweaker"));
+        assert_eq!(
+            detalhes.libraries[0]
+                .downloads
+                .as_ref()
+                .unwrap()
+                .artifact
+                .as_ref()
+                .unwrap()
+                .url,
+            "https://libraries.minecraft.net/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar"
+        );
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[tokio::test]
+    async fn aplica_perfil_forge_1122_e_substitui_bibliotecas_antigas() {
+        let pasta = std::env::temp_dir().join(format!("dome-forge-teste-{}", uuid::Uuid::new_v4()));
+        let versao = "1.12.2-14.23.5.2864";
+        let jar = pasta
+            .join("libraries/net/minecraftforge/forge")
+            .join(versao)
+            .join(format!("forge-{}.jar", versao));
+        std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        std::fs::write(&jar, b"jar do Forge").unwrap();
+        std::fs::write(
+            pasta.join("forge_manifest.json"),
+            r#"{"mainClass":"net.minecraft.launchwrapper.Launch","minecraftArguments":"--tweakClass net.minecraftforge.fml.common.launcher.FMLTweaker","libraries":[{"name":"org.ow2.asm:asm-debug-all:5.2"},{"name":"net.minecraft:launchwrapper:1.12"},{"name":"org.apache.logging.log4j:log4j-core:2.15.0"}]}"#,
+        )
+        .unwrap();
+        let mut detalhes: VersionDetail = serde_json::from_value(serde_json::json!({
+            "id": "1.12.2",
+            "type": "release",
+            "downloads": {"client": {"url": "", "size": 0, "sha1": ""}},
+            "mainClass": "net.minecraft.client.main.Main",
+            "libraries": [{
+                "name": "org.apache.logging.log4j:log4j-core:2.8.1",
+                "downloads": {"artifact": {"path": "antigo.jar", "url": "https://libraries.minecraft.net/antigo.jar"}}
+            }],
+            "assets": "legacy",
+            "assetIndex": {"id": "legacy", "sha1": "", "size": 0, "url": ""},
+            "minecraftArguments": "--username ${auth_player_name}"
+        }))
+        .unwrap();
+
+        adjust_forge_manifest(&mut detalhes, versao, &pasta)
+            .await
+            .unwrap();
+        assert_eq!(detalhes.libraries.len(), 3);
+        assert!(detalhes
+            .libraries
+            .iter()
+            .all(|biblioteca| !biblioteca.name.ends_with(":2.8.1")));
+        for (nome, repositorio) in [
+            (
+                "org.ow2.asm:asm-debug-all:5.2",
+                "https://maven.minecraftforge.net/",
+            ),
+            (
+                "net.minecraft:launchwrapper:1.12",
+                "https://libraries.minecraft.net/",
+            ),
+            (
+                "org.apache.logging.log4j:log4j-core:2.15.0",
+                "https://maven.minecraftforge.net/",
+            ),
+        ] {
+            let biblioteca = detalhes
+                .libraries
+                .iter()
+                .find(|item| item.name == nome)
+                .unwrap();
+            let url = &biblioteca
+                .downloads
+                .as_ref()
+                .unwrap()
+                .artifact
+                .as_ref()
+                .unwrap()
+                .url;
+            assert!(
+                url.starts_with(repositorio),
+                "URL incorreta para {}: {}",
+                nome,
+                url
+            );
+        }
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[test]
+    fn recupera_jar_legado_de_dentro_do_instalador_forge() {
+        let versao = "1.12-14.21.1.2443";
+        let bytes = instalador_simulado(
+            "install_profile.json",
+            r#"{"versionInfo":{"mainClass":"net.minecraft.launchwrapper.Launch"}}"#,
+            "forge-1.12-14.21.1.2443-universal.jar",
+        );
+        let pasta = std::env::temp_dir().join(format!("dome-forge-jar-{}", uuid::Uuid::new_v4()));
+        garantir_jar_forge_legado(&bytes, &pasta, versao).unwrap();
+        let jar = pasta
+            .join("libraries/net/minecraftforge/forge")
+            .join(versao)
+            .join(format!("forge-{}.jar", versao));
+        assert_eq!(std::fs::read(jar).unwrap(), b"jar do Forge");
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requer manifesto Minecraft local e acesso aos servidores oficiais"]
+    async fn instala_forge_oficial_em_pasta_isolada() {
+        let pasta = std::path::PathBuf::from(
+            std::env::var("DOME_FORGE_TESTE_PASTA")
+                .expect("Defina DOME_FORGE_TESTE_PASTA com uma instância temporária"),
+        );
+        let versao_minecraft = std::env::var("DOME_FORGE_TESTE_VERSAO").unwrap_or("1.12".into());
+        let build = std::env::var("DOME_FORGE_TESTE_BUILD").unwrap_or("14.21.1.2443".into());
+        let versao_forge = format!("{}-{}", versao_minecraft, build);
+        super::install_forge_loader(&pasta, &versao_minecraft, &build)
+            .await
+            .unwrap();
+        assert!(pasta.join("forge_manifest.json").exists());
+        assert!(pasta
+            .join("libraries/net/minecraftforge/forge")
+            .join(&versao_forge)
+            .join(format!("forge-{}.jar", versao_forge))
+            .exists());
+        assert!(pasta
+            .join("libraries/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar")
+            .exists());
+    }
 
     #[test]
     fn converte_versoes_classicas_para_prefixo_neoforge() {

@@ -16,27 +16,20 @@ import {
 } from "./iconesPixelados";
 import { AnimatePresence, motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { cn } from "./lib/utils";
-import { LoginModal } from "./components/LoginModal";
 import { autenticarComMicrosoft } from "./lib/autenticacaoMicrosoft";
 import { OnboardingLauncher } from "./components/OnboardingLauncher";
-import CreateInstanceModal from "./components/CreateInstanceModal";
 import CreatingInstancesOverlay from "./components/CreatingInstancesOverlay";
+import IndicadorExclusoesInstancias from "./components/IndicadorExclusoesInstancias";
 import { useLauncher, type Instance } from "./hooks/useLauncher";
 import { useBreakpointXl } from "./hooks/useBreakpointXl";
 import type { AbaOrigemProjeto, ProjetoConteudo } from "./components/ProjetoDetalheModal";
-import Explore from "./components/Explore";
-import Favorites from "./components/Favorites";
-import LibraryPage from "./components/LibraryPage";
 import HomePage from "./components/HomePage";
-import SettingsPage from "./components/Settings";
 import { LimiteErroSkins } from "./components/LimiteErroSkins";
-import InstanceManager from "./components/InstanceManager";
-import SocialSidebar from "./components/SocialSidebar";
 import { EsqueletoAba } from "./components/EsqueletoCarregamento";
-import VisualizacaoInstanciaSocial from "./components/VisualizacaoInstanciaSocial";
 import { NovidadesVersaoModal, type NovidadesVersao } from "./components/NovidadesVersaoModal";
 import type { AmigoSocial } from "./components/social/tiposSocial";
 import { aplicarCorDestaque, normalizarCorDestaque } from "./lib/corDestaque";
@@ -44,9 +37,21 @@ import {
   EVENTO_INSTANCIAS_PUBLICAS_SOCIAIS,
   type PublicacaoInstanciaSocial,
 } from "./lib/eventosTransferenciaSocial";
+import { solicitarNavegacaoInterna } from "./lib/navegacaoInterna";
 
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
+const LoginModal = lazy(() =>
+  import("./components/LoginModal").then((modulo) => ({ default: modulo.LoginModal }))
+);
+const CreateInstanceModal = lazy(() => import("./components/CreateInstanceModal"));
+const Explore = lazy(() => import("./components/Explore"));
+const Favorites = lazy(() => import("./components/Favorites"));
+const LibraryPage = lazy(() => import("./components/LibraryPage"));
+const SettingsPage = lazy(() => import("./components/Settings"));
+const InstanceManager = lazy(() => import("./components/InstanceManager"));
+const SocialSidebar = lazy(() => import("./components/SocialSidebar"));
+const VisualizacaoInstanciaSocial = lazy(() => import("./components/VisualizacaoInstanciaSocial"));
 const carregarProjetoDetalheModal = () => import("./components/ProjetoDetalheModal");
 const ProjetoDetalheModal = lazy(carregarProjetoDetalheModal);
 const PerfilComunidade = lazy(() => import("./components/PerfilComunidade"));
@@ -237,6 +242,7 @@ export default function App() {
     total?: number;
   } | null>(null);
   const [projetoDetalhe, setProjetoDetalhe] = useState<ProjetoConteudo | null>(null);
+  const [instalacaoDiretaProjetoId, setInstalacaoDiretaProjetoId] = useState<string | null>(null);
   const [atividadeSocialDetalhe, setAtividadeSocialDetalhe] = useState<AmigoSocial | null>(null);
   const [abaOrigemProjeto, setAbaOrigemProjeto] = useState<AbaOrigemProjeto>("home");
   const [corDestaque, setCorDestaque] = useState("#10B981");
@@ -248,7 +254,40 @@ export default function App() {
   const [painelSocialRecuado, setPainelSocialRecuado] = useState(true);
   const ehTelaXl = useBreakpointXl();
   const ultimaAssinaturaPresence = useRef<string>("");
+  const primeiraAba = useRef(true);
   const menuContaRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!carregandoLauncher) {
+      document.getElementById("inicializacao")?.remove();
+    }
+  }, [carregandoLauncher]);
+
+  useEffect(() => {
+    let ativo = true;
+    let cancelar: (() => void) | undefined;
+
+    void listen<{ instanceId: string; codigoSaida: number | null }>(
+      "dome:falha-inicializacao-instancia",
+      (evento) => {
+        const codigo = evento.payload.codigoSaida;
+        alert(
+          `A instância ${evento.payload.instanceId} encerrou logo após iniciar` +
+          `${codigo === null ? "" : ` (código ${codigo})`}. Consulte os Logs da instância para mais detalhes.`
+        );
+        void fetchInstances();
+      }
+    ).then((desinscrever) => {
+      if (ativo) cancelar = desinscrever;
+      else desinscrever();
+    }).catch((erro) => console.warn("Falha ao acompanhar a inicialização do jogo:", erro));
+
+    return () => {
+      ativo = false;
+      cancelar?.();
+    };
+  }, [fetchInstances]);
+
   const alterarAba = useCallback((aba: string) => {
     if (aba === "profile" && !user) return;
     startTransition(() => setActiveTab(aba));
@@ -271,6 +310,8 @@ export default function App() {
   }, [activeTab, alterarAba]);
 
   const voltarNavegacao = useCallback(() => {
+    if (solicitarNavegacaoInterna(-1)) return;
+
     const destino = historicoNavegacao.anteriores[
       historicoNavegacao.anteriores.length - 1
     ];
@@ -284,6 +325,8 @@ export default function App() {
   }, [activeTab, alterarAba, historicoNavegacao.anteriores]);
 
   const avancarNavegacao = useCallback(() => {
+    if (solicitarNavegacaoInterna(1)) return;
+
     const [destino] = historicoNavegacao.proximas;
     if (!destino) return;
 
@@ -309,12 +352,12 @@ export default function App() {
     const navegarPeloTeclado = (evento: KeyboardEvent) => {
       if (!evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return;
 
-      if (evento.key === "ArrowLeft" && historicoNavegacao.anteriores.length > 0) {
+      if (evento.key === "ArrowLeft") {
         evento.preventDefault();
         voltarNavegacao();
       }
 
-      if (evento.key === "ArrowRight" && historicoNavegacao.proximas.length > 0) {
+      if (evento.key === "ArrowRight") {
         evento.preventDefault();
         avancarNavegacao();
       }
@@ -326,12 +369,12 @@ export default function App() {
 
   useEffect(() => {
     const navegarPeloMouse = (evento: MouseEvent) => {
-      if (evento.button === 3 && historicoNavegacao.anteriores.length > 0) {
+      if (evento.button === 3) {
         evento.preventDefault();
         voltarNavegacao();
       }
 
-      if (evento.button === 4 && historicoNavegacao.proximas.length > 0) {
+      if (evento.button === 4) {
         evento.preventDefault();
         avancarNavegacao();
       }
@@ -342,6 +385,10 @@ export default function App() {
   }, [avancarNavegacao, historicoNavegacao, voltarNavegacao]);
 
   useEffect(() => {
+    if (primeiraAba.current) {
+      primeiraAba.current = false;
+      return;
+    }
     if (activeTab === "home" || activeTab === "instances") {
       void fetchInstances();
     }
@@ -1078,7 +1125,7 @@ export default function App() {
           <button
             type="button"
             onClick={voltarNavegacao}
-            disabled={historicoNavegacao.anteriores.length === 0}
+            disabled={historicoNavegacao.anteriores.length === 0 && activeTab !== "instance-manager"}
             aria-label="Voltar"
             title="Voltar (Alt + ←)"
             className={cn(
@@ -1420,25 +1467,27 @@ export default function App() {
                   }}
                   onLogin={() => setIsLoginOpen(true)}
                   biblioteca={(
-                    <LibraryPage
-                      instances={instances}
-                      instanciaAtivaId={instanciaAtiva?.id ?? null}
-                      onSelectInstance={(instance) => {
-                        setSelectedInstance(instance);
-                      }}
-                      onDesselecionarInstancia={() => {
-                        setSelectedInstance(null);
-                      }}
-                      onAbrirGerenciadorInstancia={abrirGerenciadorInstancia}
-                      onLaunch={(id) => iniciarInstancia(id)}
-                      onDelete={(id) => remove(id)}
-                      onCreateNew={() => setIsCreateOpen(true)}
-                      onAtualizarInstancias={fetchInstances}
-                      onTrocarVersaoModpack={abrirTrocaVersaoModpack}
-                      publicacoesSociais={publicacoesPorInstancia}
-                      user={user}
-                      onLogin={() => setIsLoginOpen(true)}
-                    />
+                    <Suspense fallback={<EsqueletoAba />}>
+                      <LibraryPage
+                        instances={instances}
+                        instanciaAtivaId={instanciaAtiva?.id ?? null}
+                        onSelectInstance={(instance) => {
+                          setSelectedInstance(instance);
+                        }}
+                        onDesselecionarInstancia={() => {
+                          setSelectedInstance(null);
+                        }}
+                        onAbrirGerenciadorInstancia={abrirGerenciadorInstancia}
+                        onLaunch={(id) => iniciarInstancia(id)}
+                        onDelete={(id) => remove(id)}
+                        onCreateNew={() => setIsCreateOpen(true)}
+                        onAtualizarInstancias={fetchInstances}
+                        onTrocarVersaoModpack={abrirTrocaVersaoModpack}
+                        publicacoesSociais={publicacoesPorInstancia}
+                        user={user}
+                        onLogin={() => setIsLoginOpen(true)}
+                      />
+                    </Suspense>
                   )}
                 />
               </motion.div>
@@ -1505,7 +1554,12 @@ export default function App() {
               >
                 <Explore
                   onAtualizarPresencaExplore={setContextoExplore}
-                  onAbrirProjeto={(projeto) => abrirProjeto("explore", projeto)}
+                  onAbrirProjeto={(projeto, instalarAgora) => {
+                    setInstalacaoDiretaProjetoId(
+                      instalarAgora && projeto.project_type === "modpack" ? projeto.id : null
+                    );
+                    abrirProjeto("explore", projeto);
+                  }}
                 />
               </motion.div>
             )}
@@ -1543,12 +1597,15 @@ export default function App() {
                   usuarioLogado={Boolean(user)}
                   onSolicitarLogin={() => setIsLoginOpen(true)}
                   onInstanciaCriada={() => void fetchInstances()}
+                  instalarAoAbrir={instalacaoDiretaProjetoId === projetoDetalhe.id}
+                  onInstalacaoAutomaticaIniciada={() => setInstalacaoDiretaProjetoId(null)}
                   rotuloAcao={
                     abaOrigemProjeto === "home" || abaOrigemProjeto === "instances"
                       ? "Baixar"
                       : "Instalar"
                   }
                   onVoltar={() => {
+                    setInstalacaoDiretaProjetoId(null);
                     navegarParaAba(abaOrigemProjeto);
                     setProjetoDetalhe(null);
                   }}
@@ -1733,6 +1790,7 @@ export default function App() {
             </motion.footer>
           )}
         </AnimatePresence>
+        <IndicadorExclusoesInstancias />
       </main>
 
         <div
@@ -1764,41 +1822,49 @@ export default function App() {
             )}
             onClick={(evento) => evento.stopPropagation()}
           >
-            <SocialSidebar
-              usuarioMinecraft={user}
-              onEntrarMicrosoft={entrarMicrosoftDireto}
-              iconeAtividadeLocal={instanciaAtiva?.icon}
-              className={cn(
-                "h-full min-h-0 shrink-0",
-                ehTelaXl && (painelSocialRecuado ? "w-[72px]" : "w-[340px]"),
-                !ehTelaXl && "w-[340px]",
-                !ehTelaXl && "max-w-[92vw]"
-              )}
-              onFecharDrawer={
-                ehTelaXl ? undefined : () => setSocialDrawerAberto(false)
-              }
-              onAlterarChatAberto={setChatSocialAberto}
-              onAbrirAtividadeAmigo={abrirAtividadeAmigo}
-              onAbrirPerfil={abrirPerfilSocial}
-              recuado={ehTelaXl && painelSocialRecuado}
-              onAlternarRecuo={
-                ehTelaXl ? () => setPainelSocialRecuado((anterior) => !anterior) : undefined
-              }
-            />
+            {!carregandoLauncher && (
+              <Suspense fallback={
+                <div className="h-full w-full border-l border-white/10 bg-[#101010] p-4">
+                  <div className="h-9 w-9 animate-pulse bg-white/[0.06]" />
+                </div>
+              }>
+                <SocialSidebar
+                  usuarioMinecraft={user}
+                  onEntrarMicrosoft={entrarMicrosoftDireto}
+                  iconeAtividadeLocal={instanciaAtiva?.icon}
+                  className={cn(
+                    "h-full min-h-0 shrink-0",
+                    ehTelaXl && (painelSocialRecuado ? "w-[72px]" : "w-[340px]"),
+                    !ehTelaXl && "w-[340px]",
+                    !ehTelaXl && "max-w-[92vw]"
+                  )}
+                  onFecharDrawer={ehTelaXl ? undefined : () => setSocialDrawerAberto(false)}
+                  onAlterarChatAberto={setChatSocialAberto}
+                  onAbrirAtividadeAmigo={abrirAtividadeAmigo}
+                  onAbrirPerfil={abrirPerfilSocial}
+                  recuado={ehTelaXl && painelSocialRecuado}
+                  onAlternarRecuo={
+                    ehTelaXl ? () => setPainelSocialRecuado((anterior) => !anterior) : undefined
+                  }
+                />
+              </Suspense>
+            )}
           </div>
         </div>
       </div>
 
-      <LoginModal
-        isOpen={isLoginOpen}
-        onClose={() => {
-          setIsLoginOpen(false);
-        }}
-        onLoginConcluido={(conta) => {
-          setUser(conta);
-          atualizarSessaoMinecraft();
-        }}
-      />
+      {isLoginOpen && (
+        <Suspense fallback={null}>
+          <LoginModal
+            isOpen={isLoginOpen}
+            onClose={() => setIsLoginOpen(false)}
+            onLoginConcluido={(conta) => {
+              setUser(conta);
+              atualizarSessaoMinecraft();
+            }}
+          />
+        </Suspense>
+      )}
       <OnboardingLauncher
         usuario={user}
         carregando={carregandoLauncher}
@@ -1807,11 +1873,15 @@ export default function App() {
         onCriarInstancia={() => setIsCreateOpen(true)}
         onImportar={() => navegarParaAba("instances")}
       />
-      <CreateInstanceModal
-        isOpen={isCreateOpen}
-        onClose={() => setIsCreateOpen(false)}
-        onCreated={() => void fetchInstances()}
-      />
+      {isCreateOpen && (
+        <Suspense fallback={null}>
+          <CreateInstanceModal
+            isOpen={isCreateOpen}
+            onClose={() => setIsCreateOpen(false)}
+            onCreated={() => void fetchInstances()}
+          />
+        </Suspense>
+      )}
       <CreatingInstancesOverlay />
       <NovidadesVersaoModal novidades={novidadesVersao} onClose={fecharNovidadesVersao} />
       </div>

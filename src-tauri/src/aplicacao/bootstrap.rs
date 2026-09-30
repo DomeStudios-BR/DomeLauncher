@@ -11,15 +11,6 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
-        .setup(|_app| {
-            #[cfg(debug_assertions)]
-            {
-                if let Some(janela) = _app.get_webview_window("main") {
-                    janela.open_devtools();
-                }
-            }
-            Ok(())
-        })
         .manage(LauncherState::new())
         .manage(crate::comandos::presenca_discord::EstadoDiscordPresence::default())
         .plugin(tauri_plugin_opener::init())
@@ -27,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             super::instancias_basicas::get_instances,
+            super::instancias_basicas::concluir_migracoes_iniciais,
             super::importacao_exportacao::listar_instancias_importaveis,
             super::importacao_exportacao::importar_instancias_externas,
             super::instancias_criacao::create_instance,
@@ -56,9 +48,11 @@ pub fn run() {
             crate::skin::equipar_capa,
             // Gerenciador de mods
             super::mods_conteudo::search_mods_online,
+            super::mods_conteudo::listar_categorias_busca_online,
             super::mods_conteudo::buscar_detalhes_projeto_curseforge,
             super::mods_conteudo::listar_versoes_projeto_curseforge,
             super::mods_conteudo::obter_versao_projeto_curseforge,
+            super::mods_conteudo::planejar_instalacao_conteudo,
             super::mods_conteudo::install_mod,
             super::mods_conteudo::install_project_file,
             super::mods_conteudo::install_curseforge_project_file,

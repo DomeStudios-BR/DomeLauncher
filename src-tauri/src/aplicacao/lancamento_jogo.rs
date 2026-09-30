@@ -108,6 +108,7 @@ async fn obter_conta_valida_para_launch(
 
 async fn launch_instance_com_opcoes(
     state: &LauncherState,
+    app: tauri::AppHandle,
     id: String,
     quick_play_servidor: Option<String>,
 ) -> Result<(), String> {
@@ -348,7 +349,7 @@ async fn launch_instance_com_opcoes(
         }
     }
 
-    println!("[Launch] Executando: {} {:?}", java_exe, args);
+    println!("[Launch] Iniciando instância {} com Java preparado.", id);
 
     // Atualizar início da sessão antes de iniciar o jogo.
     let agora = chrono::Utc::now().to_rfc3339();
@@ -411,7 +412,7 @@ async fn launch_instance_com_opcoes(
         })?;
     }
 
-    state.iniciar_monitoramento_processo(&id, processo_iniciado);
+    state.iniciar_monitoramento_processo(&id, processo_iniciado, app);
 
     Ok(())
 }
@@ -419,16 +420,18 @@ async fn launch_instance_com_opcoes(
 #[tauri::command]
 pub(crate) async fn launch_instance(
     state: State<'_, LauncherState>,
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    launch_instance_com_opcoes(&state, id, None).await
+    launch_instance_com_opcoes(&state, app, id, None).await
 }
 
 #[tauri::command]
 pub(crate) async fn launch_instance_to_server(
     state: State<'_, LauncherState>,
+    app: tauri::AppHandle,
     id: String,
     address: String,
 ) -> Result<(), String> {
-    launch_instance_com_opcoes(&state, id, Some(address)).await
+    launch_instance_com_opcoes(&state, app, id, Some(address)).await
 }

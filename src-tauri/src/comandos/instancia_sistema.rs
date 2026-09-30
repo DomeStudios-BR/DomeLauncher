@@ -111,12 +111,20 @@ fn obter_mapa_instancias_em_execucao(
 
     use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 
+    let mut system =
+        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+    let processos_java_ids = system
+        .processes()
+        .values()
+        .filter(|processo| processo.name().to_lowercase().contains("java"))
+        .map(|processo| processo.pid())
+        .collect::<Vec<_>>();
     let detalhes_processo = ProcessRefreshKind::new()
         .with_cmd(UpdateKind::Always)
         .with_cwd(UpdateKind::Always);
-    let mut system =
-        System::new_with_specifics(RefreshKind::new().with_processes(detalhes_processo));
-    system.refresh_processes();
+    for pid in processos_java_ids {
+        system.refresh_process_specifics(pid, detalhes_processo);
+    }
 
     let processos_java = system
         .processes()
@@ -213,9 +221,9 @@ pub fn is_instance_running(
 }
 
 #[tauri::command]
-pub fn get_running_instances(
+pub async fn get_running_instances(
     instance_ids: Vec<String>,
-    state: State<LauncherState>,
+    state: State<'_, LauncherState>,
 ) -> Result<std::collections::HashMap<String, bool>, String> {
     let ids_unicos = instance_ids
         .into_iter()
@@ -224,7 +232,12 @@ pub fn get_running_instances(
         .into_iter()
         .collect::<Vec<_>>();
 
-    obter_mapa_instancias_em_execucao(&state, &ids_unicos)
+    let estado = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        obter_mapa_instancias_em_execucao(&estado, &ids_unicos)
+    })
+    .await
+    .map_err(|erro| erro.to_string())?
 }
 
 #[tauri::command]

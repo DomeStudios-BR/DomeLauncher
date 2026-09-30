@@ -2,12 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Search,
   Download,
-  Star,
   Heart,
   Package,
   Image,
   Sparkles,
   Filter,
+  Check,
   X,
   ChevronDown,
 } from "../iconesPixelados";
@@ -21,13 +21,24 @@ import { obterImagemProjeto } from "../lib/imagemProjeto";
 
 type ContentType = "modpack" | "mod" | "resourcepack" | "shader";
 type Source = "modrinth" | "curseforge";
+type FontesFiltro = Record<Source, boolean>;
 type LoaderFiltro = "" | "fabric" | "forge" | "neoforge" | "quilt";
 type OrdenacaoBusca = "relevancia" | "popularidade" | "downloads" | "atualizados" | "recentes";
 
 interface FiltrosBusca {
+  fontes: FontesFiltro;
   versaoMinecraft: string;
   loader: LoaderFiltro;
+  categoriasIncluidas: CategoriaBusca[];
+  categoriasNegadas: CategoriaBusca[];
   ordenacao: OrdenacaoBusca;
+}
+
+interface CategoriaBusca {
+  id: string;
+  nome: string;
+  modrinth?: string;
+  curseforge?: number;
 }
 
 interface ManifestoVersoesMinecraft {
@@ -78,6 +89,7 @@ interface ResultadoBuscaApi {
   project_type?: TipoProjetoConteudo;
   slug?: string;
   platform?: Source;
+  ocultoPorCategoria?: boolean;
 }
 
 const CONTENT_TYPES = [
@@ -88,9 +100,15 @@ const CONTENT_TYPES = [
 ];
 
 const LIMITE_RESULTADOS_POR_PAGINA = 20;
+const LIMITE_RESULTADOS_CORRESPONDENCIA = 50;
 const LIMITE_VERSOES_FILTRO = 80;
+const LIMITE_CATEGORIAS_FILTRO = 10;
 const FONTE_PRIORITARIA: Source = "modrinth";
 const FONTES: Source[] = ["modrinth", "curseforge"];
+const FONTES_INICIAIS: FontesFiltro = {
+  modrinth: false,
+  curseforge: false,
+};
 const LOADERS: Array<{ id: Exclude<LoaderFiltro, "">; nome: string }> = [
   { id: "fabric", nome: "Fabric" },
   { id: "forge", nome: "Forge" },
@@ -155,10 +173,12 @@ const criarResultadoMesclado = (
   const fontes = FONTES.filter((fonte) => variantes[fonte]);
   const chave = obterChavesCorrespondencia(principal).find((valor) => !valor.startsWith("id:"))
     || `id:${principal.source}:${principal.id}`;
+  const downloads = fontes.reduce((total, fonte) => total + (variantes[fonte]?.downloads || 0), 0);
 
   return {
     ...principal,
     chave,
+    downloads,
     fontes,
     variantes,
   };
@@ -188,11 +208,7 @@ const mesclarResultados = (
 
   const resultados = grupos.map(criarResultadoMesclado);
   if (ordenacao === "downloads") {
-    resultados.sort((a, b) => {
-      const downloadsA = Math.max(...a.fontes.map((fonte) => a.variantes[fonte]?.downloads || 0));
-      const downloadsB = Math.max(...b.fontes.map((fonte) => b.variantes[fonte]?.downloads || 0));
-      return downloadsB - downloadsA;
-    });
+    resultados.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
   }
   return resultados;
 };
@@ -203,7 +219,7 @@ interface ExploreProps {
     fonte: Source | "ambas";
     titulo?: string;
   }) => void;
-  onAbrirProjeto: (projeto: ProjetoConteudo) => void;
+  onAbrirProjeto: (projeto: ProjetoConteudo, instalarAgora?: boolean) => void;
 }
 
 export default function Explore({
@@ -223,14 +239,23 @@ export default function Explore({
   const [versaoMinecraft, setVersaoMinecraft] = useState("");
   const [pesquisaVersao, setPesquisaVersao] = useState("");
   const [seletorVersaoAberto, setSeletorVersaoAberto] = useState(false);
+  const [fontesSelecionadas, setFontesSelecionadas] = useState<FontesFiltro>({ ...FONTES_INICIAIS });
+  const [seletorFontesAberto, setSeletorFontesAberto] = useState(false);
   const [loader, setLoader] = useState<LoaderFiltro>("");
+  const [categorias, setCategorias] = useState<CategoriaBusca[]>([]);
+  const [categoriasIncluidas, setCategoriasIncluidas] = useState<CategoriaBusca[]>([]);
+  const [categoriasNegadas, setCategoriasNegadas] = useState<CategoriaBusca[]>([]);
+  const [seletorCategoriasAberto, setSeletorCategoriasAberto] = useState(false);
+  const [carregandoCategorias, setCarregandoCategorias] = useState(false);
+  const [erroCategorias, setErroCategorias] = useState(false);
   const [ordenacao, setOrdenacao] = useState<OrdenacaoBusca>("relevancia");
-  const [fonte, setFonte] = useState<Source | "ambas">("ambas");
 
   const hasLoaded = useRef(false);
   const lastSearch = useRef({ query: "", contentType: "", filtros: "" });
   const fimListaRef = useRef<HTMLDivElement | null>(null);
   const seletorVersaoRef = useRef<HTMLDivElement | null>(null);
+  const seletorFontesRef = useRef<HTMLDivElement | null>(null);
+  const seletorCategoriasRef = useRef<HTMLDivElement | null>(null);
   const proximosOffsetsRef = useRef<Record<Source, number>>({ modrinth: 0, curseforge: 0 });
   const temMaisPorFonteRef = useRef<Record<Source, boolean>>({ modrinth: true, curseforge: true });
   const carregandoMaisRef = useRef(false);
@@ -265,6 +290,29 @@ export default function Explore({
   }, []);
 
   useEffect(() => {
+    let cancelado = false;
+    setCarregandoCategorias(true);
+    setErroCategorias(false);
+    setCategorias([]);
+
+    void invoke<CategoriaBusca[]>("listar_categorias_busca_online", { contentType })
+      .then((novasCategorias) => {
+        if (!cancelado) setCategorias(novasCategorias);
+      })
+      .catch((erro) => {
+        console.error("Erro ao carregar categorias de conteúdo:", erro);
+        if (!cancelado) setErroCategorias(true);
+      })
+      .finally(() => {
+        if (!cancelado) setCarregandoCategorias(false);
+      });
+
+    return () => {
+      cancelado = true;
+    };
+  }, [contentType]);
+
+  useEffect(() => {
     if (!seletorVersaoAberto) return;
 
     const fecharAoClicarFora = (evento: MouseEvent) => {
@@ -279,9 +327,35 @@ export default function Explore({
   }, [seletorVersaoAberto]);
 
   useEffect(() => {
+    if (!seletorFontesAberto) return;
+
+    const fecharAoClicarFora = (evento: MouseEvent) => {
+      if (!seletorFontesRef.current?.contains(evento.target as Node)) {
+        setSeletorFontesAberto(false);
+      }
+    };
+
+    document.addEventListener("mousedown", fecharAoClicarFora);
+    return () => document.removeEventListener("mousedown", fecharAoClicarFora);
+  }, [seletorFontesAberto]);
+
+  useEffect(() => {
+    if (!seletorCategoriasAberto) return;
+
+    const fecharAoClicarFora = (evento: MouseEvent) => {
+      if (!seletorCategoriasRef.current?.contains(evento.target as Node)) {
+        setSeletorCategoriasAberto(false);
+      }
+    };
+
+    document.addEventListener("mousedown", fecharAoClicarFora);
+    return () => document.removeEventListener("mousedown", fecharAoClicarFora);
+  }, [seletorCategoriasAberto]);
+
+  useEffect(() => {
     const aceitaLoader = contentType === "mod" || contentType === "modpack";
-    if (!aceitaLoader || !versaoMinecraft) setLoader("");
-  }, [contentType, versaoMinecraft]);
+    if (!aceitaLoader) setLoader("");
+  }, [contentType]);
 
   const buscarEmFontes = useCallback(async (
     q: string,
@@ -289,8 +363,28 @@ export default function Explore({
     fontes: Source[],
     filtros: FiltrosBusca
   ) => {
+    const fontesMarcadas = FONTES.filter((fonte) => filtros.fontes[fonte]);
+    const fontesSelecionadas = fontesMarcadas.length > 0
+      ? fontes.filter((fonte) => filtros.fontes[fonte])
+      : fontes;
+    const categoriasFiltradas = [...filtros.categoriasIncluidas, ...filtros.categoriasNegadas];
+    const fontesConsultadas = categoriasFiltradas.length > 0
+      ? fontesSelecionadas.filter((fonte) => categoriasFiltradas.some((categoria) => Boolean(categoria[fonte])))
+      : fontesSelecionadas;
+    const fontesIgnoradas = fontes.filter((fonte) => !fontesConsultadas.includes(fonte));
+    if (fontesConsultadas.length === 0) {
+      return {
+        resultados: [],
+        paginas: [],
+        fontesComFalha: [],
+        fontesIgnoradas,
+      };
+    }
+    const limiteConsulta = fontesConsultadas.length > 1
+      ? LIMITE_RESULTADOS_CORRESPONDENCIA
+      : LIMITE_RESULTADOS_POR_PAGINA;
     const respostas = await Promise.allSettled(
-      fontes.map(async (fonte) => {
+      fontesConsultadas.map(async (fonte) => {
         const resultados = await invoke<ResultadoBuscaApi[]>("search_mods_online", {
           query: q,
           platform: fonte,
@@ -298,9 +392,21 @@ export default function Explore({
           filtros: {
             gameVersion: filtros.versaoMinecraft || null,
             loader: filtros.loader || null,
+            categoriasModrinth: fonte === "modrinth"
+              ? filtros.categoriasIncluidas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
+              : [],
+            categoriasCurseforge: fonte === "curseforge"
+              ? filtros.categoriasIncluidas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
+              : [],
+            categoriasNegadasModrinth: fonte === "modrinth"
+              ? filtros.categoriasNegadas.flatMap((categoria) => categoria.modrinth ? [categoria.modrinth] : [])
+              : [],
+            categoriasNegadasCurseforge: fonte === "curseforge"
+              ? filtros.categoriasNegadas.flatMap((categoria) => categoria.curseforge ? [categoria.curseforge] : [])
+              : [],
             sort: filtros.ordenacao,
             offset: proximosOffsetsRef.current[fonte],
-            limit: LIMITE_RESULTADOS_POR_PAGINA,
+            limit: limiteConsulta,
           },
         });
         return { fonte, resultados };
@@ -320,22 +426,49 @@ export default function Explore({
       throw new Error(motivos.join(" | ") || "Não foi possível consultar os catálogos.");
     }
 
-    const maiorPagina = Math.max(...sucessos.map(({ resultados }) => resultados.length));
+    const paginas = sucessos.map(({ fonte, resultados }) => ({
+      fonte,
+      resultados: resultados.slice(0, LIMITE_RESULTADOS_POR_PAGINA),
+    }));
+    const maiorPagina = Math.max(...paginas.map(({ resultados }) => resultados.length));
     const resultadosIntercalados = Array.from({ length: maiorPagina }).flatMap((_, indice) =>
-      sucessos.flatMap(({ resultados }) => resultados[indice] ? [resultados[indice]] : [])
+      paginas.flatMap(({ resultados }) => resultados[indice] ? [resultados[indice]] : [])
     );
+    const resultadosPrincipais = resultadosIntercalados
+      .filter((item) => !item.ocultoPorCategoria)
+      .map((item) => mapearResultadoBusca(item, type));
+    const chavesPrincipaisPorFonte: Record<Source, Set<string>> = {
+      modrinth: new Set(),
+      curseforge: new Set(),
+    };
+    resultadosPrincipais.forEach((item) => {
+      obterChavesCorrespondencia(item).forEach((chave) => chavesPrincipaisPorFonte[item.source].add(chave));
+    });
+    const resultadosComplementares = sucessos.flatMap(({ fonte, resultados }) => {
+      const outraFonte: Source = fonte === "modrinth" ? "curseforge" : "modrinth";
+      return resultados
+        .slice(LIMITE_RESULTADOS_POR_PAGINA)
+        .filter((item) => !item.ocultoPorCategoria)
+        .map((item) => mapearResultadoBusca(item, type))
+        .filter((item) => obterChavesCorrespondencia(item)
+          .some((chave) => chavesPrincipaisPorFonte[outraFonte].has(chave)));
+    });
 
     return {
-      resultados: resultadosIntercalados.map((item) => mapearResultadoBusca(item, type)),
-      paginas: sucessos,
+      resultados: [...resultadosPrincipais, ...resultadosComplementares],
+      paginas,
       fontesComFalha: respostas.flatMap((resposta, indice) =>
-        resposta.status === "rejected" ? [fontes[indice]] : []
+        resposta.status === "rejected" ? [fontesConsultadas[indice]] : []
       ),
+      fontesIgnoradas,
     };
   }, []);
 
   const atualizarPaginacao = useCallback((resposta: Awaited<ReturnType<typeof buscarEmFontes>>) => {
     resposta.fontesComFalha.forEach((fonte) => {
+      temMaisPorFonteRef.current[fonte] = false;
+    });
+    resposta.fontesIgnoradas.forEach((fonte) => {
       temMaisPorFonteRef.current[fonte] = false;
     });
     resposta.paginas.forEach(({ fonte, resultados }) => {
@@ -345,7 +478,7 @@ export default function Explore({
   }, [buscarEmFontes]);
 
   const searchContent = useCallback(async (q: string, type: ContentType, filtros: FiltrosBusca) => {
-    const chaveFiltros = JSON.stringify({ ...filtros, fonte });
+    const chaveFiltros = JSON.stringify(filtros);
     if (
       lastSearch.current.query === q &&
       lastSearch.current.contentType === type &&
@@ -357,10 +490,7 @@ export default function Explore({
     const geracao = geracaoBuscaRef.current + 1;
     geracaoBuscaRef.current = geracao;
     proximosOffsetsRef.current = { modrinth: 0, curseforge: 0 };
-    temMaisPorFonteRef.current = {
-      modrinth: fonte === "ambas" || fonte === "modrinth",
-      curseforge: fonte === "ambas" || fonte === "curseforge",
-    };
+    temMaisPorFonteRef.current = { modrinth: true, curseforge: true };
     carregandoMaisRef.current = false;
 
     setLoading(true);
@@ -368,8 +498,7 @@ export default function Explore({
     setTemMaisResultados(true);
     setFalhaCarregamentoMais(false);
     try {
-      const fontesSelecionadas = fonte === "ambas" ? FONTES : [fonte];
-      const resposta = await buscarEmFontes(q, type, fontesSelecionadas, filtros);
+      const resposta = await buscarEmFontes(q, type, FONTES, filtros);
 
       if (geracaoBuscaRef.current !== geracao) return;
       atualizarPaginacao(resposta);
@@ -384,7 +513,7 @@ export default function Explore({
     } finally {
       if (geracaoBuscaRef.current === geracao) setLoading(false);
     }
-  }, [atualizarPaginacao, buscarEmFontes, fonte]);
+  }, [atualizarPaginacao, buscarEmFontes]);
 
   const carregarMaisResultados = useCallback(async () => {
     if (loading || !temMaisResultados || carregandoMaisRef.current) return;
@@ -395,9 +524,15 @@ export default function Explore({
     setFalhaCarregamentoMais(false);
 
     try {
-      const fontesPermitidas = fonte === "ambas" ? FONTES : [fonte];
-      const fontesComMaisResultados = fontesPermitidas.filter((item) => temMaisPorFonteRef.current[item]);
-      const filtros = { versaoMinecraft, loader, ordenacao };
+      const fontesComMaisResultados = FONTES.filter((fonte) => temMaisPorFonteRef.current[fonte]);
+      const filtros = {
+        fontes: fontesSelecionadas,
+        versaoMinecraft,
+        loader,
+        categoriasIncluidas,
+        categoriasNegadas,
+        ordenacao,
+      };
       const resposta = await buscarEmFontes(query, contentType, fontesComMaisResultados, filtros);
 
       if (geracaoBuscaRef.current !== geracao) return;
@@ -422,8 +557,10 @@ export default function Explore({
   }, [
     atualizarPaginacao,
     buscarEmFontes,
+    categoriasIncluidas,
+    categoriasNegadas,
     contentType,
-    fonte,
+    fontesSelecionadas,
     loader,
     loading,
     ordenacao,
@@ -435,23 +572,63 @@ export default function Explore({
   useEffect(() => {
     if (!hasLoaded.current) {
       hasLoaded.current = true;
-      void searchContent("", contentType, { versaoMinecraft, loader, ordenacao });
+      void searchContent("", contentType, {
+        fontes: fontesSelecionadas,
+        versaoMinecraft,
+        loader,
+        categoriasIncluidas,
+        categoriasNegadas,
+        ordenacao,
+      });
     }
-  }, [contentType, fonte, loader, ordenacao, searchContent, versaoMinecraft]);
+  }, [
+    categoriasIncluidas,
+    categoriasNegadas,
+    contentType,
+    fontesSelecionadas,
+    loader,
+    ordenacao,
+    searchContent,
+    versaoMinecraft,
+  ]);
 
   useEffect(() => {
     if (hasLoaded.current) {
-      void searchContent(query, contentType, { versaoMinecraft, loader, ordenacao });
+      void searchContent(query, contentType, {
+        fontes: fontesSelecionadas,
+        versaoMinecraft,
+        loader,
+        categoriasIncluidas,
+        categoriasNegadas,
+        ordenacao,
+      });
     }
-  }, [contentType, loader, ordenacao, searchContent, versaoMinecraft]);
+  }, [
+    categoriasIncluidas,
+    categoriasNegadas,
+    contentType,
+    fontesSelecionadas,
+    loader,
+    ordenacao,
+    searchContent,
+    versaoMinecraft,
+  ]);
 
   useEffect(() => {
     if (!hasLoaded.current) return;
     const timer = setTimeout(() => {
-      void searchContent(query, contentType, { versaoMinecraft, loader, ordenacao });
+      void searchContent(query, contentType, {
+        fontes: fontesSelecionadas,
+        versaoMinecraft,
+        loader,
+        categoriasIncluidas,
+        categoriasNegadas,
+        ordenacao,
+      });
     }, 400);
     return () => clearTimeout(timer);
-  }, [contentType, fonte, loader, ordenacao, query, searchContent, versaoMinecraft]);
+  }, [categoriasIncluidas, categoriasNegadas, contentType, fontesSelecionadas, loader, ordenacao, query,
+    searchContent, versaoMinecraft]);
 
   useEffect(() => {
     const fimLista = fimListaRef.current;
@@ -476,11 +653,10 @@ export default function Explore({
   ]);
 
   useEffect(() => {
-    onAtualizarPresencaExplore?.({
-      tipo: contentType,
-      fonte,
-    });
-  }, [contentType, fonte, onAtualizarPresencaExplore]);
+    const fontesMarcadas = FONTES.filter((fonte) => fontesSelecionadas[fonte]);
+    const fontePresenca = fontesMarcadas.length === 1 ? fontesMarcadas[0] : "ambas";
+    onAtualizarPresencaExplore?.({ tipo: contentType, fonte: fontePresenca });
+  }, [contentType, fontesSelecionadas, onAtualizarPresencaExplore]);
 
   const toggleFavorite = (item: SearchResult) => {
     const variante = item.variantes[FONTE_PRIORITARIA] || item.variantes.curseforge || item;
@@ -511,25 +687,74 @@ export default function Explore({
     }
   };
 
-  const abrirDetalheProjeto = (item: SearchResult) => {
+  const abrirDetalheProjeto = (item: SearchResult, instalarAgora = false) => {
     const variante = item.variantes[FONTE_PRIORITARIA] || item.variantes.curseforge || item;
     onAbrirProjeto({
       ...variante,
       icon_url: variante.icon_url || "",
-    });
+    }, instalarAgora);
   };
 
+  const fontesMarcadas = FONTES.filter((fonte) => fontesSelecionadas[fonte]);
   const quantidadeFiltrosAtivos = Number(Boolean(versaoMinecraft))
     + Number(Boolean(loader))
-    + Number(ordenacao !== "relevancia")
-    + Number(fonte !== "ambas");
+    + categoriasIncluidas.length
+    + categoriasNegadas.length
+    + fontesMarcadas.length
+    + Number(ordenacao !== "relevancia");
 
   const limparFiltros = () => {
     setVersaoMinecraft("");
     setLoader("");
+    setFontesSelecionadas({ ...FONTES_INICIAIS });
+    setSeletorFontesAberto(false);
+    setCategoriasIncluidas([]);
+    setCategoriasNegadas([]);
+    setSeletorCategoriasAberto(false);
     setOrdenacao("relevancia");
-    setFonte("ambas");
   };
+
+  const fontesCategorias = fontesMarcadas.length > 0 ? fontesMarcadas : FONTES;
+  const categoriasDaFonte = categorias.filter((item) =>
+    fontesCategorias.some((fonte) => Boolean(item[fonte]))
+  );
+  const alternarFonte = (fonte: Source) => {
+    setFontesSelecionadas((fontesAtuais) => ({
+      ...fontesAtuais,
+      [fonte]: !fontesAtuais[fonte],
+    }));
+    setCategoriasIncluidas([]);
+    setCategoriasNegadas([]);
+    setSeletorCategoriasAberto(false);
+  };
+
+  const alternarCategoria = (categoria: CategoriaBusca, acao: "incluir" | "negar") => {
+    const categoriasAlvo = acao === "incluir" ? categoriasIncluidas : categoriasNegadas;
+    const selecionada = categoriasAlvo.some((item) => item.id === categoria.id);
+    if (!selecionada && categoriasAlvo.length >= LIMITE_CATEGORIAS_FILTRO) return;
+
+    const atualizarAlvo = acao === "incluir" ? setCategoriasIncluidas : setCategoriasNegadas;
+    const atualizarOpostas = acao === "incluir" ? setCategoriasNegadas : setCategoriasIncluidas;
+    atualizarAlvo((categoriasAtuais) => selecionada
+      ? categoriasAtuais.filter((item) => item.id !== categoria.id)
+      : [...categoriasAtuais, categoria]);
+    if (!selecionada) {
+      atualizarOpostas((categoriasAtuais) => categoriasAtuais.filter((item) => item.id !== categoria.id));
+    }
+  };
+
+  const resumoCategorias = (() => {
+    if (categoriasIncluidas.length === 0 && categoriasNegadas.length === 0) return "Todas as categorias";
+    if (categoriasNegadas.length === 0) return `${categoriasIncluidas.length} incluídas`;
+    if (categoriasIncluidas.length === 0) return `${categoriasNegadas.length} negadas`;
+    return `${categoriasIncluidas.length} incluídas • ${categoriasNegadas.length} negadas`;
+  })();
+
+  const resumoFontes = (() => {
+    if (fontesMarcadas.length === 0) return "Todas as fontes";
+    if (fontesMarcadas.length === 2) return "Modrinth e CurseForge";
+    return fontesMarcadas[0] === "modrinth" ? "Modrinth" : "CurseForge";
+  })();
 
   const versoesMinecraftFiltradas = versoesMinecraft.filter((versao) =>
     versao.toLowerCase().includes(pesquisaVersao.trim().toLowerCase())
@@ -560,7 +785,12 @@ export default function Explore({
             {CONTENT_TYPES.map((type) => (
               <button
                 key={type.id}
-                onClick={() => setContentType(type.id)}
+                onClick={() => {
+                  setCategoriasIncluidas([]);
+                  setCategoriasNegadas([]);
+                  setSeletorCategoriasAberto(false);
+                  setContentType(type.id);
+                }}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all",
                   contentType === type.id
@@ -576,25 +806,42 @@ export default function Explore({
 
           <div className="flex-1" />
 
-          <button
-            type="button"
-            onClick={() => setFiltrosAbertos((abertos) => !abertos)}
-            className={cn(
-              "flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all",
-              filtrosAbertos || quantidadeFiltrosAtivos > 0
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                : "border-white/10 bg-white/5 text-white/50 hover:text-white"
-            )}
-            aria-expanded={filtrosAbertos}
-          >
-            <Filter size={14} />
-            Filtros
+          <div className="flex shrink-0 items-center gap-2">
             {quantidadeFiltrosAtivos > 0 && (
-              <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] text-black">
-                {quantidadeFiltrosAtivos}
-              </span>
+              <button
+                type="button"
+                onClick={limparFiltros}
+                aria-label="Limpar filtros"
+                className={cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-bold",
+                  "text-white/40 transition-colors hover:bg-white/5 hover:text-white"
+                )}
+              >
+                <X size={12} />
+                Limpar
+              </button>
             )}
-          </button>
+
+            <button
+              type="button"
+              onClick={() => setFiltrosAbertos((abertos) => !abertos)}
+              className={cn(
+                "flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all",
+                filtrosAbertos || quantidadeFiltrosAtivos > 0
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-white/10 bg-white/5 text-white/50 hover:text-white"
+              )}
+              aria-expanded={filtrosAbertos}
+            >
+              <Filter size={14} />
+              Filtros
+              {quantidadeFiltrosAtivos > 0 && (
+                <span className="rounded bg-emerald-400 px-1.5 py-0.5 text-[9px] text-black">
+                  {quantidadeFiltrosAtivos}
+                </span>
+              )}
+            </button>
+          </div>
 
         </div>
 
@@ -604,10 +851,17 @@ export default function Explore({
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className={seletorVersaoAberto ? "overflow-visible" : "overflow-hidden"}
+              className={
+                seletorVersaoAberto || seletorFontesAberto || seletorCategoriasAberto
+                  ? "overflow-visible"
+                  : "overflow-hidden"
+              }
             >
-              <div className="grid gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-3 md:grid-cols-4">
-                <div className="order-2 min-w-0">
+              <div className={cn(
+                "grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)]",
+                "gap-2 rounded-2xl border border-white/10 bg-white/[0.035] p-3"
+              )}>
+                <div className="order-3 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Minecraft
                   </span>
@@ -702,7 +956,7 @@ export default function Explore({
                   </div>
                 </div>
 
-                <label className="order-3 min-w-0">
+                <label className="order-4 min-w-0">
                   <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
                     Modloader
                   </span>
@@ -710,9 +964,8 @@ export default function Explore({
                     <select
                       value={loader}
                       aria-label="Modloader"
-                      title={!versaoMinecraft ? "Escolha uma versão do Minecraft primeiro" : undefined}
                       onChange={(evento) => setLoader(evento.target.value as LoaderFiltro)}
-                      disabled={!versaoMinecraft || !["mod", "modpack"].includes(contentType)}
+                      disabled={!["mod", "modpack"].includes(contentType)}
                       className={cn(
                         "w-full appearance-none rounded-xl border border-white/10 bg-[#171717]",
                         "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50",
@@ -731,23 +984,219 @@ export default function Explore({
                   </div>
                 </label>
 
+                <div className="order-5 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
+                    Fonte
+                  </span>
+                  <div ref={seletorFontesRef} className="relative">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={seletorFontesAberto}
+                      onClick={() => setSeletorFontesAberto((aberto) => !aberto)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#171717]",
+                        "px-3 py-2 text-left text-xs font-bold text-white outline-none focus:border-emerald-500/50"
+                      )}
+                    >
+                      <span className="truncate">{resumoFontes}</span>
+                      <ChevronDown
+                        size={14}
+                        className={cn(
+                          "shrink-0 text-white/35 transition-transform",
+                          seletorFontesAberto && "rotate-180"
+                        )}
+                      />
+                    </button>
+
+                    <AnimatePresence>
+                      {seletorFontesAberto && (
+                        <motion.div
+                          role="listbox"
+                          aria-label="Fontes do conteúdo"
+                          aria-multiselectable="true"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className={cn(
+                            "absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-white/10",
+                            "bg-[#171717] p-1 shadow-2xl"
+                          )}
+                        >
+                          {FONTES.map((opcaoFonte) => {
+                            const ativa = fontesSelecionadas[opcaoFonte];
+                            const nomeFonte = opcaoFonte === "modrinth" ? "Modrinth" : "CurseForge";
+
+                            return (
+                              <button
+                                key={opcaoFonte}
+                                type="button"
+                                role="option"
+                                aria-selected={ativa}
+                                onClick={() => alternarFonte(opcaoFonte)}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold",
+                                  "transition-colors hover:bg-white/5",
+                                  ativa && opcaoFonte === "modrinth" && "bg-[#1bd96a]/10 text-[#1bd96a]",
+                                  ativa && opcaoFonte === "curseforge" && "bg-orange-400/10 text-orange-300",
+                                  !ativa && "text-white/60"
+                                )}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                    ativa ? "border-current bg-current/10" : "border-white/20 bg-black/20"
+                                  )}
+                                >
+                                  {ativa && <Check size={11} strokeWidth={3} />}
+                                </span>
+                                <span className="truncate">{nomeFonte}</span>
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
+                <div className="order-2 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
+                    Categorias
+                  </span>
+                  <div ref={seletorCategoriasRef} className="relative grid gap-1.5">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={seletorCategoriasAberto}
+                      disabled={carregandoCategorias || categoriasDaFonte.length === 0}
+                      onClick={() => setSeletorCategoriasAberto((aberto) => !aberto)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#171717]",
+                        "px-3 py-2 text-left text-xs font-bold text-white outline-none focus:border-emerald-500/50",
+                        "disabled:cursor-not-allowed disabled:opacity-35"
+                      )}
+                    >
+                      <span className="truncate">
+                        {carregandoCategorias
+                          ? "Carregando categorias..."
+                          : erroCategorias
+                            ? "Categorias indisponíveis"
+                            : resumoCategorias}
+                      </span>
+                      <ChevronDown
+                        size={14}
+                        className={cn("shrink-0 text-white/35 transition-transform",
+                          seletorCategoriasAberto && "rotate-180")}
+                      />
+                    </button>
+
+                    <AnimatePresence>
+                      {seletorCategoriasAberto && (
+                        <motion.div
+                          role="group"
+                          aria-label="Categorias incluídas e negadas"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className={cn(
+                            "scrollbar-custom absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto",
+                            "rounded-xl border border-white/10 bg-[#171717] p-1 shadow-2xl"
+                          )}
+                        >
+                          {(categoriasIncluidas.length > 0 || categoriasNegadas.length > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCategoriasIncluidas([]);
+                                setCategoriasNegadas([]);
+                              }}
+                              className={cn(
+                                "w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-white/45",
+                                "hover:bg-white/5 hover:text-white/70"
+                              )}
+                            >
+                              Limpar categorias
+                            </button>
+                          )}
+                          {categoriasDaFonte.map((item) => {
+                            const incluida = categoriasIncluidas.some(
+                              (categoria) => categoria.id === item.id
+                            );
+                            const negada = categoriasNegadas.some((categoria) => categoria.id === item.id);
+                            const limiteInclusoesAtingido = !incluida
+                              && categoriasIncluidas.length >= LIMITE_CATEGORIAS_FILTRO;
+                            const limiteNegacoesAtingido = !negada
+                              && categoriasNegadas.length >= LIMITE_CATEGORIAS_FILTRO;
+
+                            return (
+                              <div
+                                key={item.id}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold",
+                                  incluida && "bg-emerald-500/[0.08]",
+                                  negada && "bg-red-500/[0.08]",
+                                  !incluida && !negada && "hover:bg-white/5"
+                                )}
+                              >
+                                <button
+                                  type="button"
+                                  aria-label={`${incluida ? "Remover inclusão de" : "Incluir"} ${item.nome}`}
+                                  aria-pressed={incluida}
+                                  disabled={limiteInclusoesAtingido}
+                                  title={limiteInclusoesAtingido ? "Limite de 10 inclusões atingido" : "Incluir"}
+                                  onClick={() => alternarCategoria(item, "incluir")}
+                                  className={cn(
+                                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                    "disabled:cursor-not-allowed disabled:opacity-25",
+                                    incluida
+                                      ? "border-emerald-400/50 bg-emerald-400/15 text-emerald-300"
+                                      : "border-white/15 text-white/30 hover:border-emerald-400/35 hover:text-emerald-300"
+                                  )}
+                                >
+                                  <Check size={11} strokeWidth={3} />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`${negada ? "Remover negação de" : "Negar"} ${item.nome}`}
+                                  aria-pressed={negada}
+                                  disabled={limiteNegacoesAtingido}
+                                  title={limiteNegacoesAtingido ? "Limite de 10 negações atingido" : "Negar"}
+                                  onClick={() => alternarCategoria(item, "negar")}
+                                  className={cn(
+                                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                    "disabled:cursor-not-allowed disabled:opacity-25",
+                                    negada
+                                      ? "border-red-400/50 bg-red-400/15 text-red-300"
+                                      : "border-white/15 text-white/30 hover:border-red-400/35 hover:text-red-300"
+                                  )}
+                                >
+                                  <X size={11} strokeWidth={3} />
+                                </button>
+                                <span className={cn(
+                                  "min-w-0 flex-1 truncate px-1",
+                                  incluida ? "text-emerald-200" : negada ? "text-red-200" : "text-white/60"
+                                )}>
+                                  {item.nome}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
                 <div className="order-1 min-w-0">
                   <span
                     className={cn(
-                      "mb-1.5 flex items-center justify-between text-[10px] font-bold uppercase",
+                      "mb-1.5 block text-[10px] font-bold uppercase",
                       "tracking-wider text-white/35"
                     )}
                   >
                     Ordenar por
-                    {quantidadeFiltrosAtivos > 0 && (
-                      <button
-                        type="button"
-                        onClick={limparFiltros}
-                        className="flex items-center gap-1 text-white/40 transition-colors hover:text-white"
-                      >
-                        <X size={10} /> Limpar
-                      </button>
-                    )}
                   </span>
                   <div className="relative">
                     <select
@@ -770,30 +1219,6 @@ export default function Explore({
                   </div>
                 </div>
 
-                <label className="order-4 min-w-0">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
-                    Fonte
-                  </span>
-                  <div className="relative">
-                    <select
-                      aria-label="Fonte dos resultados"
-                      value={fonte}
-                      onChange={(evento) => setFonte(evento.target.value as Source | "ambas")}
-                      className={cn(
-                        "w-full appearance-none rounded-xl border border-white/10 bg-[#171717]",
-                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50"
-                      )}
-                    >
-                      <option value="ambas">Modrinth e CurseForge</option>
-                      <option value="modrinth">Somente Modrinth</option>
-                      <option value="curseforge">Somente CurseForge</option>
-                    </select>
-                    <ChevronDown
-                      size={14}
-                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/35"
-                    />
-                  </div>
-                </label>
               </div>
             </motion.div>
           )}
@@ -885,15 +1310,12 @@ export default function Explore({
                       return qtdDownloads;
                     })()}
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] font-bold">
-                    <Star size={12} className="text-yellow-500/50" />
-                    {(() => {
-                      const qtdSeguidores = item.follows || 0;
-                      return qtdSeguidores >= 1000
-                        ? `${(qtdSeguidores / 1000).toFixed(1)}K`
-                        : qtdSeguidores;
-                    })()}
-                  </div>
+                  {typeof item.follows === "number" && (
+                    <div className="flex items-center gap-1 text-[10px] font-bold" title="Seguidores no Modrinth">
+                      <Heart size={12} className="text-pink-400/60" />
+                      {item.follows >= 1000 ? `${(item.follows / 1000).toFixed(1)}K` : item.follows}
+                    </div>
+                  )}
                 </div>
 
                 <div className="ml-auto flex shrink-0 gap-2">
@@ -914,7 +1336,7 @@ export default function Explore({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      abrirDetalheProjeto(item);
+                      abrirDetalheProjeto(item, true);
                     }}
                     className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black"
                   >

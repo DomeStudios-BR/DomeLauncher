@@ -1,0 +1,252 @@
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+}
+
+body,
+.tela-inicializacao {
+    margin: 0;
+    background: #101010;
+}
+
+.tela-inicializacao,
+.esqueleto-corpo,
+.esqueleto-principal {
+    display: flex;
+    height: 100%;
+    min-width: 0;
+}
+
+.tela-inicializacao {
+    position: fixed;
+    z-index: 100;
+    inset: 0;
+    overflow: hidden;
+}
+
+.esqueleto-linha,
+.esqueleto-instancia i {
+    display: block;
+    background: #292929;
+    animation: pulsar-esqueleto 1.6s ease-in-out infinite;
+}
+
+.esqueleto-menu {
+    display: flex;
+    width: 81px;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+}
+
+.esqueleto-navegacao {
+    display: flex;
+    height: 69px;
+    align-items: flex-start;
+    gap: 10px;
+    padding-top: 19px;
+}
+
+.esqueleto-seta {
+    width: 17px;
+    height: 13px;
+}
+
+.esqueleto-atalhos,
+.esqueleto-rodape-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.esqueleto-atalho {
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #333;
+    background: #1d1d1d;
+}
+
+.esqueleto-atalho-ativo {
+    border-color: #2b7054;
+    background: #18382b;
+}
+
+.esqueleto-rodape-menu {
+    margin-top: auto;
+    padding: 13px 0 12px;
+    border-top: 1px solid #292929;
+}
+
+.esqueleto-corpo,
+.esqueleto-principal {
+    flex: 1;
+}
+
+.esqueleto-principal {
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.esqueleto-topo {
+    box-sizing: border-box;
+    display: flex;
+    height: 68px;
+    flex: none;
+    align-items: center;
+    padding: 0 24px;
+}
+
+.esqueleto-titulo-topo {
+    width: 70px;
+    height: 20px;
+}
+
+.esqueleto-conteudo {
+    box-sizing: border-box;
+    flex: 1;
+    overflow: hidden;
+    margin-left: 10px;
+    padding: 30px 24px;
+    border-top-left-radius: 41px;
+    background: #171717;
+}
+
+.esqueleto-saudacao {
+    width: min(48%, 420px);
+    height: 30px;
+    margin-bottom: 34px;
+}
+
+.esqueleto-secao + .esqueleto-secao {
+    margin-top: 34px;
+}
+
+.esqueleto-titulo-secao {
+    width: 110px;
+    height: 14px;
+    margin-bottom: 14px;
+}
+
+.esqueleto-noticias {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.esqueleto-noticia {
+    display: flex;
+    height: 144px;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px;
+    border: 1px solid #333;
+    background: #1d1d1d;
+}
+
+.esqueleto-noticia-tag {
+    width: 80px;
+    height: 9px;
+}
+
+.esqueleto-noticia-titulo {
+    width: 65%;
+    height: 16px;
+}
+
+.esqueleto-cabecalho-biblioteca {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.esqueleto-acoes {
+    width: 154px;
+    height: 28px;
+}
+
+.esqueleto-biblioteca {
+    display: grid;
+    gap: 8px;
+}
+
+.esqueleto-instancia {
+    display: flex;
+    height: 76px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 13px;
+    border: 1px solid #303030;
+    background: #1d1d1d;
+}
+
+.esqueleto-instancia > i {
+    width: 42px;
+    height: 42px;
+    flex: none;
+}
+
+.esqueleto-instancia span {
+    display: grid;
+    width: 42%;
+    gap: 8px;
+}
+
+.esqueleto-instancia span i:first-child {
+    width: 65%;
+    height: 14px;
+}
+
+.esqueleto-instancia span i:last-child {
+    width: 90%;
+    height: 10px;
+}
+
+.esqueleto-social {
+    box-sizing: border-box;
+    display: none;
+    width: 72px;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 13px;
+    padding-top: 24px;
+    border-left: 1px solid #292929;
+}
+
+.esqueleto-avatar {
+    width: 38px;
+    height: 38px;
+}
+
+@media (min-width: 1280px) {
+    .esqueleto-social {
+        display: flex;
+    }
+}
+
+@media (max-width: 760px) {
+    .esqueleto-noticias {
+        grid-template-columns: 1fr;
+    }
+
+    .esqueleto-noticia + .esqueleto-noticia {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .esqueleto-linha,
+    .esqueleto-instancia i {
+        animation: none;
+    }
+}
+
+@keyframes pulsar-esqueleto {
+    50% {
+        opacity: 0.48;
+    }
+}
