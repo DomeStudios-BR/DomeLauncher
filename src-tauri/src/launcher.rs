@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tauri::Emitter;
 
 static BLOQUEIO_ARQUIVOS_INSTANCIA: Mutex<()> = Mutex::new(());
 
@@ -542,7 +543,7 @@ pub fn salvar_sessao_social_local(sessao: Option<String>) -> Result<(), String> 
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LauncherState {
     pub account: Arc<Mutex<Option<MinecraftAccount>>>,
     pub accounts: Arc<Mutex<Vec<MinecraftAccount>>>,
@@ -709,9 +710,11 @@ impl LauncherState {
         &self,
         instance_id: &str,
         mut processo: std::process::Child,
+        app: tauri::AppHandle,
     ) {
         let instance_id = instance_id.to_string();
         let pid = processo.id();
+        let inicio = std::time::Instant::now();
 
         let Ok(instances_path) = self.caminho_instancias() else {
             eprintln!("[Instâncias] Falha ao acessar a pasta durante o monitoramento.");
@@ -724,22 +727,40 @@ impl LauncherState {
             let mut ultimo_tick = chrono::Utc::now();
 
             loop {
-                match processo.try_wait() {
-                    Ok(Some(_)) | Err(_) => {
-                        let _ = Self::atualizar_tempo_jogado_instancia_por_caminho(
-                            &instances_path,
-                            &instance_id,
-                            true,
-                            true,
-                        );
-                        if let Ok(mut processos) = processos_instancias.lock() {
-                            if processos.get(&instance_id).copied() == Some(pid) {
-                                processos.remove(&instance_id);
-                            }
+                let terminou = match processo.try_wait() {
+                    Ok(Some(saida)) => {
+                        if !saida.success() && inicio.elapsed() < std::time::Duration::from_secs(60)
+                        {
+                            let _ = app.emit(
+                                "dome:falha-inicializacao-instancia",
+                                serde_json::json!({
+                                    "instanceId": &instance_id,
+                                    "codigoSaida": saida.code(),
+                                }),
+                            );
                         }
-                        break;
+                        true
                     }
-                    Ok(None) => {}
+                    Err(erro) => {
+                        eprintln!("[Launch] Falha ao monitorar processo {}: {}", pid, erro);
+                        true
+                    }
+                    Ok(None) => false,
+                };
+
+                if terminou {
+                    let _ = Self::atualizar_tempo_jogado_instancia_por_caminho(
+                        &instances_path,
+                        &instance_id,
+                        true,
+                        true,
+                    );
+                    if let Ok(mut processos) = processos_instancias.lock() {
+                        if processos.get(&instance_id).copied() == Some(pid) {
+                            processos.remove(&instance_id);
+                        }
+                    }
+                    break;
                 }
 
                 if chrono::Utc::now()
@@ -857,23 +878,29 @@ impl LauncherState {
         if let Err(e) = std::fs::create_dir_all(&instances_path) {
             eprintln!("Warning: Could not create instances directory: {}", e);
         }
-        if let Err(erro) = migrar_pastas_auxiliares_instancias(&instances_path) {
-            eprintln!("[Instâncias] Aviso: não foi possível reorganizar pastas auxiliares: {erro}");
-        }
-
         // Carregar contas salvas (multi-conta) e conta ativa.
         let accounts = Self::load_saved_accounts(&data_path);
         let account = Self::load_saved_account(&data_path).or_else(|| accounts.first().cloned());
 
-        let state = Self {
+        Self {
             account: Arc::new(Mutex::new(account)),
             accounts: Arc::new(Mutex::new(accounts)),
             instances_path: Arc::new(Mutex::new(instances_path)),
             processos_instancias: Arc::new(Mutex::new(HashMap::new())),
-        };
+        }
+    }
 
+    /// Executa migrações legadas depois que a interface já recebeu os dados iniciais.
+    pub fn concluir_migracoes_iniciais(&self) {
+        if let Ok(caminho) = self.caminho_instancias() {
+            if let Err(erro) = migrar_pastas_auxiliares_instancias(&caminho) {
+                eprintln!(
+                    "[Instâncias] Aviso: não foi possível reorganizar pastas auxiliares: {erro}"
+                );
+            }
+        }
         match crate::aplicacao::importacao_exportacao::atualizar_icones_instancias_modrinth_existentes(
-            &state,
+            self,
         ) {
             Ok(quantidade) if quantidade > 0 => {
                 println!(
@@ -889,8 +916,6 @@ impl LauncherState {
             }
             _ => {}
         }
-
-        state
     }
 
     pub fn registrar_processo_instancia(&self, instance_id: &str, pid: u32) {

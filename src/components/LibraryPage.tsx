@@ -27,6 +27,7 @@ import {
 } from "../iconesPixelados";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Instance } from "../hooks/useLauncher";
 import type { ProjetoConteudo } from "./ProjetoDetalheModal";
@@ -39,10 +40,15 @@ import {
   SeparadorMenuContextual,
 } from "./context-menu/MenuContextual";
 import {
+  atualizarProgressoImportacao,
+  EVENTO_PROGRESSO_IMPORTACAO_INSTANCIA,
   finalizarImportacoes,
   iniciarImportacoes,
   observarImportacoes,
   obterImportacoesEmAndamento,
+  type DadosInstanciaImportavel,
+  type InstanciaEmImportacao,
+  type ProgressoImportacaoInstancia,
 } from "../stores/importacoesInstancias";
 import {
   getCreatingInstances,
@@ -55,6 +61,8 @@ import {
 } from "../lib/eventosTransferenciaSocial";
 import ModalAnaliseModpack from "./social/ModalAnaliseModpack";
 import MigrarVersaoInstanciaModal from "./MigrarVersaoInstanciaModal";
+import ModalExclusaoInstancia from "./ModalExclusaoInstancia";
+import type { InstanciaParaExclusao } from "../stores/exclusoesInstancias";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -75,17 +83,7 @@ interface LibraryState {
   sortDir: SortDir;
 }
 
-interface InstanciaImportavelExterna {
-  idExterno: string;
-  launcher: string;
-  nome: string;
-  versaoMinecraft: string;
-  loaderType?: string;
-  loaderVersion?: string;
-  icone?: string;
-  caminhoOrigem: string;
-  caminhoJogo: string;
-}
+type InstanciaImportavelExterna = DadosInstanciaImportavel;
 
 interface ResultadoImportacaoInstancia {
   idExterno: string;
@@ -206,7 +204,7 @@ interface LibraryPageProps {
   onDesselecionarInstancia: () => void;
   onAbrirGerenciadorInstancia: (instance: Instance) => void;
   onLaunch: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onCreateNew: () => void;
   onAtualizarInstancias: () => Promise<void>;
   onTrocarVersaoModpack: (instancia: Instance, projeto: ProjetoConteudo) => void;
@@ -243,6 +241,7 @@ export default function LibraryPage({
   const [idsSelecionados, setIdsSelecionados] = useState<Set<string>>(new Set());
   const [menuMoverSelecionadasAberto, setMenuMoverSelecionadasAberto] = useState(false);
   const [grupoExclusao, setGrupoExclusao] = useState<InstanceGroup | null>(null);
+  const [instanciasExclusao, setInstanciasExclusao] = useState<InstanciaParaExclusao[] | null>(null);
   const [modalEscolhaImportacaoAberto, setModalEscolhaImportacaoAberto] = useState(false);
   const [modalImportacaoAberto, setModalImportacaoAberto] = useState(false);
   const [instanciaSelecionadaId, setInstanciaSelecionadaId] = useState<string | null>(null);
@@ -263,6 +262,16 @@ export default function LibraryPage({
       getCreatingInstances().filter((instancia) => instancia.id.startsWith("recebimento-social:"))
     );
   }), []);
+  useEffect(() => {
+    const escuta = listen<ProgressoImportacaoInstancia>(
+      EVENTO_PROGRESSO_IMPORTACAO_INSTANCIA,
+      ({ payload }) => atualizarProgressoImportacao(payload)
+    );
+
+    return () => {
+      void escuta.then((removerEscuta) => removerEscuta());
+    };
+  }, []);
   const importandoInstancias = instanciasEmImportacao.length > 0;
   const [pastasAdicionaisImportacao, setPastasAdicionaisImportacao] = useState<string[]>([]);
   const [idsSelecionadosImportacao, setIdsSelecionadosImportacao] = useState<Set<string>>(
@@ -939,9 +948,10 @@ export default function LibraryPage({
 
   const excluirSelecionadas = () => {
     if (idsSelecionados.size === 0) return;
-    if (!confirm(`Excluir ${idsSelecionados.size} instâncias selecionadas?`)) return;
-    idsSelecionados.forEach((id) => onDelete(id));
-    encerrarSelecaoMultipla();
+    const selecionadas = instances
+      .filter((instancia) => idsSelecionados.has(instancia.id))
+      .map((instancia) => ({ id: instancia.id, nome: instancia.name }));
+    if (selecionadas.length > 0) setInstanciasExclusao(selecionadas);
   };
 
   const abrirMenuContexto = (evento: React.MouseEvent, instancia: Instance) => {
@@ -983,12 +993,11 @@ export default function LibraryPage({
 
   const excluirPeloMenu = (instancia: Instance) => {
     setMenuContexto(null);
-    if (confirm(`Deletar "${instancia.name}"?`)) {
-      onDelete(instancia.id);
-    }
+    setInstanciasExclusao([{ id: instancia.id, nome: instancia.name }]);
   };
 
   const totalSucessosImportacao = resultadoImportacao.filter((item) => item.sucesso).length;
+  const importacaoCopiando = instanciasEmImportacao.find((instancia) => instancia.etapa === "copiando");
   const nomeLauncher = (launcher: string) =>
     launcher === "prism"
       ? "Prism Launcher"
@@ -1113,7 +1122,11 @@ export default function LibraryPage({
           ) : (
             <Upload size={13} />
           )}
-          {importandoInstancias ? `Importando ${instanciasEmImportacao.length}` : "Importar"}
+          {importandoInstancias
+            ? importacaoCopiando
+              ? `Importando ${importacaoCopiando.porcentagem}%`
+              : `Importando ${instanciasEmImportacao.length}`
+            : "Importar"}
         </button>
 
         <button
@@ -1967,8 +1980,32 @@ export default function LibraryPage({
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {instanciasExclusao && (
+          <ModalExclusaoInstancia
+            instancias={instanciasExclusao}
+            aoFechar={() => setInstanciasExclusao(null)}
+            aoExcluir={onDelete}
+            aoIniciar={encerrarSelecaoMultipla}
+          />
+        )}
+      </AnimatePresence>
+
     </div>
   );
+}
+
+function descreverProgressoImportacao(instancia: InstanciaEmImportacao): string {
+  switch (instancia.etapa) {
+    case "aguardando":
+      return "Aguardando a vez";
+    case "preparando":
+      return "Preparando a instância";
+    case "copiando":
+      return `${instancia.arquivosCopiados} de ${instancia.totalArquivos} arquivos`;
+    case "concluida":
+      return `${instancia.totalArquivos} arquivos migrados`;
+  }
 }
 
 function SecaoImportacoesEmAndamento({
@@ -1976,7 +2013,7 @@ function SecaoImportacoesEmAndamento({
   viewMode,
   mensagem = "Migrando arquivos...",
 }: {
-  instancias: InstanciaImportavelExterna[];
+  instancias: Array<DadosInstanciaImportavel | InstanciaEmImportacao>;
   viewMode: ViewMode;
   mensagem?: string;
 }) {
@@ -1994,37 +2031,72 @@ function SecaoImportacoesEmAndamento({
             : "space-y-2"
         )}
       >
-        {instancias.map((instancia) => (
-          <div
-            key={instancia.idExterno}
-            aria-disabled="true"
-            className={cn(
-              "pointer-events-none relative select-none overflow-hidden border border-white/8 bg-white/3 opacity-45",
-              viewMode === "grid"
-                ? "min-h-[150px] rounded-2xl p-4"
-                : "flex min-h-16 items-center gap-3 rounded-xl px-4 py-3"
-            )}
-          >
+        {instancias.map((instancia) => {
+          const progresso = "etapa" in instancia ? instancia : null;
+          const concluida = progresso?.etapa === "concluida";
+
+          return (
             <div
+              key={instancia.idExterno}
+              aria-disabled="true"
               className={cn(
-                "flex shrink-0 items-center justify-center rounded-xl border border-white/10 bg-black/25 text-white/35",
-                viewMode === "grid" ? "h-14 w-14" : "h-10 w-10"
+                "pointer-events-none relative select-none overflow-hidden border bg-white/3",
+                progresso ? "border-emerald-400/15" : "border-white/8 opacity-45",
+                viewMode === "grid"
+                  ? "min-h-[174px] rounded-2xl p-4"
+                  : "flex min-h-[76px] items-center gap-3 rounded-xl px-4 py-3"
               )}
             >
-              <Box size={viewMode === "grid" ? 24 : 18} />
+              <div
+                className={cn(
+                  "flex shrink-0 items-center justify-center rounded-xl border border-white/10 bg-black/25",
+                  concluida ? "text-emerald-300" : "text-white/35",
+                  viewMode === "grid" ? "h-14 w-14" : "h-10 w-10"
+                )}
+              >
+                {concluida
+                  ? <Check size={viewMode === "grid" ? 24 : 18} />
+                  : <Box size={viewMode === "grid" ? 24 : 18} />}
+              </div>
+              <div className={cn("min-w-0", viewMode === "grid" ? "mt-3" : "flex-1")}>
+                <p className="truncate text-sm font-bold text-white">{instancia.nome}</p>
+                <p className="mt-1 truncate text-[11px] text-white/55">
+                  {instancia.loaderType || "Vanilla"} {instancia.versaoMinecraft}
+                </p>
+                {progresso ? (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-emerald-200/80">
+                      <span className="truncate">{descreverProgressoImportacao(progresso)}</span>
+                      <span className="shrink-0 font-black tabular-nums text-emerald-300">
+                        {progresso.porcentagem}%
+                      </span>
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-label={`Progresso da importação de ${instancia.nome}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progresso.porcentagem}
+                      className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/40 ring-1 ring-white/5"
+                    >
+                      <motion.div
+                        initial={false}
+                        animate={{ width: `${progresso.porcentagem}%` }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="h-full rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.45)]"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300">
+                    <Loader2 size={10} className="animate-spin" />
+                    {mensagem}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className={cn("min-w-0", viewMode === "grid" ? "mt-3" : "flex-1")}>
-              <p className="truncate text-sm font-bold text-white">{instancia.nome}</p>
-              <p className="mt-1 truncate text-[11px] text-white/55">
-                {instancia.loaderType || "Vanilla"} {instancia.versaoMinecraft}
-              </p>
-              <p className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300">
-                <Loader2 size={10} className="animate-spin" />
-                {mensagem}
-              </p>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

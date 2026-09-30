@@ -14,6 +14,8 @@ pub(crate) struct ConteudoInstaladoDetalhado {
     pub author: String,
     pub icon: Option<String>,
     pub enabled: bool,
+    pub identificadores: Vec<String>,
+    pub dependencias: Vec<String>,
 }
 
 #[derive(Default)]
@@ -22,6 +24,8 @@ struct MetadadosConteudo {
     versao: Option<String>,
     autor: Option<String>,
     caminho_icone: Option<String>,
+    identificadores: Vec<String>,
+    dependencias: Vec<String>,
 }
 
 #[tauri::command]
@@ -101,6 +105,8 @@ fn inspecionar_conteudo(
         author: metadados.autor.unwrap_or_else(|| "Unknown".to_string()),
         icon: icone,
         enabled: habilitado,
+        identificadores: metadados.identificadores,
+        dependencias: metadados.dependencias,
     }
 }
 
@@ -153,11 +159,25 @@ fn ler_metadados_mod<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Met
 
 fn ler_fabric<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<MetadadosConteudo> {
     let json = ler_json(compactado, "fabric.mod.json")?;
+    let identificadores = normalizar_identificadores(
+        texto_json(&json, "id")
+            .into_iter()
+            .chain(identificadores_json(json.get("provides"))),
+    );
+    let dependencias = normalizar_identificadores(
+        json.get("depends")
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flat_map(|itens| itens.keys().cloned()),
+    );
+
     Some(MetadadosConteudo {
         nome: texto_json(&json, "name").or_else(|| texto_json(&json, "id")),
         versao: valor_json_texto(json.get("version")),
         autor: autores_json(json.get("authors")),
         caminho_icone: json.get("icon").and_then(caminho_icone_json),
+        identificadores,
+        dependencias,
     })
 }
 
@@ -171,6 +191,12 @@ fn ler_quilt<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<Meta
         .and_then(|valor| valor.as_object())
         .map(|autores| autores.keys().cloned().collect::<Vec<_>>().join(", "))
         .filter(|valor| !valor.is_empty());
+    let identificadores = normalizar_identificadores(
+        texto_json(loader, "id")
+            .into_iter()
+            .chain(identificadores_json(loader.get("provides"))),
+    );
+    let dependencias = normalizar_identificadores(identificadores_json(loader.get("depends")));
 
     Some(MetadadosConteudo {
         nome: texto_json(exibicao, "name").or_else(|| texto_json(loader, "id")),
@@ -180,6 +206,8 @@ fn ler_quilt<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<Meta
             .get("icon")
             .or_else(|| loader.get("icon"))
             .and_then(caminho_icone_json),
+        identificadores,
+        dependencias,
     })
 }
 
@@ -189,7 +217,8 @@ fn ler_toml_mod<R: Read + Seek>(
 ) -> Option<MetadadosConteudo> {
     let texto = ler_texto(compactado, nome)?;
     let toml = toml::from_str::<toml::Value>(&texto).ok()?;
-    let dados_mod = toml.get("mods")?.as_array()?.first()?.as_table()?;
+    let mods = toml.get("mods")?.as_array()?;
+    let dados_mod = mods.first()?.as_table()?;
     let manifesto = ler_manifesto(compactado);
     let versao = dados_mod
         .get("version")
@@ -205,6 +234,33 @@ fn ler_toml_mod<R: Read + Seek>(
         .get("authors")
         .or_else(|| toml.get("authors"))
         .and_then(valor_toml_texto);
+    let identificadores = normalizar_identificadores(
+        mods.iter()
+            .filter_map(|item| item.as_table()?.get("modId").and_then(valor_toml_texto)),
+    );
+    let dependencias = normalizar_identificadores(
+        toml.get("dependencies")
+            .and_then(toml::Value::as_table)
+            .into_iter()
+            .flat_map(|grupos| grupos.values())
+            .filter_map(toml::Value::as_array)
+            .flatten()
+            .filter_map(|item| {
+                let tabela = item.as_table()?;
+                let obrigatoria = tabela
+                    .get("mandatory")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(true);
+                let tipo_obrigatorio = tabela
+                    .get("type")
+                    .and_then(toml::Value::as_str)
+                    .map(|tipo| tipo.eq_ignore_ascii_case("required"))
+                    .unwrap_or(true);
+                (obrigatoria && tipo_obrigatorio)
+                    .then(|| tabela.get("modId").and_then(valor_toml_texto))
+                    .flatten()
+            }),
+    );
 
     Some(MetadadosConteudo {
         nome: dados_mod
@@ -217,6 +273,8 @@ fn ler_toml_mod<R: Read + Seek>(
             .get("logoFile")
             .and_then(toml::Value::as_str)
             .and_then(caminho_seguro_compactado),
+        identificadores,
+        dependencias,
     })
 }
 
@@ -228,6 +286,17 @@ fn ler_forge_legado<R: Read + Seek>(
         .as_array()
         .and_then(|itens| itens.first())
         .or_else(|| json.get("modList")?.as_array()?.first())?;
+    let identificadores = normalizar_identificadores(texto_json(entrada, "modid"));
+    let dependencias = normalizar_identificadores(
+        entrada
+            .get("dependencies")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(identificador_dependencia_legada)
+            .map(str::to_string),
+    );
 
     Some(MetadadosConteudo {
         nome: texto_json(entrada, "name").or_else(|| texto_json(entrada, "modid")),
@@ -237,6 +306,8 @@ fn ler_forge_legado<R: Read + Seek>(
             .get("logoFile")
             .and_then(serde_json::Value::as_str)
             .and_then(caminho_seguro_compactado),
+        identificadores,
+        dependencias,
     })
 }
 
@@ -260,7 +331,47 @@ fn ler_manifesto<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Metadad
             .or_else(|| valores.get("specification-vendor"))
             .cloned(),
         caminho_icone: None,
+        identificadores: Vec::new(),
+        dependencias: Vec::new(),
     }
+}
+
+fn identificadores_json(valor: Option<&serde_json::Value>) -> Vec<String> {
+    match valor {
+        Some(serde_json::Value::String(item)) => vec![item.clone()],
+        Some(serde_json::Value::Array(itens)) => itens
+            .iter()
+            .flat_map(|item| identificadores_json(Some(item)))
+            .collect(),
+        Some(serde_json::Value::Object(item)) => item
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(|id| vec![id.to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn normalizar_identificadores(valores: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut identificadores = valores
+        .into_iter()
+        .filter_map(|valor| texto_limpo(&valor).map(|item| item.to_lowercase()))
+        .collect::<Vec<_>>();
+    identificadores.sort();
+    identificadores.dedup();
+    identificadores
+}
+
+fn identificador_dependencia_legada(valor: &str) -> Option<&str> {
+    let valor = valor.trim();
+    let identificador = valor
+        .strip_prefix("required-after:")
+        .or_else(|| valor.strip_prefix("required-before:"))
+        .unwrap_or(valor)
+        .split(['@', '[', '('])
+        .next()?
+        .trim();
+    (!identificador.is_empty()).then_some(identificador)
 }
 
 fn ler_json<R: Read + Seek>(
@@ -474,7 +585,7 @@ mod testes {
             .expect("deve criar metadados");
         compactado
             .write_all(
-                br#"{"id":"dome-teste","name":"Dome Teste","version":"1.2.3","authors":["Dome"],"icon":"icone.png"}"#,
+                br#"{"id":"dome-teste","provides":["dome-api"],"depends":{"fabricloader":">=0.16","biblioteca":"*"},"name":"Dome Teste","version":"1.2.3","authors":["Dome"],"icon":"icone.png"}"#,
             )
             .expect("deve escrever metadados");
         compactado
@@ -491,7 +602,46 @@ mod testes {
         assert_eq!(metadados.nome.as_deref(), Some("Dome Teste"));
         assert_eq!(metadados.versao.as_deref(), Some("1.2.3"));
         assert_eq!(metadados.autor.as_deref(), Some("Dome"));
+        assert_eq!(metadados.identificadores, vec!["dome-api", "dome-teste"]);
+        assert_eq!(metadados.dependencias, vec!["biblioteca", "fabricloader"]);
         assert!(icone.is_some_and(|valor| valor.starts_with("data:image/png;base64,")));
+    }
+
+    #[test]
+    fn extrai_dependencias_obrigatorias_de_mod_neoforge() {
+        let caminho = std::env::temp_dir().join(format!(
+            "dome-conteudo-instalado-neoforge-{}.jar",
+            uuid::Uuid::new_v4()
+        ));
+        let arquivo = std::fs::File::create(&caminho).expect("deve criar arquivo temporário");
+        let mut compactado = zip::ZipWriter::new(arquivo);
+        let opcoes = zip::write::SimpleFileOptions::default();
+        compactado
+            .start_file("META-INF/neoforge.mods.toml", opcoes)
+            .expect("deve criar metadados");
+        compactado
+            .write_all(
+                br#"modLoader="javafml"
+[[mods]]
+modId="mod_principal"
+displayName="Mod principal"
+version="1.0.0"
+[[dependencies.mod_principal]]
+modId="biblioteca"
+type="required"
+[[dependencies.mod_principal]]
+modId="integracao_opcional"
+type="optional"
+"#,
+            )
+            .expect("deve escrever metadados");
+        compactado.finish().expect("deve finalizar arquivo");
+
+        let (metadados, _) = inspecionar_arquivo_compactado(&caminho, "mods");
+        let _ = std::fs::remove_file(caminho);
+
+        assert_eq!(metadados.identificadores, vec!["mod_principal"]);
+        assert_eq!(metadados.dependencias, vec!["biblioteca"]);
     }
 
     #[test]

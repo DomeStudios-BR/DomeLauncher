@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Globe,
   Loader2,
@@ -12,7 +12,10 @@ import { motion } from "framer-motion";
 import type { Instance } from "../hooks/useLauncher";
 import type { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
-import { NoticiasMinecraft } from "./NoticiasMinecraft";
+
+const NoticiasMinecraft = lazy(() =>
+  import("./NoticiasMinecraft").then((modulo) => ({ default: modulo.NoticiasMinecraft }))
+);
 
 interface ServerInfo {
   name: string;
@@ -181,7 +184,17 @@ export default function HomePage({
         </h1>
       </motion.div>
 
-      <NoticiasMinecraft />
+      <Suspense fallback={
+        <div className="space-y-3" aria-label="Carregando notícias">
+          <div className="h-4 w-28 animate-pulse bg-white/[0.06]" />
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="h-36 animate-pulse border border-white/10 bg-white/[0.025]" />
+            <div className="hidden h-36 animate-pulse border border-white/10 bg-white/[0.025] lg:block" />
+          </div>
+        </div>
+      }>
+        <NoticiasMinecraft />
+      </Suspense>
 
       {instanciasRecentes.length > 0 && (
         <SecaoVolteAJogar

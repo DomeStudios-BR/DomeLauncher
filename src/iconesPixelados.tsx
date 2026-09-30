@@ -1,65 +1,69 @@
 import type { SVGProps } from "react";
 import { Icon } from "@iconify/react";
-import atividade from "@iconify-icons/pixelarticons/chart";
-import alerta from "@iconify-icons/pixelarticons/warning-box";
-import setaEsquerda from "@iconify-icons/pixelarticons/arrow-left";
-import setaDireita from "@iconify-icons/pixelarticons/arrow-right";
-import setasVertical from "@iconify-icons/pixelarticons/arrows-vertical";
-import caixa from "@iconify-icons/pixelarticons/archive";
-import calendario from "@iconify-icons/pixelarticons/calendar";
-import checagem from "@iconify-icons/pixelarticons/check";
-import chevronBaixo from "@iconify-icons/pixelarticons/chevron-down";
-import chevronEsquerda from "@iconify-icons/pixelarticons/chevron-left";
-import chevronDireita from "@iconify-icons/pixelarticons/chevron-right";
-import chevronCima from "@iconify-icons/pixelarticons/chevron-up";
-import relogio from "@iconify-icons/pixelarticons/clock";
-import cafe from "@iconify-icons/pixelarticons/coffee";
-import copia from "@iconify-icons/pixelarticons/copy";
-import cpu from "@iconify-icons/pixelarticons/server";
-import download from "@iconify-icons/pixelarticons/download";
-import linkExterno from "@iconify-icons/pixelarticons/external-link";
-import arquivoTexto from "@iconify-icons/pixelarticons/file-alt";
-import pasta from "@iconify-icons/pixelarticons/folder";
-import pastaMais from "@iconify-icons/pixelarticons/folder-plus";
-import gamepad from "@iconify-icons/pixelarticons/gamepad";
-import globo from "@iconify-icons/pixelarticons/globe";
-import gripVertical from "@iconify-icons/pixelarticons/more-vertical";
-import coracao from "@iconify-icons/pixelarticons/heart";
-import casa from "@iconify-icons/pixelarticons/home";
-import imagem from "@iconify-icons/pixelarticons/image";
-import grade from "@iconify-icons/pixelarticons/grid";
-import biblioteca from "@iconify-icons/pixelarticons/book";
-import lista from "@iconify-icons/pixelarticons/list";
-import carregando from "@iconify-icons/pixelarticons/loader";
-import login from "@iconify-icons/pixelarticons/login";
-import email from "@iconify-icons/pixelarticons/mail";
-import monitor from "@iconify-icons/pixelarticons/monitor";
-import maisHorizontal from "@iconify-icons/pixelarticons/more-horizontal";
-import maisVertical from "@iconify-icons/pixelarticons/more-vertical";
-import jornal from "@iconify-icons/pixelarticons/article";
-import pacote from "@iconify-icons/pixelarticons/archive";
-import paleta from "@iconify-icons/pixelarticons/colors-swatch";
-import lapis from "@iconify-icons/pixelarticons/edit";
-import tocar from "@iconify-icons/pixelarticons/play";
-import mais from "@iconify-icons/pixelarticons/plus";
-import recarregar from "@iconify-icons/pixelarticons/reload";
-import foguete from "@iconify-icons/pixelarticons/zap";
-import salvar from "@iconify-icons/pixelarticons/save";
-import pesquisar from "@iconify-icons/pixelarticons/search";
-import configuracoes from "@iconify-icons/pixelarticons/sliders";
-import escudo from "@iconify-icons/pixelarticons/shield";
-import brilho from "@iconify-icons/pixelarticons/moon-stars";
-import estrela from "@iconify-icons/pixelarticons/moon-star";
-import terminal from "@iconify-icons/pixelarticons/code";
-import lixeira from "@iconify-icons/pixelarticons/trash";
-import upload from "@iconify-icons/pixelarticons/upload";
-import pessoa from "@iconify-icons/pixelarticons/user";
-import pessoas from "@iconify-icons/pixelarticons/users";
-import wifi from "@iconify-icons/pixelarticons/radio-signal";
-import wifiOff from "@iconify-icons/pixelarticons/cellular-signal-off";
-import fechar from "@iconify-icons/pixelarticons/close";
-import fecharCaixa from "@iconify-icons/pixelarticons/close-box";
-import avatar from "@iconify-icons/pixelarticons/avatar";
+import dadosIcones from "./assets/dadosIconesPixelados.json";
+
+const {
+    atividade,
+    alerta,
+    setaEsquerda,
+    setaDireita,
+    setasVertical,
+    caixa,
+    calendario,
+    checagem,
+    chevronBaixo,
+    chevronEsquerda,
+    chevronDireita,
+    chevronCima,
+    relogio,
+    cafe,
+    copia,
+    cpu,
+    download,
+    linkExterno,
+    arquivoTexto,
+    pasta,
+    pastaMais,
+    gamepad,
+    globo,
+    gripVertical,
+    coracao,
+    casa,
+    imagem,
+    grade,
+    biblioteca,
+    lista,
+    carregando,
+    login,
+    email,
+    monitor,
+    maisHorizontal,
+    maisVertical,
+    jornal,
+    pacote,
+    paleta,
+    lapis,
+    tocar,
+    mais,
+    recarregar,
+    foguete,
+    salvar,
+    pesquisar,
+    configuracoes,
+    escudo,
+    brilho,
+    estrela,
+    terminal,
+    lixeira,
+    upload,
+    pessoa,
+    pessoas,
+    wifi,
+    wifiOff,
+    fechar,
+    fecharCaixa,
+    avatar,
+} = dadosIcones;
 
 type PropriedadesIcone = Omit<SVGProps<SVGSVGElement>, "color"> & {
   color?: string;

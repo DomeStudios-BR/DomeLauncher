@@ -1,4 +1,29 @@
-use super::*;
+﻿use super::*;
+
+use tauri::Emitter;
+
+const EVENTO_PROGRESSO_IMPORTACAO_INSTANCIA: &str = "importacao-instancia-progresso";
+const PASTAS_CONTEUDO_IMPORTADO: [&str; 12] = [
+    "mods",
+    "resourcepacks",
+    "shaderpacks",
+    "saves",
+    "config",
+    "defaultconfigs",
+    "kubejs",
+    "scripts",
+    "journeymap",
+    "xaeromap",
+    "XaeroWaypoints",
+    "servers",
+];
+const ARQUIVOS_CONTEUDO_IMPORTADO: [&str; 5] = [
+    "options.txt",
+    "optionsof.txt",
+    "optionsshaders.txt",
+    "servers.dat",
+    "usercache.json",
+];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +49,16 @@ pub(crate) struct ResultadoImportacaoInstancia {
     pub sucesso: bool,
     pub instancia_id: Option<String>,
     pub mensagem: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProgressoImportacaoInstancia {
+    id_externo: String,
+    etapa: String,
+    arquivos_copiados: usize,
+    total_arquivos: usize,
+    porcentagem: u8,
 }
 
 fn listar_instancias_prism() -> Vec<InstanciaImportavelExterna> {
@@ -79,10 +114,8 @@ fn listar_instancias_prism_em(
                             let versao = texto_json_caminho(componente, &["version"]);
 
                             match uid.as_str() {
-                                "net.minecraft" => {
-                                    if versao_minecraft.is_empty() {
-                                        versao_minecraft = versao.unwrap_or_default();
-                                    }
+                                "net.minecraft" if versao_minecraft.is_empty() => {
+                                    versao_minecraft = versao.unwrap_or_default();
                                 }
                                 "net.minecraftforge" => {
                                     loader_tipo = Some("Forge".to_string());
@@ -546,32 +579,18 @@ pub(crate) fn listar_instancias_importaveis(
     Ok(resultados)
 }
 
-fn copiar_arquivo_se_existir(
+fn preparar_arquivos_diretorio(
     origem: &std::path::Path,
     destino: &std::path::Path,
-) -> Result<(), String> {
-    if !origem.exists() || !origem.is_file() {
-        return Ok(());
-    }
-
-    if let Some(pai) = destino.parent() {
-        std::fs::create_dir_all(pai).map_err(|e| format!("Erro ao criar pasta destino: {}", e))?;
-    }
-    std::fs::copy(origem, destino).map_err(|e| format!("Erro ao copiar arquivo: {}", e))?;
-    Ok(())
-}
-
-fn copiar_diretorio_recursivo(
-    origem: &std::path::Path,
-    destino: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, String> {
     if !origem.exists() || !origem.is_dir() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     std::fs::create_dir_all(destino).map_err(|e| format!("Erro ao criar pasta destino: {}", e))?;
     let entradas =
         std::fs::read_dir(origem).map_err(|e| format!("Erro ao ler pasta origem: {}", e))?;
+    let mut arquivos = Vec::new();
 
     for entrada in entradas.flatten() {
         let tipo = match entrada.file_type() {
@@ -584,59 +603,109 @@ fn copiar_diretorio_recursivo(
 
         let origem_item = entrada.path();
         let destino_item = destino.join(entrada.file_name());
-
         if tipo.is_dir() {
-            copiar_diretorio_recursivo(&origem_item, &destino_item)?;
+            arquivos.extend(preparar_arquivos_diretorio(&origem_item, &destino_item)?);
         } else if tipo.is_file() {
-            copiar_arquivo_se_existir(&origem_item, &destino_item)?;
+            arquivos.push((origem_item, destino_item));
         }
     }
 
+    Ok(arquivos)
+}
+
+fn preparar_arquivos_instancia_importada(
+    caminho_jogo_origem: &std::path::Path,
+    pasta_instancia_destino: &std::path::Path,
+) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, String> {
+    if !caminho_jogo_origem.exists() || !caminho_jogo_origem.is_dir() {
+        return Err("Pasta do jogo da instância importada não encontrada.".to_string());
+    }
+
+    let mut arquivos = Vec::new();
+    for pasta in PASTAS_CONTEUDO_IMPORTADO {
+        arquivos.extend(preparar_arquivos_diretorio(
+            &caminho_jogo_origem.join(pasta),
+            &pasta_instancia_destino.join(pasta),
+        )?);
+    }
+
+    for arquivo in ARQUIVOS_CONTEUDO_IMPORTADO {
+        let origem = caminho_jogo_origem.join(arquivo);
+        if origem.is_file() {
+            arquivos.push((origem, pasta_instancia_destino.join(arquivo)));
+        }
+    }
+
+    Ok(arquivos)
+}
+
+fn copiar_arquivo(origem: &std::path::Path, destino: &std::path::Path) -> Result<(), String> {
+    if !origem.is_file() {
+        return Err(format!(
+            "Arquivo de origem não encontrado durante a importação: {}",
+            origem.display()
+        ));
+    }
+
+    if let Some(pai) = destino.parent() {
+        std::fs::create_dir_all(pai).map_err(|e| format!("Erro ao criar pasta destino: {}", e))?;
+    }
+    std::fs::copy(origem, destino).map_err(|e| format!("Erro ao copiar arquivo: {}", e))?;
     Ok(())
+}
+
+fn calcular_porcentagem(arquivos_copiados: usize, total_arquivos: usize) -> u8 {
+    if total_arquivos == 0 {
+        return 0;
+    }
+
+    arquivos_copiados
+        .min(total_arquivos)
+        .saturating_mul(100)
+        .checked_div(total_arquivos)
+        .unwrap_or(0) as u8
+}
+
+fn emitir_progresso_importacao(
+    app: &tauri::AppHandle,
+    id_externo: &str,
+    etapa: &str,
+    arquivos_copiados: usize,
+    total_arquivos: usize,
+) {
+    let porcentagem = if etapa == "concluida" {
+        100
+    } else {
+        calcular_porcentagem(arquivos_copiados, total_arquivos)
+    };
+    let _ = app.emit(
+        EVENTO_PROGRESSO_IMPORTACAO_INSTANCIA,
+        ProgressoImportacaoInstancia {
+            id_externo: id_externo.to_string(),
+            etapa: etapa.to_string(),
+            arquivos_copiados,
+            total_arquivos,
+            porcentagem,
+        },
+    );
 }
 
 fn copiar_conteudo_instancia_importada(
     caminho_jogo_origem: &std::path::Path,
     pasta_instancia_destino: &std::path::Path,
-) -> Result<(), String> {
-    if !caminho_jogo_origem.exists() || !caminho_jogo_origem.is_dir() {
-        return Err("Pasta do jogo da instância importada não encontrada.".to_string());
+    mut ao_progresso: impl FnMut(usize, usize),
+) -> Result<usize, String> {
+    let arquivos =
+        preparar_arquivos_instancia_importada(caminho_jogo_origem, pasta_instancia_destino)?;
+    let total_arquivos = arquivos.len();
+    ao_progresso(0, total_arquivos);
+
+    for (indice, (origem, destino)) in arquivos.into_iter().enumerate() {
+        copiar_arquivo(&origem, &destino)?;
+        ao_progresso(indice + 1, total_arquivos);
     }
 
-    let pastas_para_copiar = [
-        "mods",
-        "resourcepacks",
-        "shaderpacks",
-        "saves",
-        "config",
-        "defaultconfigs",
-        "kubejs",
-        "scripts",
-        "journeymap",
-        "xaeromap",
-        "XaeroWaypoints",
-        "servers",
-    ];
-    for pasta in pastas_para_copiar {
-        let origem = caminho_jogo_origem.join(pasta);
-        let destino = pasta_instancia_destino.join(pasta);
-        copiar_diretorio_recursivo(&origem, &destino)?;
-    }
-
-    let arquivos_para_copiar = [
-        "options.txt",
-        "optionsof.txt",
-        "optionsshaders.txt",
-        "servers.dat",
-        "usercache.json",
-    ];
-    for arquivo in arquivos_para_copiar {
-        let origem = caminho_jogo_origem.join(arquivo);
-        let destino = pasta_instancia_destino.join(arquivo);
-        copiar_arquivo_se_existir(&origem, &destino)?;
-    }
-
-    Ok(())
+    Ok(total_arquivos)
 }
 
 fn gerar_nome_instancia_unico(state: &LauncherState, nome_base: &str) -> String {
@@ -1105,6 +1174,7 @@ pub(crate) fn atualizar_icones_instancias_modrinth_existentes(
 #[tauri::command]
 pub(crate) async fn importar_instancias_externas(
     instancias: Vec<InstanciaImportavelExterna>,
+    app: tauri::AppHandle,
     state: State<'_, LauncherState>,
 ) -> Result<Vec<ResultadoImportacaoInstancia>, String> {
     if instancias.is_empty() {
@@ -1114,6 +1184,7 @@ pub(crate) async fn importar_instancias_externas(
     let mut resultados = Vec::new();
 
     for instancia in instancias {
+        emitir_progresso_importacao(&app, &instancia.id_externo, "preparando", 0, 0);
         let nome_unico = gerar_nome_instancia_unico(&state, &instancia.nome);
         let resultado = match criar_instancia_base_importada(
             &state,
@@ -1128,10 +1199,37 @@ pub(crate) async fn importar_instancias_externas(
         {
             Ok(instancia_criada) => {
                 let caminho_jogo = std::path::PathBuf::from(instancia.caminho_jogo.trim());
-                let mensagem_copia =
-                    copiar_conteudo_instancia_importada(&caminho_jogo, &instancia_criada.path);
-                if let Err(erro_copia) = mensagem_copia {
-                    ResultadoImportacaoInstancia {
+                let caminho_destino = instancia_criada.path.clone();
+                let id_externo = instancia.id_externo.clone();
+                let app_copia = app.clone();
+                let mensagem_copia = tauri::async_runtime::spawn_blocking(move || {
+                    let mut ultima_porcentagem = None;
+                    copiar_conteudo_instancia_importada(
+                        &caminho_jogo,
+                        &caminho_destino,
+                        |arquivos_copiados, total_arquivos| {
+                            let porcentagem =
+                                calcular_porcentagem(arquivos_copiados, total_arquivos);
+                            if ultima_porcentagem == Some(porcentagem)
+                                && arquivos_copiados < total_arquivos
+                            {
+                                return;
+                            }
+                            ultima_porcentagem = Some(porcentagem);
+                            emitir_progresso_importacao(
+                                &app_copia,
+                                &id_externo,
+                                "copiando",
+                                arquivos_copiados,
+                                total_arquivos,
+                            );
+                        },
+                    )
+                })
+                .await
+                .map_err(|e| format!("Falha interna ao copiar a instância importada: {}", e))?;
+                match mensagem_copia {
+                    Err(erro_copia) => ResultadoImportacaoInstancia {
                         id_externo: instancia.id_externo.clone(),
                         launcher: instancia.launcher.clone(),
                         nome_origem: instancia.nome.clone(),
@@ -1141,15 +1239,23 @@ pub(crate) async fn importar_instancias_externas(
                             "Instância importada, mas houve falha ao copiar parte dos arquivos: {}",
                             erro_copia
                         ),
-                    }
-                } else {
-                    ResultadoImportacaoInstancia {
-                        id_externo: instancia.id_externo.clone(),
-                        launcher: instancia.launcher.clone(),
-                        nome_origem: instancia.nome.clone(),
-                        sucesso: true,
-                        instancia_id: Some(instancia_criada.id.clone()),
-                        mensagem: "Instância importada com sucesso.".to_string(),
+                    },
+                    Ok(total_arquivos) => {
+                        emitir_progresso_importacao(
+                            &app,
+                            &instancia.id_externo,
+                            "concluida",
+                            total_arquivos,
+                            total_arquivos,
+                        );
+                        ResultadoImportacaoInstancia {
+                            id_externo: instancia.id_externo.clone(),
+                            launcher: instancia.launcher.clone(),
+                            nome_origem: instancia.nome.clone(),
+                            sucesso: true,
+                            instancia_id: Some(instancia_criada.id.clone()),
+                            mensagem: "Instância importada com sucesso.".to_string(),
+                        }
                     }
                 }
             }
@@ -1586,3 +1692,72 @@ async fn importar_instancia_em_estado_com_opcoes(
 }
 
 // ===== FUNÇÃO PARA BUSCAR VERSÕES DOS LOADERS =====
+
+#[cfg(test)]
+mod testes_progresso_importacao {
+    use super::{calcular_porcentagem, copiar_conteudo_instancia_importada};
+
+    #[test]
+    fn calcula_porcentagem_por_arquivos_e_limita_em_cem() {
+        assert_eq!(calcular_porcentagem(0, 10), 0);
+        assert_eq!(calcular_porcentagem(1, 4), 25);
+        assert_eq!(calcular_porcentagem(3, 4), 75);
+        assert_eq!(calcular_porcentagem(4, 4), 100);
+        assert_eq!(calcular_porcentagem(5, 4), 100);
+    }
+
+    #[test]
+    fn mantem_zero_quando_nao_ha_arquivos() {
+        assert_eq!(calcular_porcentagem(0, 0), 0);
+    }
+
+    #[test]
+    fn copia_arquivos_previstos_e_reporta_cada_avanco() {
+        let pasta_teste = std::env::temp_dir().join(format!(
+            "dome-importacao-progresso-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let origem = pasta_teste.join("origem");
+        let destino = pasta_teste.join("destino");
+        std::fs::create_dir_all(origem.join("mods")).unwrap();
+        std::fs::create_dir_all(origem.join("saves").join("mundo")).unwrap();
+        std::fs::create_dir_all(origem.join("config").join("vazio")).unwrap();
+        std::fs::write(origem.join("mods").join("exemplo.jar"), b"mod").unwrap();
+        std::fs::write(
+            origem.join("saves").join("mundo").join("level.dat"),
+            b"mundo",
+        )
+        .unwrap();
+        std::fs::write(origem.join("options.txt"), b"opcoes").unwrap();
+        std::fs::write(origem.join("latest.log"), b"ignorado").unwrap();
+
+        let mut atualizacoes = Vec::new();
+        let total = copiar_conteudo_instancia_importada(
+            &origem,
+            &destino,
+            |arquivos_copiados, total_arquivos| {
+                atualizacoes.push((arquivos_copiados, total_arquivos));
+            },
+        )
+        .unwrap();
+
+        let mod_copiado = destino.join("mods").join("exemplo.jar").is_file();
+        let mundo_copiado = destino
+            .join("saves")
+            .join("mundo")
+            .join("level.dat")
+            .is_file();
+        let opcoes_copiadas = destino.join("options.txt").is_file();
+        let pasta_vazia_copiada = destino.join("config").join("vazio").is_dir();
+        let arquivo_ignorado = destino.join("latest.log").exists();
+        std::fs::remove_dir_all(&pasta_teste).unwrap();
+
+        assert_eq!(total, 3);
+        assert_eq!(atualizacoes, vec![(0, 3), (1, 3), (2, 3), (3, 3)]);
+        assert!(mod_copiado);
+        assert!(mundo_copiado);
+        assert!(opcoes_copiadas);
+        assert!(pasta_vazia_copiada);
+        assert!(!arquivo_ignorado);
+    }
+}

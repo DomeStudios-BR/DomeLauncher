@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { gerarIconeAleatorio } from "../components/editor-icone/EditorIconeModal";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { EVENTO_INSTANCIAS_ATUALIZADAS } from "../lib/eventosTransferenciaSocial";
 
@@ -28,6 +27,8 @@ interface ConfiguracoesGlobais {
 }
 
 const migracoesIconesEmAndamento = new Set<string>();
+let migracoesIniciaisSolicitadas = false;
+let migracoesNativasConcluidas = false;
 
 function usaGeradorAntigo(icone: string | null | undefined): boolean {
   return Boolean(icone?.toLowerCase().includes("api.dicebear.com"));
@@ -41,6 +42,9 @@ function normalizarIconeLegado(icone: string | null | undefined): string | undef
 }
 
 async function migrarIconesDoGeradorAntigo(instancias: Instance[]): Promise<Instance[]> {
+  if (!instancias.some((instancia) => usaGeradorAntigo(instancia.icon))) return instancias;
+
+  const { gerarIconeAleatorio } = await import("../components/editor-icone/EditorIconeModal");
   return Promise.all(instancias.map(async (instancia) => {
     if (!usaGeradorAntigo(instancia.icon) || migracoesIconesEmAndamento.has(instancia.id)) {
       return instancia;
@@ -85,7 +89,22 @@ export function useLauncher() {
           inst.session_started_at ??
           inst.sessionStartedAt,
       })) as Instance[];
-      setInstances(await migrarIconesDoGeradorAntigo(normalizadas));
+      setInstances(normalizadas);
+      if (!migracoesNativasConcluidas) return;
+
+      void migrarIconesDoGeradorAntigo(normalizadas).then((migradas) => {
+        const iconesMigrados = new Map(migradas
+          .filter((instancia, indice) => instancia.icon !== normalizadas[indice].icon)
+          .map((instancia) => [instancia.id, instancia.icon]));
+        if (iconesMigrados.size === 0) return;
+
+        setInstances((atuais) => atuais.map((instancia) => {
+          const iconeOriginal = normalizadas.find((original) => original.id === instancia.id)?.icon;
+          const iconeMigrado = iconesMigrados.get(instancia.id);
+          if (!iconeMigrado || instancia.icon !== iconeOriginal) return instancia;
+          return { ...instancia, icon: iconeMigrado };
+        }));
+      }).catch((erro) => console.warn("Falha ao carregar o gerador de ícones antigos:", erro));
     } catch (error) {
       console.error("Erro ao buscar instâncias:", error);
     }
@@ -139,6 +158,7 @@ export function useLauncher() {
       await fetchInstances();
     } catch (error) {
       console.error("Erro ao deletar instância:", error);
+      throw error;
     }
   }, [fetchInstances]);
 
@@ -147,6 +167,17 @@ export function useLauncher() {
       setLoading(true);
       await Promise.all([fetchInstances(), refreshAccount()]);
       setLoading(false);
+
+      if (migracoesIniciaisSolicitadas) return;
+      migracoesIniciaisSolicitadas = true;
+      window.setTimeout(() => {
+        void invoke("concluir_migracoes_iniciais")
+          .catch((erro) => console.warn("Falha ao concluir migrações iniciais:", erro))
+          .then(() => {
+            migracoesNativasConcluidas = true;
+            return fetchInstances();
+          });
+      }, 1500);
     };
     init();
   }, [fetchInstances, refreshAccount]);
