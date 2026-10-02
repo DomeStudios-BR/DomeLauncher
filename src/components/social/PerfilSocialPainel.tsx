@@ -1,3 +1,4 @@
+import { obterUrlCabecaMinecraft } from "../../lib/avatarMinecraft";
 import { Pencil } from '../../iconesPixelados';
 import { cn } from '../../lib/utils';
 import type { AtividadeSocial, PerfilSocial } from './tiposSocial';
@@ -126,7 +127,7 @@ export function PerfilSocialPainel({
               />
             ) : uuidAvatarMinecraft ? (
               <img
-                src={`https://mc-heads.net/head/${uuidAvatarMinecraft}/64`}
+                src={obterUrlCabecaMinecraft(uuidAvatarMinecraft) ?? undefined}
                 alt={nomeExibicaoAtual}
                 className="h-12 w-12 object-cover"
               />

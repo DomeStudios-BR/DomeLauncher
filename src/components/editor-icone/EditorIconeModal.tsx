@@ -11,6 +11,7 @@ import {
 
 interface EditorIconeModalProps {
     aberto: boolean;
+    limiteImagemBytes?: number | null;
     iconeAtual?: string | null;
     chavePersistencia?: string;
     aoFechar: () => void;
@@ -65,11 +66,11 @@ async function comporIcone(fundo: FundoIcone, simbolo: SimboloIcone): Promise<st
     return canvas.toDataURL("image/png");
 }
 
-async function prepararImagem(arquivo: File): Promise<string> {
+async function prepararImagem(arquivo: File, limite: number | null): Promise<string> {
     if (!TIPOS_IMAGEM_ACEITOS.has(arquivo.type)) {
         throw new Error("Selecione uma imagem PNG, JPG ou WebP.");
     }
-    if (arquivo.size > LIMITE_IMAGEM_BYTES) {
+    if (limite !== null && arquivo.size > limite) {
         throw new Error("A imagem deve ter no máximo 8 MB.");
     }
 
@@ -104,6 +105,7 @@ export async function gerarIconeAleatorio(): Promise<string> {
 
 export default function EditorIconeModal({
     aberto,
+    limiteImagemBytes = LIMITE_IMAGEM_BYTES,
     iconeAtual,
     chavePersistencia,
     aoFechar,
@@ -180,7 +182,7 @@ export default function EditorIconeModal({
         if (!arquivo) return;
 
         try {
-            setImagemPersonalizada(await prepararImagem(arquivo));
+            setImagemPersonalizada(await prepararImagem(arquivo, limiteImagemBytes));
             setModo("imagem");
         } catch (erro) {
             alert(erro instanceof Error ? erro.message : "Não foi possível preparar a imagem.");
@@ -228,7 +230,7 @@ export default function EditorIconeModal({
     );
 
     return (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.button
                 type="button"
                 aria-label="Fechar editor de ícone"

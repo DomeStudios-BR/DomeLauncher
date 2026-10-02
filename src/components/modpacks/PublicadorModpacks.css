@@ -1,0 +1,574 @@
+.modpacks-pagina {
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    padding: 24px;
+    border-radius: 24px 24px 0 0;
+    background: #171717;
+    color: #e8e8e8;
+}
+
+.modpacks-cabecalho {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.modpacks-cabecalho > div {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+.modpacks-cabecalho h2 {
+    font-size: 22px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+.modpacks-cabecalho h3 {
+    font-size: 15px;
+    font-weight: 700;
+}
+.modpacks-beta {
+    color: #57cbb0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+.modpacks-etapa {
+    font-size: 12px;
+    color: #777;
+    white-space: nowrap;
+}
+
+.modpacks-botao {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border: 1px solid #393939;
+    background: #242424;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c8c8c8;
+    transition:
+        border-color 150ms,
+        background 150ms;
+}
+
+.modpacks-botao:hover {
+    background: #2a2a2a;
+    border-color: #555;
+}
+.modpacks-botao:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.modpacks-botao--destaque {
+    border-color: #235348;
+    background: #142c25;
+    color: #57cbb0;
+}
+.modpacks-botao--destaque:hover {
+    background: #1b3b32;
+    border-color: #32836d;
+}
+.modpacks-botao--perigo {
+    color: #f39595;
+    border-color: #623636;
+    background: #2d1e1e;
+}
+.modpacks-voltar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #888;
+    font-size: 12px;
+    margin-bottom: 20px;
+}
+.modpacks-voltar:hover {
+    color: #ddd;
+}
+
+.modpacks-abas {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid #333;
+    margin-bottom: 24px;
+}
+.modpacks-abas button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    white-space: nowrap;
+}
+.modpacks-abas button:hover {
+    color: #ddd;
+}
+.modpacks-abas button.ativa {
+    color: #57cbb0;
+    border-color: #57cbb0;
+    background: #1b2421;
+}
+.modpacks-abas button:disabled {
+    opacity: 0.5;
+}
+.modpacks-abas button span {
+    font-size: 10px;
+    opacity: 0.65;
+}
+.modpacks-painel {
+    max-width: 900px;
+    padding: 24px;
+    border: 1px solid #303030;
+    background: #1f1f1f;
+}
+.modpacks-painel fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    min-width: 0;
+}
+.modpacks-painel fieldset:disabled {
+    opacity: 0.65;
+}
+.modpacks-label {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #bcbcbc;
+}
+.modpacks-campo {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid #363636;
+    background: #181818;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 400;
+    color: #ddd;
+    outline: none;
+}
+.modpacks-campo:focus {
+    border-color: #438573;
+}
+.modpacks-campo::placeholder {
+    color: #626262;
+}
+textarea.modpacks-campo {
+    resize: vertical;
+}
+.modpacks-descricao {
+    min-height: 260px;
+    font-family: inherit;
+}
+.modpacks-foto {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+.modpacks-foto img {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border: 1px solid #383838;
+}
+.modpacks-ajuda {
+    display: block;
+    margin-top: 8px;
+    font-size: 11px;
+    font-weight: 400;
+    color: #858585;
+    line-height: 1.7;
+}
+.modpacks-acoes {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid #333;
+    padding-top: 20px;
+}
+.modpacks-erro {
+    padding: 12px;
+    margin-bottom: 20px;
+    color: #efaaaa;
+    border: 1px solid #673838;
+    background: #301e1e;
+    font-size: 12px;
+}
+.modpacks-sucesso {
+    margin-bottom: 20px;
+    color: #57cbb0;
+    font-size: 12px;
+}
+.modpacks-progresso {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    color: #aaa;
+    font-size: 12px;
+}
+.modpacks-projetos {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 24px;
+}
+.modpacks-projeto {
+    display: flex;
+    align-items: center;
+    text-align: left;
+    gap: 16px;
+    padding: 16px;
+    border: 1px solid #333;
+    background: #202020;
+    min-width: 0;
+}
+.modpacks-projeto:hover {
+    border-color: #438573;
+}
+.modpacks-projeto img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+.modpacks-projeto > div {
+    min-width: 0;
+    flex: 1;
+}
+.modpacks-projeto strong {
+    display: block;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.modpacks-projeto p {
+    font-size: 11px;
+    margin-top: 6px;
+    color: #888;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.modpacks-vazio {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 70px 20px;
+    color: #888;
+    font-size: 13px;
+}
+.modpacks-versao {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    margin-top: 10px;
+    border: 1px solid #363636;
+    background: #242424;
+    font-size: 13px;
+}
+.modpacks-versao span {
+    color: #57cbb0;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+.modpacks-versao small {
+    margin-left: auto;
+    color: #999;
+}
+.modpacks-revisao {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 20px;
+}
+.modpacks-revisao > img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+}
+.modpacks-revisao h3 {
+    font-size: 20px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+.modpacks-revisao p {
+    margin-top: 8px;
+    color: #999;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+.modpacks-revisao dl,
+.modpacks-revisao > p {
+    grid-column: 1 / -1;
+}
+.modpacks-revisao dl > div {
+    display: flex;
+    gap: 24px;
+    padding: 16px 0;
+    border-bottom: 1px solid #343434;
+    font-size: 13px;
+}
+.modpacks-revisao dt {
+    width: 90px;
+    flex-shrink: 0;
+    color: #888;
+}
+.modpacks-revisao dd {
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+.modpacks-fundo-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    background: #000c;
+}
+.modpacks-modal {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 860px;
+    max-height: calc(100dvh - 40px);
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid #333;
+    background: #171717;
+}
+.modpacks-modal > header {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid #333;
+    font-size: 14px;
+    font-weight: 700;
+}
+.modpacks-modal-conteudo {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.modpacks-modal .modpacks-pagina {
+    border-radius: 0;
+}
+
+@media (max-width: 1100px) {
+    .modpacks-projetos {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .modpacks-abas button {
+        padding: 12px;
+    }
+    .modpacks-pagina {
+        padding: 20px;
+    }
+}
+
+.modpacks-seletor {
+    position: relative;
+    margin-top: 12px;
+}
+.modpacks-seletor-botao {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #383838;
+    background: #181818;
+    text-align: left;
+    font-size: 13px;
+}
+.modpacks-seletor-botao > svg {
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.modpacks-seletor-botao[aria-expanded='true'] {
+    border-color: #57cbb0;
+}
+.modpacks-seletor-botao img {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+}
+.modpacks-seletor-botao span {
+    min-width: 0;
+}
+.modpacks-seletor-botao strong {
+    display: block;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.modpacks-seletor-botao small {
+    display: block;
+    margin-top: 4px;
+    font-size: 10px;
+    color: #888;
+}
+.modpacks-menu-instancias {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 30;
+    max-height: 250px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid #454545;
+    background: #202020;
+    box-shadow: 0 10px 28px #0008;
+}
+.modpacks-menu-instancias .modpacks-instancia {
+    width: 100%;
+    border-color: transparent;
+}
+.modpacks-menu-instancias .modpacks-instancia:focus-visible {
+    outline: 1px solid #57cbb0;
+    outline-offset: -1px;
+}
+.modpacks-instancia {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    min-width: 0;
+    text-align: left;
+    border: 1px solid #383838;
+    background: #242424;
+}
+.modpacks-instancia:hover {
+    border-color: #666;
+}
+.modpacks-instancia[aria-pressed='true'] {
+    border-color: #57cbb0;
+    background: #1b3028;
+}
+.modpacks-instancia img {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+.modpacks-instancia span {
+    min-width: 0;
+}
+.modpacks-instancia strong {
+    display: block;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.modpacks-instancia small {
+    display: block;
+    margin-top: 5px;
+    color: #888;
+    font-size: 11px;
+}
+
+.modpacks-anexar {
+    padding: 4px 0;
+    color: #888;
+    font-size: 11px;
+    text-align: left;
+}
+.modpacks-anexar:hover {
+    color: #57cbb0;
+}
+
+.modpacks-arquivos {
+    margin-top: 12px;
+    padding: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #363636;
+    background: #181818;
+}
+
+.modpacks-titulo-instancia {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.modpacks-titulo-instancia .modpacks-anexar {
+    max-width: 45%;
+}
+.modpacks-arquivos input:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.modpacks-projeto-cartao {
+    display: flex;
+    min-width: 0;
+    border: 1px solid #333;
+    background: #202020;
+}
+.modpacks-projeto-cartao .modpacks-projeto {
+    flex: 1;
+    border: 0;
+}
+.modpacks-excluir-projeto {
+    padding: 12px;
+    color: #888;
+}
+.modpacks-excluir-projeto:hover {
+    color: #f39595;
+    background: #2d1e1e;
+}
+.modpacks-excluir-projeto:disabled {
+    opacity: 0.4;
+}
+.modpacks-exclusao-configuracoes {
+    margin-top: 24px;
+    border-top: 1px solid #333;
+    padding-top: 24px;
+}
+.modpacks-confirmacao {
+    margin: auto;
+    width: min(440px, calc(100vw - 32px));
+    padding: 24px;
+    border: 1px solid #454545;
+    border-radius: 12px;
+    background: #1f1f1f;
+    color: #e8e8e8;
+}
+.modpacks-confirmacao::backdrop {
+    background: #000a;
+}
+.modpacks-confirmacao h3 {
+    font-size: 18px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+.modpacks-confirmacao > p {
+    margin: 16px 0 24px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #aaa;
+}
+.modpacks-confirmacao .modpacks-acoes {
+    flex-wrap: wrap;
+}

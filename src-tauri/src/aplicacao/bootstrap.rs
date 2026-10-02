@@ -94,6 +94,10 @@ pub fn run() {
             // Modpacks
             crate::comandos::modpacks::save_modpack_info,
             crate::comandos::modpacks::install_modpack_files,
+            crate::comandos::social_launcher::modpacks_dome::gerenciar_modpacks_dome,
+            crate::comandos::social_launcher::modpacks_dome::enviar_midia_modpack_dome,
+            crate::comandos::social_launcher::modpacks_dome::publicar_versao_modpack_dome,
+            crate::comandos::social_launcher::modpacks_dome::instalar_modpack_dome,
             crate::comandos::modpacks::get_modpack_info,
             crate::comandos::modpacks::check_modpack_updates,
             crate::comandos::novidades_launcher::get_launcher_news,
@@ -109,6 +113,7 @@ pub fn run() {
             crate::comandos::social_launcher::publicar_analise_modpack,
             crate::comandos::social_launcher::listar_analises_perfil,
             crate::comandos::social_launcher::listar_analises_projeto,
+            crate::comandos::social_launcher::gerenciar_favoritos_projetos,
             crate::comandos::social_launcher::curtir_analise_modpack,
             crate::comandos::social_launcher::excluir_analise_modpack,
             crate::comandos::social_launcher::save_launcher_social_profile,

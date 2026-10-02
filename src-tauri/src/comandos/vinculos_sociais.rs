@@ -82,6 +82,7 @@ fn preservar_pessoais(
     pasta: &Path,
     destino: &Path,
     gerenciados: &[ArquivoSocial],
+    arquivo_vinculo: &str,
 ) -> Result<(), String> {
     for entrada in std::fs::read_dir(pasta).map_err(|e| e.to_string())? {
         let entrada = entrada.map_err(|e| e.to_string())?;
@@ -103,6 +104,8 @@ fn preservar_pessoais(
             "crash-reports",
         ]
         .contains(&primeiro)
+            || (arquivo_vinculo == "modpack-dome.json"
+                && ["modpack-dome.json", "modpack.json"].contains(&primeiro))
             || gerenciados.iter().any(|a| a.caminho == nome)
         {
             continue;
@@ -114,7 +117,7 @@ fn preservar_pessoais(
         let alvo = destino.join(&relativo);
         if tipo.is_dir() {
             std::fs::create_dir_all(&alvo).map_err(|e| e.to_string())?;
-            preservar_pessoais(raiz, &entrada.path(), destino, gerenciados)?;
+            preservar_pessoais(raiz, &entrada.path(), destino, gerenciados, arquivo_vinculo)?;
         } else if tipo.is_file() && !alvo.exists() {
             std::fs::copy(entrada.path(), alvo).map_err(|e| e.to_string())?;
         }
@@ -124,15 +127,46 @@ fn preservar_pessoais(
 
 pub fn publicar_local(
     state: &LauncherState,
-    mut preparada: Instance,
+    preparada: Instance,
     vinculo: Option<VinculoSocial>,
 ) -> Result<Instance, String> {
-    let raiz = state.caminho_instancias()?;
-    let origem = preparada.path.clone();
     let existente = match &vinculo {
         Some(v) => buscar(state, &v.api_base_url, &v.compartilhamento_id)?,
         None => None,
     };
+    publicar_preparada(
+        state,
+        preparada,
+        existente,
+        vinculo,
+        "compartilhamento.json",
+    )
+}
+
+pub(crate) fn publicar_modpack_local(
+    state: &LauncherState,
+    preparada: Instance,
+    existente: Option<(Instance, VinculoSocial)>,
+    vinculo: VinculoSocial,
+) -> Result<Instance, String> {
+    publicar_preparada(
+        state,
+        preparada,
+        existente,
+        Some(vinculo),
+        "modpack-dome.json",
+    )
+}
+
+fn publicar_preparada(
+    state: &LauncherState,
+    mut preparada: Instance,
+    existente: Option<(Instance, VinculoSocial)>,
+    vinculo: Option<VinculoSocial>,
+    arquivo_vinculo: &str,
+) -> Result<Instance, String> {
+    let raiz = state.caminho_instancias()?;
+    let origem = preparada.path.clone();
     let mut backup = None;
     if let Some((antiga, anterior)) = &existente {
         if state.obter_pid_instancia(&antiga.id).is_some() {
@@ -140,29 +174,47 @@ pub fn publicar_local(
         }
         let novo = vinculo.as_ref().ok_or("Vínculo ausente.")?;
         let locais = pacotes_sociais::previa(antiga)?.arquivos;
-        let conflito = anterior.arquivos.iter().any(|a| {
-            let local = locais
-                .iter()
-                .find(|l| l.caminho == a.caminho)
-                .map(|l| &l.sha256);
-            let desejado = novo
-                .arquivos
-                .iter()
-                .find(|n| n.caminho == a.caminho)
-                .map(|n| &n.sha256);
-            local != Some(&a.sha256) && local != desejado
-        }) || novo.arquivos.iter().any(|n| {
-            !anterior.arquivos.iter().any(|a| a.caminho == n.caminho)
-                && locais
+        let mut conflitos: Vec<String> = anterior
+            .arquivos
+            .iter()
+            .filter(|a| {
+                let local = locais
                     .iter()
-                    .any(|l| l.caminho == n.caminho && l.sha256 != n.sha256)
-        });
-        if conflito && !novo.substituir_alteracoes_locais {
-            return Err(
-                "Arquivos locais foram alterados. Revise os conflitos antes de atualizar.".into(),
-            );
+                    .find(|l| l.caminho == a.caminho)
+                    .map(|l| &l.sha256);
+                let desejado = novo
+                    .arquivos
+                    .iter()
+                    .find(|n| n.caminho == a.caminho)
+                    .map(|n| &n.sha256);
+                local != Some(&a.sha256) && local != desejado
+            })
+            .map(|a| a.caminho.clone())
+            .collect();
+        conflitos.extend(
+            novo.arquivos
+                .iter()
+                .filter(|n| {
+                    !anterior.arquivos.iter().any(|a| a.caminho == n.caminho)
+                        && locais
+                            .iter()
+                            .any(|l| l.caminho == n.caminho && l.sha256 != n.sha256)
+                })
+                .map(|n| n.caminho.clone()),
+        );
+        if !conflitos.is_empty() && !novo.substituir_alteracoes_locais {
+            return Err(format!(
+                "Arquivos locais foram alterados.\n{}",
+                conflitos.join("\n")
+            ));
         }
-        preservar_pessoais(&antiga.path, &antiga.path, &origem, &anterior.arquivos)?;
+        preservar_pessoais(
+            &antiga.path,
+            &antiga.path,
+            &origem,
+            &anterior.arquivos,
+            arquivo_vinculo,
+        )?;
         preparada.id = antiga.id.clone();
         preparada.name = antiga.name.clone();
         preparada.created = antiga.created.clone();
@@ -187,7 +239,7 @@ pub fn publicar_local(
     .map_err(|e| e.to_string())?;
     if let Some(vinculo) = vinculo {
         std::fs::write(
-            origem.join("compartilhamento.json"),
+            origem.join(arquivo_vinculo),
             serde_json::to_vec(&vinculo).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
@@ -229,6 +281,56 @@ mod testes {
         )
         .unwrap();
         instancia
+    }
+
+    #[test]
+    fn publica_modpack_dome_com_vinculo_proprio_e_backup() {
+        let raiz =
+            std::env::temp_dir().join(format!("dome-publicacao-teste-{}", uuid::Uuid::new_v4()));
+        let _temporaria = pacotes_sociais::PastaTemporaria::nova(&std::env::temp_dir(), &{
+            std::fs::create_dir_all(&raiz).unwrap();
+            raiz.clone()
+        })
+        .unwrap();
+        let antiga = instancia(&raiz, "original", b"anterior");
+        let state = LauncherState {
+            account: Arc::new(Mutex::new(None)),
+            accounts: Arc::new(Mutex::new(Vec::new())),
+            processos_instancias: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            instances_path: Arc::new(Mutex::new(raiz.clone())),
+        };
+        let anterior = VinculoSocial {
+            compartilhamento_id: "projeto".into(),
+            api_base_url: "https://api.test".into(),
+            versao: 1,
+            arquivos: pacotes_sociais::previa(&antiga).unwrap().arquivos,
+            substituir_alteracoes_locais: false,
+        };
+        std::fs::write(antiga.path.join("options.txt"), b"opcoes pessoais").unwrap();
+        let preparada = instancia(&raiz.join("preparacao"), "nova", b"atualizado");
+        let novo = VinculoSocial {
+            arquivos: pacotes_sociais::previa(&preparada).unwrap().arquivos,
+            ..anterior.clone()
+        };
+        let instalada =
+            publicar_modpack_local(&state, preparada, Some((antiga, anterior)), novo).unwrap();
+        assert_eq!(instalada.id, "original");
+        assert!(instalada.path.join("modpack-dome.json").exists());
+        assert!(!instalada.path.join("compartilhamento.json").exists());
+        assert_eq!(
+            std::fs::read(instalada.path.join("options.txt")).unwrap(),
+            b"opcoes pessoais"
+        );
+        assert_eq!(
+            std::fs::read(instalada.path.join("mods/exemplo.jar")).unwrap(),
+            b"atualizado"
+        );
+        assert_eq!(
+            std::fs::read_dir(raiz.join(".social-backups"))
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[test]

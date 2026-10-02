@@ -1,3 +1,4 @@
+import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
 import { CompartilhamentosSociais } from './social/CompartilhamentosSociais';
 import { listen } from '@tauri-apps/api/event';
 import { RevisaoPacoteSocial, type TransferenciaSocial, type PreviaPacoteSocial } from './social/TransferenciasSociais';
@@ -50,7 +51,7 @@ interface AtividadeSocial {
   instanciaId?: string | null;
   instanciaNome?: string | null;
   servidor?: string | null;
-  source?: 'modrinth' | 'curseforge' | null;
+  source?: 'modrinth' | 'curseforge' | 'dome' | null;
   projectId?: string | null;
   versionId?: string | null;
   fileId?: string | null;
@@ -569,24 +570,10 @@ export default function SocialSidebar({
     return normalizarHandle(origem) ?? 'sem_handle';
   }, [editandoPerfil, handleEditavel, perfil?.handle]);
 
-  const uuidAvatarMinecraft = useMemo(() => {
-    if (!perfil) return null;
-
-    const contaAtivaUuid = normalizarUuid(usuarioMinecraft?.uuid);
-    if (
-      contaAtivaUuid &&
-      perfil.contasMinecraftVinculadas.some((conta) => normalizarUuid(conta.uuid) === contaAtivaUuid)
-    ) {
-      return contaAtivaUuid;
-    }
-
-    const contaPrincipalUuid = normalizarUuid(perfil.contaMinecraftPrincipalUuid);
-    if (contaPrincipalUuid) {
-      return contaPrincipalUuid;
-    }
-
-    return normalizarUuid(perfil.contasMinecraftVinculadas[0]?.uuid);
-  }, [perfil, usuarioMinecraft?.uuid]);
+  const uuidAvatarMinecraft = useMemo(
+    () => escolherUuidAvatar(perfil, usuarioMinecraft?.uuid),
+    [perfil, usuarioMinecraft?.uuid],
+  );
 
   const amigoSelecionado = useMemo(
     () => (amigoSelecionadoPerfilId ? amigos.find((a) => a.friendProfileId === amigoSelecionadoPerfilId) ?? null : null),
@@ -1842,6 +1829,18 @@ export default function SocialSidebar({
 
     try {
       setMensagemSync('Preparando instalacao exata do modpack...');
+      if (atividade.source === 'dome') {
+        const instanciaId = await invoke<string>('instalar_modpack_dome', {
+          apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+          projetoId: atividade.projectId,
+          versaoId: atividade.versionId,
+          instanciaId: null,
+          substituirAlteracoesLocais: false,
+        });
+        window.dispatchEvent(new CustomEvent(EVENTO_INSTANCIAS_ATUALIZADAS, { detail: { instanciaId } }));
+        setMensagemSync('Modpack Dome instalado. A instância está disponível na biblioteca.');
+        return;
+      }
       let versao: VersaoModrinth;
       if (atividade.source === 'modrinth') {
         const resposta = await fetch(`https://api.modrinth.com/v2/version/${atividade.versionId}`);
@@ -2000,7 +1999,7 @@ export default function SocialSidebar({
     const statusPerfil: StatusPresenca = aparecerOffline ? 'offline' : statusManual;
     const urlAvatarPerfil = perfil?.avatarPerfilUrl
       || (uuidAvatarMinecraft
-      ? `https://mc-heads.net/head/${uuidAvatarMinecraft}/64`
+      ? obterUrlCabecaMinecraft(uuidAvatarMinecraft)
       : perfil?.discordAvatar
         ? `https://cdn.discordapp.com/avatars/${perfil.discordId}/${perfil.discordAvatar}.png?size=64`
         : null);

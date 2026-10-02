@@ -1426,7 +1426,7 @@ export default function InstanceManager({
         ? Promise.resolve([] as FavoriteItem[])
         : hidratarDownloadsFavoritos(loadFavorites()
             .filter((item) => item.type === tipoConteudo)
-            .filter((item) => fontesAtivas.includes(item.source))
+            .filter((item) => item.source !== "dome" && fontesAtivas.includes(item.source))
             .filter((item) => !query.trim()
               || `${item.title} ${item.author}`.toLowerCase().includes(query.trim().toLowerCase())));
       const limiteConsulta = fontesConsultadas.length > 1
@@ -1511,6 +1511,7 @@ export default function InstanceManager({
             .some((chave) => chavesPrincipaisPorFonte[outraFonte].has(chave)));
       });
       const resultadosFavoritos = (await promessaFavoritos)
+        .filter((item): item is FavoriteItem & { source: BrowseSource } => item.source !== "dome")
         .map((item): VarianteResultadoBusca => ({
           id: item.id,
           title: item.title,

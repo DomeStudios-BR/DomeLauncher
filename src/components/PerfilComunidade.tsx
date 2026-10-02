@@ -1,3 +1,6 @@
+import { identificarCaptura, montarCapturasFavoritas, montarInstanciasFavoritas } from "../lib/personalizacaoPerfil";
+import type { CapturaPerfil } from "../lib/personalizacaoPerfil";
+import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as EventoPonteiroReact } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,14 +25,6 @@ interface PerfilComunidadeProps {
   onAbrirBiblioteca: () => void;
   onGerenciarContas: () => void;
   onAbrirPerfil: (perfilId: string) => void;
-}
-
-interface CapturaPerfil {
-  nome: string;
-  instanciaId: string;
-  instanciaNome: string;
-  criadaEm: string | null;
-  dadosUrl: string;
 }
 
 interface PaginaCapturasPerfil {
@@ -99,11 +94,6 @@ function sanitizarBio(texto?: string | null): string {
   const limpo = texto.trim();
   return limpo === "Criando mundos e explorando novas aventuras." ? "" : limpo;
 }
-
-function identificarCaptura(captura: CapturaPerfil): string {
-  return `${captura.instanciaId}:${captura.nome}`;
-}
-
 function carregarPersonalizacao(): Partial<PersonalizacaoPerfil> {
   try {
     return JSON.parse(localStorage.getItem(CHAVE_PERSONALIZACAO) ?? "{}") as Partial<PersonalizacaoPerfil>;
@@ -203,6 +193,7 @@ export default function PerfilComunidade({
   const [amigosDaSessao, setAmigosDaSessao] = useState<AmigoSocial[]>([]);
   const [carregandoPerfil, setCarregandoPerfil] = useState(Boolean(perfilId) || !cacheInicial);
   const [erroCarregamentoPerfil, setErroCarregamentoPerfil] = useState(false);
+  const [perfilRemotoCarregado, setPerfilRemotoCarregado] = useState(false);
   const [salvandoPerfil, setSalvandoPerfil] = useState(false);
   const [erroSalvarPerfil, setErroSalvarPerfil] = useState<string | null>(null);
   const [erroComentario, setErroComentario] = useState<string | null>(null);
@@ -268,6 +259,7 @@ export default function PerfilComunidade({
   };
   useEffect(() => {
     let ativo = true;
+    setPerfilRemotoCarregado(false);
     if (perfilId) {
       setCarregandoPerfil(true);
       setErroCarregamentoPerfil(false);
@@ -316,6 +308,7 @@ export default function PerfilComunidade({
             ? []
             : cacheInicial?.comentarios ?? [];
         setPerfil(perfilCompleto);
+        setPerfilRemotoCarregado(resultadoPerfil.status === "fulfilled");
         const amigosDoPerfil = perfilId ? (perfilCompleto.amigos ?? []) : [];
         if (resultadoAmigos?.status === "fulfilled" && resultadoAmigos.value) {
           const amigosAtuais = resultadoAmigos.value.amigos ?? [];
@@ -330,13 +323,7 @@ export default function PerfilComunidade({
         if (!perfilId) salvarCachePerfil(perfilCompleto, comentariosAtualizados);
         setAvatarPersonalizado(perfilCompleto.avatarPerfilUrl ?? null);
         setBannerPersonalizado(perfilCompleto.bannerPerfilUrl ?? null);
-        setBio(
-          sanitizarBio(
-            perfilId
-              ? perfilCompleto.bio
-              : (personalizacaoInicial.bio ?? perfilCompleto.bio),
-          ),
-        );
+        setBio(sanitizarBio(perfilCompleto.bio));
         setCapturasFavoritas(perfilCompleto.capturasFavoritas?.map((captura) => captura.id) ?? []);
         setInstanciasFavoritas(perfilCompleto.instanciasFavoritas?.map((instancia) => instancia.id) ?? []);
         setEmblemasExibidosIds((perfilCompleto.emblemasExibidos ?? perfilCompleto.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
@@ -394,6 +381,7 @@ export default function PerfilComunidade({
       ativo = false;
     };
   }, [assinaturaInstancias, comentarios, ehPerfilProprio, instances, perfil, sessaoSocial]);
+  useEffect(() => { setAnalises([]); }, [perfilId]);
   useEffect(() => {
     if (!sessaoSocial) return;
     let ativo = true;
@@ -405,8 +393,8 @@ export default function PerfilComunidade({
       .then((lista) => {
         if (ativo) setAnalises(Array.isArray(lista) ? lista : []);
       })
-      .catch(() => {
-        if (ativo) setAnalises([]);
+      .catch((erro) => {
+        if (ativo) console.error("Não foi possível carregar as análises do perfil:", erro);
       });
     return () => { ativo = false; };
   }, [sessaoSocial, perfilId]);
@@ -489,11 +477,18 @@ export default function PerfilComunidade({
         dadosUrl: captura.imagemUrl,
       }));
     }
-    if (capturasFavoritas.length === 0) return [];
-    return capturasFavoritas
-      .map((id) => capturasCarregadas.find((captura) => identificarCaptura(captura) === id))
-      .filter((captura): captura is CapturaPerfil => Boolean(captura))
-      .slice(0, 3);
+    return capturasFavoritas.slice(0, 3).flatMap((id) => {
+      const publicada = perfil?.capturasFavoritas?.find((captura) => captura.id === id);
+      if (publicada) return [{
+        nome: publicada.nome,
+        instanciaId: publicada.id,
+        instanciaNome: publicada.instanciaNome,
+        criadaEm: publicada.criadaEm ?? null,
+        dadosUrl: publicada.imagemUrl,
+      }];
+      const local = capturasCarregadas.find((captura) => identificarCaptura(captura) === id);
+      return local ? [local] : [];
+    });
   }, [capturas, capturasCarregadas, capturasFavoritas, editando, ehPerfilProprio, mostrandoTodasCapturas, perfil?.capturasFavoritas]);
   const instanciasExibidas = useMemo(() => {
     if (!ehPerfilProprio) {
@@ -509,11 +504,23 @@ export default function PerfilComunidade({
         path: "",
       } satisfies Instance));
     }
-    if (instanciasFavoritas.length === 0) return [];
-    return instanciasFavoritas
-      .map((id) => instances.find((instancia) => instancia.id === id))
-      .filter((instancia): instancia is Instance => Boolean(instancia))
-      .slice(0, 3);
+    return instanciasFavoritas.slice(0, 3).flatMap((id) => {
+      const local = instances.find((instancia) => instancia.id === id);
+      if (local) return [local];
+      const publicada = perfil?.instanciasFavoritas?.find((instancia) => instancia.id === id);
+      if (!publicada) return [];
+      return [{
+        id: publicada.id,
+        name: publicada.nome,
+        version: publicada.versao,
+        mc_type: publicada.carregador,
+        loader_type: publicada.carregador,
+        icon: publicada.iconeUrl ?? undefined,
+        last_played: publicada.ultimaVez ?? undefined,
+        tempo_total_jogado_segundos: publicada.horasJogadas * 3600,
+        path: "",
+      } satisfies Instance];
+    });
   }, [ehPerfilProprio, instances, instanciasFavoritas, perfil?.instanciasFavoritas]);
   const nomePerfil =
     perfil?.nomeSocial ||
@@ -521,18 +528,15 @@ export default function PerfilComunidade({
     perfil?.discordUsername ||
     "Seu perfil";
   const handlePerfil = perfil?.handle || "";
-  const uuidAvatar = perfil?.contaMinecraftPrincipalUuid || minecraftUuid;
-  const urlAvatar = (ehPerfilProprio ? avatarPersonalizado : perfil?.avatarPerfilUrl) || (uuidAvatar
-    ? `https://mc-heads.net/head/${uuidAvatar}/128`
-    : null);
+  const uuidAvatar = escolherUuidAvatar(perfil, ehPerfilProprio ? minecraftUuid : undefined);
+  const urlAvatar = (ehPerfilProprio ? avatarPersonalizado : perfil?.avatarPerfilUrl)
+    || obterUrlCabecaMinecraft(uuidAvatar, 256);
   const perfilAutenticado = sessaoSocial?.perfil;
   const statusPresenca = perfil ? obterStatusPresenca(perfil) : "offline";
-  const uuidAvatarAutor = perfilAutenticado?.contaMinecraftPrincipalUuid || minecraftUuid;
-  const urlAvatarAutor = uuidAvatarAutor
-    ? `https://mc-heads.net/head/${uuidAvatarAutor}/128`
-    : perfilAutenticado?.discordAvatar
+  const uuidAvatarAutor = escolherUuidAvatar(perfilAutenticado, minecraftUuid);
+  const urlAvatarAutor = obterUrlCabecaMinecraft(uuidAvatarAutor) ?? (perfilAutenticado?.discordAvatar
       ? `https://cdn.discordapp.com/avatars/${perfilAutenticado.discordId}/${perfilAutenticado.discordAvatar}.png?size=128`
-      : null;
+      : null);
   const lerImagem = (
     arquivo: File | undefined,
     concluir: (dados: string) => void,
@@ -788,7 +792,7 @@ export default function PerfilComunidade({
   }, [editando]);
   useEffect(() => () => encerrarArrastoRef.current?.(), []);
   const salvarPersonalizacao = async () => {
-    if (!sessaoSocial || salvandoPerfil) {
+    if (!sessaoSocial || !perfilRemotoCarregado || salvandoPerfil) {
       setErroSalvarPerfil("A sessão social ainda não está pronta. Tente novamente em instantes.");
       return;
     }
@@ -805,36 +809,23 @@ export default function PerfilComunidade({
         setSessaoSocial(sessaoAtual);
         await invoke("salvar_sessao_social_local", { sessao: JSON.stringify(sessaoAtual) });
       }
-      const capturasSelecionadas = capturasFavoritas
-        .map((id) => capturasCarregadas.find((captura) => identificarCaptura(captura) === id))
-        .filter((captura): captura is CapturaPerfil => Boolean(captura));
+      const capturasSelecionadas = montarCapturasFavoritas(
+        capturasFavoritas, perfil?.capturasFavoritas ?? [], capturasCarregadas,
+      );
+      const instanciasSelecionadas = montarInstanciasFavoritas(
+        instanciasFavoritas, perfil?.instanciasFavoritas ?? [], instances,
+      );
       const perfilAtualizado = await invoke<PerfilSocial>("save_launcher_profile_presentation", {
         apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
         accessToken: sessaoAtual.accessToken,
         apresentacao: {
           avatarDadosUrl: avatarPersonalizado,
           bannerDadosUrl: bannerPersonalizado,
-          capturas: capturasSelecionadas.map((captura) => ({ ...captura, id: identificarCaptura(captura) })),
+          capturas: capturasSelecionadas,
           emblemasExibidosIds,
           bio,
-          instanciasRecentes: atividadesRecentes.map((instancia) => ({
-            id: instancia.id,
-            nome: instancia.name,
-            versao: instancia.version,
-            carregador: instancia.loader_type || instancia.mc_type,
-            iconeUrl: instancia.icon ?? null,
-            horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
-            ultimaVez: instancia.last_played ?? null,
-          })),
-          instanciasFavoritas: instanciasExibidas.map((instancia) => ({
-            id: instancia.id,
-            nome: instancia.name,
-            versao: instancia.version,
-            carregador: instancia.loader_type || instancia.mc_type,
-            iconeUrl: instancia.icon ?? null,
-            horasJogadas: (instancia.tempo_total_jogado_segundos ?? 0) / 3600,
-            ultimaVez: instancia.last_played ?? null,
-          })),
+          instanciasRecentes: perfil?.instanciasRecentes ?? [],
+          instanciasFavoritas: instanciasSelecionadas,
         },
       });
       setPerfil(perfilAtualizado);
@@ -851,7 +842,7 @@ export default function PerfilComunidade({
         avatarPersonalizado: perfilAtualizado.avatarPerfilUrl ?? null,
         bannerPersonalizado: perfilAtualizado.bannerPerfilUrl ?? null,
         capturasFavoritas: perfilAtualizado.capturasFavoritas?.map((captura) => captura.id) ?? [],
-        instanciasFavoritas,
+        instanciasFavoritas: perfilAtualizado.instanciasFavoritas?.map((instancia) => instancia.id) ?? [],
         ordemSecoes,
       });
       salvarCachePerfil(perfilAtualizado, comentarios);
@@ -865,12 +856,12 @@ export default function PerfilComunidade({
   };
   const cancelarEdicao = () => {
     const salva = carregarPersonalizacao();
-    setBio(sanitizarBio(salva.bio ?? perfil?.bio));
+    setBio(sanitizarBio(perfil?.bio));
     setAvatarPersonalizado(perfil?.avatarPerfilUrl ?? null);
     setBannerPersonalizado(perfil?.bannerPerfilUrl ?? null);
     setCapturasFavoritas(perfil?.capturasFavoritas?.map((captura) => captura.id) ?? []);
     setEmblemasExibidosIds((perfil?.emblemasExibidos ?? perfil?.emblemas ?? []).slice(0, 4).map((emblema) => emblema.emblemaId));
-    setInstanciasFavoritas(salva.instanciasFavoritas ?? []);
+    setInstanciasFavoritas(perfil?.instanciasFavoritas?.map((instancia) => instancia.id) ?? []);
     setOrdemSecoes(
       salva.ordemSecoes?.length === ORDEM_PADRAO.length ? salva.ordemSecoes : ORDEM_PADRAO,
     );
@@ -1227,7 +1218,7 @@ export default function PerfilComunidade({
                   )}
                   <div className="cabecalho-acoes abaixo-emblemas">
                     {!editando && ehPerfilProprio && (
-                      <button className="botao primario" id="editarPerfil" type="button" onClick={() => setEditando(true)}>
+                      <button className="botao primario" id="editarPerfil" type="button" disabled={!perfilRemotoCarregado} onClick={() => setEditando(true)}>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10zM13.5 7l3.5 3.5" /></svg>
                         Editar perfil
                       </button>

@@ -1,3 +1,4 @@
+import { obterUrlCabecaMinecraft } from "./lib/avatarMinecraft";
 import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -38,6 +39,7 @@ import {
   type PublicacaoInstanciaSocial,
 } from "./lib/eventosTransferenciaSocial";
 import { solicitarNavegacaoInterna } from "./lib/navegacaoInterna";
+import { EVENTO_ABRIR_MEUS_MODPACKS } from "./lib/eventosModpacksDome";
 
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
@@ -51,6 +53,10 @@ const LibraryPage = lazy(() => import("./components/LibraryPage"));
 const SettingsPage = lazy(() => import("./components/Settings"));
 const InstanceManager = lazy(() => import("./components/InstanceManager"));
 const SocialSidebar = lazy(() => import("./components/SocialSidebar"));
+const PublicadorModpacksGlobal = lazy(() => import("./components/modpacks/PublicadorModpacks")
+  .then((modulo) => ({ default: modulo.PublicadorModpacksGlobal })));
+const PaginaMeusModpacks = lazy(() => import("./components/modpacks/PublicadorModpacks")
+  .then((modulo) => ({ default: modulo.PaginaMeusModpacks })));
 const VisualizacaoInstanciaSocial = lazy(() => import("./components/VisualizacaoInstanciaSocial"));
 const carregarProjetoDetalheModal = () => import("./components/ProjetoDetalheModal");
 const ProjetoDetalheModal = lazy(carregarProjetoDetalheModal);
@@ -83,7 +89,7 @@ interface ModpackInstancia {
   projectId: string;
   versionId: string;
   fileId?: string | null;
-  source: "modrinth" | "curseforge";
+  source: "modrinth" | "curseforge" | "dome";
   name: string;
   icon?: string | null;
   modificado?: boolean;
@@ -195,11 +201,12 @@ const CHAVE_ULTIMA_NOVIDADE_EXIBIDA = "dome:ultima-novidade-exibida";
 const INTERVALO_VERIFICACAO_INSTANCIAS_MS = 2 * 1000;
 const LIMITE_HISTORICO_NAVEGACAO = 50;
 type TipoExplorePresence = "modpack" | "mod" | "resourcepack" | "shader";
-type FonteExplorePresence = "modrinth" | "curseforge" | "ambas";
+type FonteExplorePresence = "modrinth" | "curseforge" | "dome" | "ambas";
 const TITULOS_ABA: Record<string, string> = {
   home: "Início",
   instances: "Biblioteca",
   explore: "Explorar",
+  "meus-modpacks": "Meus modpacks",
   favorites: "Favoritos",
   skins: "Skins",
   profile: "Perfil",
@@ -242,7 +249,8 @@ export default function App() {
     total?: number;
   } | null>(null);
   const [projetoDetalhe, setProjetoDetalhe] = useState<ProjetoConteudo | null>(null);
-  const [instalacaoDiretaProjetoId, setInstalacaoDiretaProjetoId] = useState<string | null>(null);
+  const [instalacoesDiretas, setInstalacoesDiretas] = useState<ProjetoConteudo[]>([]);
+  const [erroInstalacaoDireta, setErroInstalacaoDireta] = useState<string | null>(null);
   const [atividadeSocialDetalhe, setAtividadeSocialDetalhe] = useState<AmigoSocial | null>(null);
   const [abaOrigemProjeto, setAbaOrigemProjeto] = useState<AbaOrigemProjeto>("home");
   const [corDestaque, setCorDestaque] = useState("#10B981");
@@ -308,6 +316,12 @@ export default function App() {
     }));
     alterarAba(aba);
   }, [activeTab, alterarAba]);
+
+  useEffect(() => {
+    const abrir = () => navegarParaAba("meus-modpacks");
+    window.addEventListener(EVENTO_ABRIR_MEUS_MODPACKS, abrir);
+    return () => window.removeEventListener(EVENTO_ABRIR_MEUS_MODPACKS, abrir);
+  }, [navegarParaAba]);
 
   const voltarNavegacao = useCallback(() => {
     if (solicitarNavegacaoInterna(-1)) return;
@@ -820,7 +834,7 @@ export default function App() {
           detalhes: `Vendo ${prefixoTipo} ${contextoExplore.titulo}`,
           estado: contextoExplore.fonte === "ambas"
             ? "Fontes: Modrinth e CurseForge"
-            : `Fonte: ${contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
+            : `Fonte: ${contextoExplore.fonte === "dome" ? "Dome" : contextoExplore.fonte === "curseforge" ? "CurseForge" : "Modrinth"}`,
         };
       }
       return { detalhes: "Explorando conteúdo", estado: "Mods, modpacks e shaders" };
@@ -1207,7 +1221,7 @@ export default function App() {
             >
               {user ? (
                 <img
-                  src={`https://mc-heads.net/head/${user.uuid}/128`}
+                  src={obterUrlCabecaMinecraft(user.uuid) ?? undefined}
                   className="h-7 w-7 object-cover"
                   alt={user.name}
                 />
@@ -1251,7 +1265,7 @@ export default function App() {
                     <div className="mb-2 border border-emerald-400/30 bg-emerald-500/10 p-2">
                       <div className="flex items-center gap-2">
                         <img
-                          src={`https://mc-heads.net/head/${user.uuid}/64`}
+                          src={obterUrlCabecaMinecraft(user.uuid) ?? undefined}
                           alt={user.name}
                           className="h-8 w-8"
                         />
@@ -1299,7 +1313,7 @@ export default function App() {
                           <div key={conta.uuid} className="border border-white/10 bg-[#161616] p-2">
                             <div className="flex items-center gap-2">
                               <img
-                                src={`https://mc-heads.net/head/${conta.uuid}/64`}
+                                src={obterUrlCabecaMinecraft(conta.uuid) ?? undefined}
                                 alt={conta.name}
                                 className="h-7 w-7"
                               />
@@ -1553,14 +1567,27 @@ export default function App() {
                 exit={{ opacity: 0, x: -10 }}
               >
                 <Explore
+                  instancias={instances}
+                  instalacoesEmAndamento={instalacoesDiretas.map((item) => `${item.source}:${item.id}`)}
                   onAtualizarPresencaExplore={setContextoExplore}
                   onAbrirProjeto={(projeto, instalarAgora) => {
-                    setInstalacaoDiretaProjetoId(
-                      instalarAgora && projeto.project_type === "modpack" ? projeto.id : null
-                    );
+                    if (instalarAgora) {
+                      if (!user && projeto.project_type === "modpack") { setIsLoginOpen(true); return; }
+                      setErroInstalacaoDireta(null);
+                      setInstalacoesDiretas((atuais) => atuais.some((item) =>
+                        item.id === projeto.id && item.source === projeto.source)
+                        ? atuais : [...atuais, projeto]);
+                      return;
+                    }
                     abrirProjeto("explore", projeto);
                   }}
                 />
+              </motion.div>
+            )}
+
+            {activeTab === "meus-modpacks" && (
+              <motion.div key="meus-modpacks" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
+                <Suspense fallback={<EsqueletoAba />}><PaginaMeusModpacks /></Suspense>
               </motion.div>
             )}
 
@@ -1597,15 +1624,12 @@ export default function App() {
                   usuarioLogado={Boolean(user)}
                   onSolicitarLogin={() => setIsLoginOpen(true)}
                   onInstanciaCriada={() => void fetchInstances()}
-                  instalarAoAbrir={instalacaoDiretaProjetoId === projetoDetalhe.id}
-                  onInstalacaoAutomaticaIniciada={() => setInstalacaoDiretaProjetoId(null)}
                   rotuloAcao={
                     abaOrigemProjeto === "home" || abaOrigemProjeto === "instances"
                       ? "Baixar"
                       : "Instalar"
                   }
                   onVoltar={() => {
-                    setInstalacaoDiretaProjetoId(null);
                     navegarParaAba(abaOrigemProjeto);
                     setProjetoDetalhe(null);
                   }}
@@ -1853,6 +1877,8 @@ export default function App() {
         </div>
       </div>
 
+      <Suspense fallback={null}><PublicadorModpacksGlobal /></Suspense>
+
       {isLoginOpen && (
         <Suspense fallback={null}>
           <LoginModal
@@ -1881,6 +1907,31 @@ export default function App() {
             onCreated={() => void fetchInstances()}
           />
         </Suspense>
+      )}
+      <Suspense fallback={null}>
+        {instalacoesDiretas.map((projeto) => (
+          <ProjetoDetalheModal
+            key={`instalacao-${projeto.source}-${projeto.id}`}
+            projeto={projeto}
+            instancias={instances}
+            usuarioLogado={Boolean(user)}
+            instalarAoAbrir
+            somenteInstalacao
+            onInstanciaCriada={() => void fetchInstances()}
+            onVoltar={() => undefined}
+            onFinalizarInstalacaoDireta={(erro) => {
+              if (erro) setErroInstalacaoDireta(`${projeto.title}: ${erro}`);
+              setInstalacoesDiretas((atuais) => atuais.filter((item) =>
+                item.id !== projeto.id || item.source !== projeto.source));
+            }}
+          />
+        ))}
+      </Suspense>
+      {erroInstalacaoDireta && (
+        <div role="alert" className="fixed bottom-6 right-6 z-[100] max-w-md rounded-xl bg-red-950 p-4 text-sm">
+          <p>{erroInstalacaoDireta}</p>
+          <button className="mt-2 text-xs underline" onClick={() => setErroInstalacaoDireta(null)}>Fechar</button>
+        </div>
       )}
       <CreatingInstancesOverlay />
       <NovidadesVersaoModal novidades={novidadesVersao} onClose={fecharNovidadesVersao} />
