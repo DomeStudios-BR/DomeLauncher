@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useModpacksInstalados } from "../hooks/useModpacksInstalados";
+import { useFavoritosProjetos } from "../hooks/useFavoritosProjetos";
+import type { Instance } from "../hooks/useLauncher";
+import { obterTotalFavoritos } from "../services/favoritosProjetos";
 import {
   Search,
   Download,
@@ -17,10 +21,12 @@ import { EsqueletoExplore } from "./EsqueletoCarregamento";
 import { addFavorite, removeFavorite, isFavorite, type FavoriteItem } from "./Favorites";
 import type { ProjetoConteudo, TipoProjetoConteudo } from "./ProjetoDetalheModal";
 import { invoke } from "@tauri-apps/api/core";
+import { PublicadorModpacks } from "./modpacks/PublicadorModpacks";
+import { consultarModpacksDome } from "../services/modpacksDome";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
 
 type ContentType = "modpack" | "mod" | "resourcepack" | "shader";
-type Source = "modrinth" | "curseforge";
+type Source = "modrinth" | "curseforge" | "dome";
 type FontesFiltro = Record<Source, boolean>;
 type LoaderFiltro = "" | "fabric" | "forge" | "neoforge" | "quilt";
 type OrdenacaoBusca = "relevancia" | "popularidade" | "downloads" | "atualizados" | "recentes";
@@ -39,6 +45,7 @@ interface CategoriaBusca {
   nome: string;
   modrinth?: string;
   curseforge?: number;
+  dome?: string;
 }
 
 interface ManifestoVersoesMinecraft {
@@ -84,6 +91,7 @@ interface ResultadoBuscaApi {
   author?: string;
   downloadCount?: number;
   download_count?: number;
+  downloads?: number;
   follows?: number;
   projectType?: TipoProjetoConteudo;
   project_type?: TipoProjetoConteudo;
@@ -104,10 +112,11 @@ const LIMITE_RESULTADOS_CORRESPONDENCIA = 50;
 const LIMITE_VERSOES_FILTRO = 80;
 const LIMITE_CATEGORIAS_FILTRO = 10;
 const FONTE_PRIORITARIA: Source = "modrinth";
-const FONTES: Source[] = ["modrinth", "curseforge"];
+const FONTES: Source[] = ["dome", "modrinth", "curseforge"];
 const FONTES_INICIAIS: FontesFiltro = {
   modrinth: false,
   curseforge: false,
+  dome: false,
 };
 const LOADERS: Array<{ id: Exclude<LoaderFiltro, "">; nome: string }> = [
   { id: "fabric", nome: "Fabric" },
@@ -132,6 +141,7 @@ const normalizarIdentificador = (valor: string) =>
 
 const obterChavesCorrespondencia = (item: VarianteResultadoBusca) => {
   const chaves = [`id:${item.source}:${item.id}`];
+  if (item.source === "dome") return chaves;
   const slug = normalizarIdentificador(item.slug);
   const titulo = normalizarIdentificador(item.title);
 
@@ -156,18 +166,20 @@ const mapearResultadoBusca = (
         ? item.downloadCount
         : typeof item.download_count === "number"
           ? item.download_count
+          : typeof item.downloads === "number"
+            ? item.downloads
           : undefined,
     follows: typeof item.follows === "number" ? item.follows : undefined,
     project_type: (item.projectType || item.project_type || tipoPadrao) as TipoProjetoConteudo,
     slug: String(item.slug || "").trim() || id.trim(),
-    source: item.platform === "curseforge" ? "curseforge" : "modrinth",
+    source: item.platform === "dome" ? "dome" : item.platform === "curseforge" ? "curseforge" : "modrinth",
   };
 };
 
 const criarResultadoMesclado = (
   variantes: Partial<Record<Source, VarianteResultadoBusca>>
 ): SearchResult => {
-  const principal = variantes[FONTE_PRIORITARIA] || variantes.curseforge;
+  const principal = variantes.dome || variantes[FONTE_PRIORITARIA] || variantes.curseforge;
   if (!principal) throw new Error("Resultado sem plataforma de origem.");
 
   const fontes = FONTES.filter((fonte) => variantes[fonte]);
@@ -207,13 +219,17 @@ const mesclarResultados = (
   });
 
   const resultados = grupos.map(criarResultadoMesclado);
-  if (ordenacao === "downloads") {
+  if (ordenacao === "relevancia") {
+    resultados.sort((a, b) => Number(b.source === "dome") - Number(a.source === "dome"));
+  } else if (ordenacao === "downloads") {
     resultados.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
   }
   return resultados;
 };
 
 interface ExploreProps {
+  instancias: Instance[];
+  instalacoesEmAndamento: string[];
   onAtualizarPresencaExplore?: (contexto: {
     tipo: ContentType;
     fonte: Source | "ambas";
@@ -223,6 +239,8 @@ interface ExploreProps {
 }
 
 export default function Explore({
+  instancias,
+  instalacoesEmAndamento,
   onAtualizarPresencaExplore,
   onAbrirProjeto,
 }: ExploreProps) {
@@ -250,26 +268,32 @@ export default function Explore({
   const [erroCategorias, setErroCategorias] = useState(false);
   const [ordenacao, setOrdenacao] = useState<OrdenacaoBusca>("relevancia");
 
+  const modpacksInstalados = useModpacksInstalados(instancias);
+  const { contagens: contagensFavoritos, revisao: revisaoFavoritos } = useFavoritosProjetos(
+    results.flatMap((item) => item.fontes.map((source) => ({
+      source, projectId: item.variantes[source]?.id || item.id,
+    })))
+  );
   const hasLoaded = useRef(false);
   const lastSearch = useRef({ query: "", contentType: "", filtros: "" });
   const fimListaRef = useRef<HTMLDivElement | null>(null);
   const seletorVersaoRef = useRef<HTMLDivElement | null>(null);
   const seletorFontesRef = useRef<HTMLDivElement | null>(null);
   const seletorCategoriasRef = useRef<HTMLDivElement | null>(null);
-  const proximosOffsetsRef = useRef<Record<Source, number>>({ modrinth: 0, curseforge: 0 });
-  const temMaisPorFonteRef = useRef<Record<Source, boolean>>({ modrinth: true, curseforge: true });
+  const proximosOffsetsRef = useRef<Record<Source, number>>({ modrinth: 0, curseforge: 0, dome: 0 });
+  const temMaisPorFonteRef = useRef<Record<Source, boolean>>({ modrinth: true, curseforge: true, dome: true });
   const carregandoMaisRef = useRef(false);
   const geracaoBuscaRef = useRef(0);
 
   useEffect(() => {
     const favIds = new Set<string>();
     results.forEach((resultado) => {
-      if (resultado.fontes.some((fonte) => isFavorite(resultado.variantes[fonte]?.id || ""))) {
+      if (resultado.fontes.some((fonte) => isFavorite(resultado.variantes[fonte]?.id || "", fonte))) {
         favIds.add(resultado.id);
       }
     });
     setFavorites(favIds);
-  }, [results]);
+  }, [results, revisaoFavoritos]);
 
   useEffect(() => {
     let cancelado = false;
@@ -370,7 +394,7 @@ export default function Explore({
     const categoriasFiltradas = [...filtros.categoriasIncluidas, ...filtros.categoriasNegadas];
     const fontesConsultadas = categoriasFiltradas.length > 0
       ? fontesSelecionadas.filter((fonte) => categoriasFiltradas.some((categoria) => Boolean(categoria[fonte])))
-      : fontesSelecionadas;
+      : fontesSelecionadas.filter((fonte) => fonte !== "dome" || type === "modpack");
     const fontesIgnoradas = fontes.filter((fonte) => !fontesConsultadas.includes(fonte));
     if (fontesConsultadas.length === 0) {
       return {
@@ -385,7 +409,13 @@ export default function Explore({
       : LIMITE_RESULTADOS_POR_PAGINA;
     const respostas = await Promise.allSettled(
       fontesConsultadas.map(async (fonte) => {
-        const resultados = await invoke<ResultadoBuscaApi[]>("search_mods_online", {
+        const resultados = fonte === "dome"
+          ? await consultarModpacksDome<ResultadoBuscaApi[]>("buscar", undefined, {
+              busca: q, minecraft: filtros.versaoMinecraft, loader: filtros.loader,
+              offset: proximosOffsetsRef.current.dome, limit: limiteConsulta,
+              sort: filtros.ordenacao,
+            })
+          : await invoke<ResultadoBuscaApi[]>("search_mods_online", {
           query: q,
           platform: fonte,
           contentType: type,
@@ -440,11 +470,13 @@ export default function Explore({
     const chavesPrincipaisPorFonte: Record<Source, Set<string>> = {
       modrinth: new Set(),
       curseforge: new Set(),
+      dome: new Set(),
     };
     resultadosPrincipais.forEach((item) => {
       obterChavesCorrespondencia(item).forEach((chave) => chavesPrincipaisPorFonte[item.source].add(chave));
     });
     const resultadosComplementares = sucessos.flatMap(({ fonte, resultados }) => {
+      if (fonte === "dome") return [];
       const outraFonte: Source = fonte === "modrinth" ? "curseforge" : "modrinth";
       return resultados
         .slice(LIMITE_RESULTADOS_POR_PAGINA)
@@ -489,8 +521,8 @@ export default function Explore({
     lastSearch.current = { query: q, contentType: type, filtros: chaveFiltros };
     const geracao = geracaoBuscaRef.current + 1;
     geracaoBuscaRef.current = geracao;
-    proximosOffsetsRef.current = { modrinth: 0, curseforge: 0 };
-    temMaisPorFonteRef.current = { modrinth: true, curseforge: true };
+    proximosOffsetsRef.current = { modrinth: 0, curseforge: 0, dome: 0 };
+    temMaisPorFonteRef.current = { modrinth: true, curseforge: true, dome: true };
     carregandoMaisRef.current = false;
 
     setLoading(true);
@@ -631,6 +663,19 @@ export default function Explore({
     searchContent, versaoMinecraft]);
 
   useEffect(() => {
+    const recarregar = () => {
+      lastSearch.current = { query: "", contentType: "", filtros: "" };
+      void searchContent(query, contentType, {
+        fontes: fontesSelecionadas, versaoMinecraft, loader,
+        categoriasIncluidas, categoriasNegadas, ordenacao,
+      });
+    };
+    window.addEventListener("dome-modpacks-atualizados", recarregar);
+    return () => window.removeEventListener("dome-modpacks-atualizados", recarregar);
+  }, [query, contentType, fontesSelecionadas, versaoMinecraft, loader,
+    categoriasIncluidas, categoriasNegadas, ordenacao, searchContent]);
+
+  useEffect(() => {
     const fimLista = fimListaRef.current;
     if (!fimLista || loading || carregandoMais || falhaCarregamentoMais || !temMaisResultados) return;
 
@@ -663,7 +708,7 @@ export default function Explore({
     if (favorites.has(item.id)) {
       item.fontes.forEach((fonte) => {
         const id = item.variantes[fonte]?.id;
-        if (id) removeFavorite(id);
+        if (id) removeFavorite(id, fonte);
       });
       setFavorites((prev) => {
         const next = new Set(prev);
@@ -752,8 +797,8 @@ export default function Explore({
 
   const resumoFontes = (() => {
     if (fontesMarcadas.length === 0) return "Todas as fontes";
-    if (fontesMarcadas.length === 2) return "Modrinth e CurseForge";
-    return fontesMarcadas[0] === "modrinth" ? "Modrinth" : "CurseForge";
+    if (fontesMarcadas.length > 1) return `${fontesMarcadas.length} fontes selecionadas`;
+    return fontesMarcadas[0] === "dome" ? "Dome (beta)" : fontesMarcadas[0] === "modrinth" ? "Modrinth" : "CurseForge";
   })();
 
   const versoesMinecraftFiltradas = versoesMinecraft.filter((versao) =>
@@ -768,6 +813,7 @@ export default function Explore({
 
   return (
     <div className="space-y-6">
+      <PublicadorModpacks />
       <div className="flex flex-col gap-4">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={20} />
@@ -790,6 +836,9 @@ export default function Explore({
                   setCategoriasNegadas([]);
                   setSeletorCategoriasAberto(false);
                   setContentType(type.id);
+                  if (type.id !== "modpack") {
+                    setFontesSelecionadas((fontes) => ({ ...fontes, dome: false }));
+                  }
                 }}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all",
@@ -1023,9 +1072,9 @@ export default function Explore({
                             "bg-[#171717] p-1 shadow-2xl"
                           )}
                         >
-                          {FONTES.map((opcaoFonte) => {
+                          {FONTES.filter((fonte) => contentType === "modpack" || fonte !== "dome").map((opcaoFonte) => {
                             const ativa = fontesSelecionadas[opcaoFonte];
-                            const nomeFonte = opcaoFonte === "modrinth" ? "Modrinth" : "CurseForge";
+                            const nomeFonte = opcaoFonte === "dome" ? "Dome (beta)" : opcaoFonte === "modrinth" ? "Modrinth" : "CurseForge";
 
                             return (
                               <button
@@ -1234,7 +1283,18 @@ export default function Explore({
             animate={{ opacity: 1 }}
             className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3"
           >
-          {results.map((item, index) => (
+          {results.map((item, index) => {
+            const instalado = item.project_type === "modpack" && item.fontes.some((source) =>
+              modpacksInstalados.projetos.has(`${source}:${item.variantes[source]?.id || item.id}`));
+            const instalando = item.fontes.some((source) =>
+              instalacoesEmAndamento.includes(`${source}:${item.variantes[source]?.id || item.id}`));
+            const totalFavoritosDome = item.fontes.reduce((total, source) => {
+              const id = item.variantes[source]?.id || item.id;
+              const contagem = contagensFavoritos[`${source}:${id}`];
+              return total + obterTotalFavoritos({ source, projectId: id }, contagem);
+            }, 0);
+            const totalFavoritos = (item.variantes.modrinth?.follows || item.follows || 0) + totalFavoritosDome;
+            return (
             <motion.div
               key={item.chave}
               initial={{ opacity: 0 }}
@@ -1271,6 +1331,7 @@ export default function Explore({
                     <span className="truncate font-medium text-white/60">{item.author}</span>
                   </p>
                   <div className="flex flex-wrap gap-2">
+                    {item.fontes.includes("dome") && <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2 py-0.5 text-[10px] font-bold text-sky-300">Dome</span>}
                     {item.fontes.includes("modrinth") && (
                       <span
                         className={cn(
@@ -1310,10 +1371,10 @@ export default function Explore({
                       return qtdDownloads;
                     })()}
                   </div>
-                  {typeof item.follows === "number" && (
-                    <div className="flex items-center gap-1 text-[10px] font-bold" title="Seguidores no Modrinth">
+                  {(
+                    <div className="flex items-center gap-1 text-[10px] font-bold" title="Seguidores no Modrinth e favoritos no Dome">
                       <Heart size={12} className="text-pink-400/60" />
-                      {item.follows >= 1000 ? `${(item.follows / 1000).toFixed(1)}K` : item.follows}
+                      {totalFavoritos >= 1000 ? `${(totalFavoritos / 1000).toFixed(1)}K` : totalFavoritos}
                     </div>
                   )}
                 </div>
@@ -1334,19 +1395,22 @@ export default function Explore({
                     <Heart size={16} fill={favorites.has(item.id) ? "currentColor" : "none"} />
                   </button>
                   <button
+                    disabled={instalado || instalando
+                      || (item.project_type === "modpack" && modpacksInstalados.carregando)}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (instalado || instalando) return;
                       abrirDetalheProjeto(item, true);
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black"
+                    className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-50 disabled:cursor-default disabled:active:scale-100"
                   >
-                    <Download size={14} />
-                    Instalar
+                    {instalado ? <Check size={14} /> : <Download size={14} />}
+                    {instalado ? "Instalado" : instalando ? "Instalando..." : "Instalar"}
                   </button>
                 </div>
               </div>
             </motion.div>
-          ))}
+          ); })}
           </motion.div>
 
           <div ref={fimListaRef} className="flex h-12 items-center justify-center" aria-live="polite">

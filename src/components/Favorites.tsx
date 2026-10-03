@@ -21,6 +21,8 @@ import {
   SeparadorMenuContextual,
 } from "./context-menu/MenuContextual";
 
+import { registrarFavorito } from "../services/favoritosProjetos";
+
 export interface FavoriteItem {
   id: string;
   title: string;
@@ -28,7 +30,7 @@ export interface FavoriteItem {
   icon_url: string;
   author: string;
   type: "mod" | "modpack" | "resourcepack" | "shader";
-  source: "modrinth" | "curseforge";
+  source: "modrinth" | "curseforge" | "dome";
   slug: string;
   downloads?: number;
 }
@@ -50,19 +52,25 @@ export function saveFavorites(favorites: FavoriteItem[]) {
 
 export function addFavorite(item: FavoriteItem) {
   const favorites = loadFavorites();
-  if (!favorites.find((f) => f.id === item.id)) {
+  if (!favorites.find((f) => f.id === item.id && f.source === item.source)) {
     favorites.push(item);
     saveFavorites(favorites);
+    registrarFavorito({ source: item.source, projectId: item.id }, true);
   }
 }
 
-export function removeFavorite(id: string) {
-  const favorites = loadFavorites().filter((f) => f.id !== id);
+export function removeFavorite(id: string, source?: FavoriteItem["source"]) {
+  const anteriores = loadFavorites();
+  const removidos = anteriores.filter((f) => f.id === id && (!source || f.source === source));
+  const favorites = anteriores.filter((f) => !removidos.includes(f));
   saveFavorites(favorites);
+  removidos.forEach((item) => {
+    registrarFavorito({ source: item.source, projectId: item.id }, false);
+  });
 }
 
-export function isFavorite(id: string): boolean {
-  return loadFavorites().some((f) => f.id === id);
+export function isFavorite(id: string, source?: FavoriteItem["source"]): boolean {
+  return loadFavorites().some((f) => f.id === id && (!source || f.source === source));
 }
 
 const TYPE_ICONS = {
@@ -81,7 +89,7 @@ const TYPE_LABELS = {
 
 // Opções de filtro por tipo
 type FiltroTipo = "todos" | "mod" | "modpack" | "resourcepack" | "shader";
-type FiltroFonte = "todos" | "modrinth" | "curseforge";
+type FiltroFonte = "todos" | "modrinth" | "curseforge" | "dome";
 
 const FILTROS_TIPO: { id: FiltroTipo; label: string; icon: typeof Package }[] = [
   { id: "todos", label: "Todos", icon: Heart },
@@ -234,6 +242,15 @@ export default function Favorites({ onAbrirProjeto }: FavoritesProps) {
 
           {/* Filtro por fonte */}
           <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+            <button
+              onClick={() => setFiltroFonte("dome")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                filtroFonte === "dome" ? "bg-sky-400 text-black" : "text-white/40 hover:text-white"
+              )}
+            >
+              Dome {contadores.dome ? `(${contadores.dome})` : ""}
+            </button>
             <button
               onClick={() => setFiltroFonte("todos")}
               className={cn(

@@ -1,7 +1,8 @@
+import { DescricaoProjetoMarkdown } from './modpacks/DescricaoProjetoMarkdown';
+import { consultarModpacksDome } from "../services/modpacksDome";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeRaw from "rehype-raw";
+import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
@@ -15,6 +16,9 @@ import {
   Search,
 } from "../iconesPixelados";
 import { cn } from "../lib/utils";
+import { useFavoritosProjetos } from "../hooks/useFavoritosProjetos";
+import { obterTotalFavoritos } from "../services/favoritosProjetos";
+import { ModalSocial } from "./social/ModalSocial";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
 import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
 import type { AnaliseModpack, SessaoSocial } from "./social/tiposSocial";
@@ -29,7 +33,7 @@ import {
 } from "../stores/creatingInstances";
 
 export type TipoProjetoConteudo = "modpack" | "mod" | "resourcepack" | "shader";
-export type FonteProjetoConteudo = "modrinth" | "curseforge";
+export type FonteProjetoConteudo = "modrinth" | "curseforge" | "dome";
 export type AbaOrigemProjeto =
   | "home"
   | "explore"
@@ -77,6 +81,8 @@ interface VersaoProjeto {
   loaders: string[];
   date_published?: string;
   files: ArquivoProjeto[];
+  changelog?: string;
+  version_type?: string;
 }
 
 interface CompatibilidadeInstancia {
@@ -119,75 +125,14 @@ interface ProjetoDetalhePaginaProps {
   onSolicitarLogin?: () => void;
   onInstanciaCriada?: () => void;
   instalarAoAbrir?: boolean;
+  somenteInstalacao?: boolean;
+  onFinalizarInstalacaoDireta?: (erro?: string) => void;
   onInstalacaoAutomaticaIniciada?: () => void;
   onVoltar: () => void;
   rotuloAcao?: string;
 }
 
 const ORDEM_LOADER_MODPACK = ["fabric", "forge", "neoforge"] as const;
-
-function urlHttpsSegura(valor?: string): string | undefined {
-  if (!valor) return undefined;
-  try {
-    const url = new URL(valor);
-    return url.protocol === "https:" ? url.toString() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-const COMPONENTES_MARKDOWN: Components = {
-  h1: ({ children }) => (
-    <h1 className="mt-6 text-2xl font-black text-white first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="mt-5 text-xl font-black text-white first:mt-0">{children}</h2>
-  ),
-  h3: ({ children }) => (
-    <h3 className="mt-4 text-lg font-bold text-white first:mt-0">{children}</h3>
-  ),
-  p: ({ children }) => <p className="leading-7 text-white/85">{children}</p>,
-  strong: ({ children }) => <strong className="font-black text-white">{children}</strong>,
-  em: ({ children }) => <em className="text-white/80 italic">{children}</em>,
-  a: ({ href, children }) => (
-    <a
-      href={urlHttpsSegura(href)}
-      target="_blank"
-      rel="noreferrer"
-      className="text-sky-300 underline underline-offset-2 hover:text-sky-200"
-    >
-      {children}
-    </a>
-  ),
-  ul: ({ children }) => <ul className="list-disc space-y-1 pl-6 text-white/85">{children}</ul>,
-  ol: ({ children }) => (
-    <ol className="list-decimal space-y-1 pl-6 text-white/85">{children}</ol>
-  ),
-  li: ({ children }) => <li className="leading-6">{children}</li>,
-  blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-white/20 pl-4 text-white/70 italic">
-      {children}
-    </blockquote>
-  ),
-  code: ({ children, className }) => (
-    <code className={cn("rounded bg-black/45 px-1.5 py-0.5 text-xs text-white", className)}>
-      {children}
-    </code>
-  ),
-  pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/45 p-3 text-xs text-white">
-      {children}
-    </pre>
-  ),
-  img: ({ src, alt }) => (
-    <img
-      src={urlHttpsSegura(src) || ""}
-      alt={alt || ""}
-      loading="lazy"
-      className="mx-auto my-3 block h-auto max-h-[420px] w-auto max-w-full rounded-xl border border-white/10 bg-black/35 object-contain"
-    />
-  ),
-};
 
 function normalizarLoader(loader?: string | null): string | null {
   if (!loader) return null;
@@ -480,6 +425,8 @@ export default function ProjetoDetalheModal({
   onSolicitarLogin,
   onInstanciaCriada,
   instalarAoAbrir = false,
+  somenteInstalacao = false,
+  onFinalizarInstalacaoDireta,
   onInstalacaoAutomaticaIniciada,
   onVoltar,
   rotuloAcao = "Instalar",
@@ -493,15 +440,23 @@ export default function ProjetoDetalheModal({
   const [detalhesProjeto, setDetalhesProjeto] = useState<Partial<ProjetoConteudo> | null>(null);
   const [carregandoDetalhes, setCarregandoDetalhes] = useState(false);
   const [erroDetalhes, setErroDetalhes] = useState<string | null>(null);
-  const [carregandoVersoes, setCarregandoVersoes] = useState(false);
+  const [carregandoVersoes, setCarregandoVersoes] = useState(true);
   const [conteudosInstalados, setConteudosInstalados] = useState<ConteudoInstaladoDetalhado[]>([]);
   const [modpacksInstalados, setModpacksInstalados] = useState<ModpackInstalado[]>([]);
   const [revisaoConteudoInstalado, setRevisaoConteudoInstalado] = useState(0);
+  const [verificandoInstalacao, setVerificandoInstalacao] = useState(true);
   const [pesquisaInstancia, setPesquisaInstancia] = useState("");
   const [instalando, setInstalando] = useState(false);
   const [sucesso, setSucesso] = useState(false);
+  const [destinoConfirmado, setDestinoConfirmado] = useState(projeto.project_type === "modpack");
   const [erro, setErro] = useState<string | null>(null);
-  const [favorito, setFavorito] = useState(() => isFavorite(projeto.id));
+  const [favorito, setFavorito] = useState(() => isFavorite(projeto.id, projeto.source));
+  const { contagens: contagensFavoritos, revisao: revisaoFavoritos } = useFavoritosProjetos(
+    somenteInstalacao ? [] : [{ source: projeto.source, projectId: projeto.id }]
+  );
+  useEffect(() => setFavorito(isFavorite(projeto.id, projeto.source)), [projeto.id, revisaoFavoritos]);
+  const contagemDome = contagensFavoritos[`${projeto.source}:${projeto.id}`];
+  const totalFavoritosDome = obterTotalFavoritos({ source: projeto.source, projectId: projeto.id }, contagemDome);
   const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
   const [indiceAnalise, setIndiceAnalise] = useState(0);
   const [erroAnalises, setErroAnalises] = useState<string | null>(null);
@@ -510,6 +465,7 @@ export default function ProjetoDetalheModal({
   const instalacaoAutomaticaIniciada = useRef(false);
 
   useEffect(() => {
+    if (somenteInstalacao) return;
     const voltarComEscape = (evento: KeyboardEvent) => {
       if (evento.key !== "Escape" || evento.defaultPrevented || evento.repeat) return;
       evento.preventDefault();
@@ -518,14 +474,15 @@ export default function ProjetoDetalheModal({
 
     window.addEventListener("keydown", voltarComEscape);
     return () => window.removeEventListener("keydown", voltarComEscape);
-  }, [onVoltar]);
+  }, [onVoltar, somenteInstalacao]);
 
   useEffect(() => {
+    if (somenteInstalacao) return;
     let cancelado = false;
     setAbaConteudo("descricao");
     setInstanciaSelecionadaId(instanciaInicialId ?? null);
     setVersaoSelecionadaId(projeto.versaoInicialId ?? null);
-    setFavorito(isFavorite(projeto.id));
+    setFavorito(isFavorite(projeto.id, projeto.source));
     setPesquisaInstancia("");
     setVersoesProjeto([]);
     setDetalhesProjeto(null);
@@ -535,7 +492,9 @@ export default function ProjetoDetalheModal({
     const carregarDetalhes = async () => {
       try {
         let detalhes: Partial<ProjetoConteudo> | null = null;
-        if (projeto.source === "modrinth") {
+        if (projeto.source === "dome") {
+          detalhes = await consultarModpacksDome<Partial<ProjetoConteudo>>("detalhes", projeto.id);
+        } else if (projeto.source === "modrinth") {
           detalhes = await buscarDetalhesProjetoModrinth(projeto.id);
         } else if (projeto.source === "curseforge") {
           detalhes = await buscarDetalhesProjetoCurseforge(projeto.id);
@@ -556,7 +515,7 @@ export default function ProjetoDetalheModal({
     return () => {
       cancelado = true;
     };
-  }, [instanciaInicialId, projeto.id, projeto.source, projeto.versaoInicialId]);
+  }, [instanciaInicialId, projeto.id, projeto.source, projeto.versaoInicialId, somenteInstalacao]);
 
   useEffect(() => {
     setAnalises([]);
@@ -595,7 +554,7 @@ export default function ProjetoDetalheModal({
         if (!cancelado) setErroAnalises(extrairMensagemErro(e, "Não foi possível carregar as análises."));
       }
     };
-    void carregar();
+    if (!somenteInstalacao && projeto.source !== "dome") void carregar();
     return () => {
       cancelado = true;
     };
@@ -648,6 +607,7 @@ export default function ProjetoDetalheModal({
     let cancelado = false;
     if (!instanciaSelecionada || projeto.project_type === "modpack") {
       setConteudosInstalados([]);
+      if (projeto.project_type !== "modpack") setVerificandoInstalacao(false);
       return;
     }
 
@@ -658,6 +618,7 @@ export default function ProjetoDetalheModal({
         : "shaders";
 
     const carregarConteudoInstalado = async () => {
+      setVerificandoInstalacao(true);
       try {
         const conteudos = await invoke<ConteudoInstaladoDetalhado[]>(
           "obter_conteudo_instalado_detalhado",
@@ -672,6 +633,8 @@ export default function ProjetoDetalheModal({
           console.error("Erro ao verificar versões instaladas:", erroLeitura);
           setConteudosInstalados([]);
         }
+      } finally {
+        if (!cancelado) setVerificandoInstalacao(false);
       }
     };
 
@@ -689,6 +652,7 @@ export default function ProjetoDetalheModal({
     }
 
     const carregarModpacksInstalados = async () => {
+      setVerificandoInstalacao(true);
       const resultados = await Promise.all(
         instancias.map(async (instancia) => {
           try {
@@ -701,6 +665,7 @@ export default function ProjetoDetalheModal({
         })
       );
       if (cancelado) return;
+      setVerificandoInstalacao(false);
       setModpacksInstalados(
         resultados.filter(
           (info): info is ModpackInstalado =>
@@ -725,7 +690,9 @@ export default function ProjetoDetalheModal({
 
     const carregar = async () => {
       try {
-        const versoes = projeto.source === "modrinth"
+        const versoes = projeto.source === "dome"
+          ? await consultarModpacksDome<VersaoProjeto[]>("versoes", projeto.id)
+          : projeto.source === "modrinth"
           ? await buscarVersoesProjetoModrinth(projeto.id)
           : await buscarVersoesProjetoCurseforge(
               projeto.id,
@@ -918,7 +885,7 @@ export default function ProjetoDetalheModal({
 
   const alternarFavorito = () => {
     if (favorito) {
-      removeFavorite(projeto.id);
+      removeFavorite(projeto.id, projeto.source);
       setFavorito(false);
       return;
     }
@@ -1029,8 +996,12 @@ export default function ProjetoDetalheModal({
     );
   }, [conteudosInstalados, modpacksInstalados, projeto.project_type, versoesExibidas]);
 
+  const projetoJaInstalado = projeto.project_type === "modpack"
+    ? instanciaInicialId ? versoesInstaladasIds.has(versaoSelecionadaId || "") : modpacksInstalados.length > 0
+    : versoesInstaladasIds.has(versaoSelecionadaId || "");
+
   const instalarProjeto = async () => {
-    if (instalando) return;
+    if (instalando || verificandoInstalacao || projetoJaInstalado) return;
 
     if (projeto.project_type === "modpack") {
       if (!usuarioLogado) {
@@ -1102,6 +1073,35 @@ export default function ProjetoDetalheModal({
           ),
         };
         addCreatingInstance(criandoInstancia);
+
+        if (projeto.source === "dome") {
+          updateCreatingInstance(idOverlayCriacao, {
+            progressoIndeterminado: true,
+            message: instanciaModpackAlvo ? "Preparando atualização do modpack Dome..." : "Instalando modpack Dome...",
+          });
+          const parametros = {
+            apiBaseUrl: CONFIGURACAO_SOCIAL.apiBaseUrl,
+            projetoId: projeto.id,
+            versaoId,
+            instanciaId: instanciaModpackAlvo?.id ?? null,
+            substituirAlteracoesLocais: false,
+          };
+          try {
+            await invoke("instalar_modpack_dome", parametros);
+          } catch (falha) {
+            const mensagem = extrairMensagemErro(falha, "Falha ao instalar modpack Dome.");
+            if (!mensagem.startsWith("Arquivos locais foram alterados.")) throw falha;
+            if (!window.confirm(`${mensagem}\n\nSubstituir os arquivos alterados? A instância anterior será guardada em backup.`)) {
+              throw new Error("Atualização cancelada. Os arquivos locais foram preservados.");
+            }
+            await invoke("instalar_modpack_dome", { ...parametros, substituirAlteracoesLocais: true });
+          }
+          completeCreatingInstance(idOverlayCriacao);
+          setInstalando(false);
+          setSucesso(true);
+          onInstanciaCriada?.();
+          return;
+        }
 
         let loaderVersion: string | undefined;
         if (!instanciaModpackAlvo && loaderSelecionado !== "vanilla") {
@@ -1244,7 +1244,8 @@ export default function ProjetoDetalheModal({
 
   useEffect(() => {
     if (!instalarAoAbrir || instalacaoAutomaticaIniciada.current) return;
-    if (projeto.project_type !== "modpack" || carregandoVersoes) return;
+    if (!destinoConfirmado || carregandoVersoes || verificandoInstalacao) return;
+    if (projetoJaInstalado) { onFinalizarInstalacaoDireta?.(); return; }
     if (!versaoSelecionada || !arquivoVersaoSelecionada) return;
 
     instalacaoAutomaticaIniciada.current = true;
@@ -1254,10 +1255,58 @@ export default function ProjetoDetalheModal({
     arquivoVersaoSelecionada,
     carregandoVersoes,
     instalarAoAbrir,
+    destinoConfirmado,
+    verificandoInstalacao,
+    projetoJaInstalado,
+    onFinalizarInstalacaoDireta,
     onInstalacaoAutomaticaIniciada,
     projeto.project_type,
     versaoSelecionada,
   ]);
+
+  useEffect(() => {
+    if (!somenteInstalacao || instalando) return;
+    if (sucesso) onFinalizarInstalacaoDireta?.();
+    else if (erro) onFinalizarInstalacaoDireta?.(erro);
+    else if (destinoConfirmado && !carregandoVersoes && versoesExibidas.length === 0) {
+      onFinalizarInstalacaoDireta?.("Nenhuma versão compatível disponível para instalação.");
+    }
+  }, [somenteInstalacao, sucesso, erro, instalando, carregandoVersoes,
+    destinoConfirmado, versoesExibidas.length, onFinalizarInstalacaoDireta]);
+
+  if (somenteInstalacao) {
+    if (destinoConfirmado) return null;
+    return (
+      <ModalSocial onFechar={() => onFinalizarInstalacaoDireta?.()}>
+        <div role="dialog" aria-modal="true" aria-label={`Instalar ${projeto.title}`}
+          className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#171717] p-5 text-white">
+          <h2 className="mb-4 truncate font-bold">{projeto.title}</h2>
+          <label className="mb-2 block text-xs text-white/60" htmlFor="destino-conteudo">Instância de destino</label>
+          <select id="destino-conteudo" autoFocus value={instanciaSelecionadaId || ""}
+            onChange={(evento) => setInstanciaSelecionadaId(evento.target.value)}
+            className="w-full rounded-lg bg-black/40 p-3 text-sm">
+            {!instancias.length && <option value="">Nenhuma instância instalada</option>}
+            {instancias.map((instancia) => <option key={instancia.id} value={instancia.id}>
+              {instancia.name}
+            </option>)}
+          </select>
+          {!carregandoVersoes && !versoesExibidas.length && (
+            <p className="mt-3 text-xs text-white/50">Nenhuma versão compatível com esta instância.</p>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <button className="rounded-lg px-3 py-2 text-xs" onClick={() => onFinalizarInstalacaoDireta?.()}>
+              Cancelar
+            </button>
+            <button disabled={carregandoVersoes || verificandoInstalacao || !versaoSelecionada || projetoJaInstalado}
+              className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-black disabled:opacity-40"
+              onClick={() => setDestinoConfirmado(true)}>
+              {projetoJaInstalado ? "Instalado" : carregandoVersoes ? "Carregando..." : "Instalar"}
+            </button>
+          </div>
+        </div>
+      </ModalSocial>
+    );
+  }
 
   return (
     <div className="min-h-full space-y-6">
@@ -1297,6 +1346,8 @@ export default function ProjetoDetalheModal({
                     onClick={instalarProjeto}
                     disabled={
                       instalando ||
+                      projetoJaInstalado ||
+                      verificandoInstalacao ||
                       carregandoVersoes ||
                       !versaoSelecionada ||
                       !arquivoVersaoSelecionada ||
@@ -1319,7 +1370,7 @@ export default function ProjetoDetalheModal({
                         <Loader2 size={13} className="animate-spin" />
                         Instalando...
                       </>
-                    ) : sucesso ? (
+                    ) : sucesso || projetoJaInstalado ? (
                       <>
                         <Check size={13} />
                         Instalado
@@ -1346,10 +1397,10 @@ export default function ProjetoDetalheModal({
                     {formatarNumero(projetoExibicao.downloads)}
                   </span>
                 )}
-                {typeof projetoExibicao.follows === "number" && (
+                {(
                   <span className="flex items-center gap-1">
-                    <Check size={11} />
-                    {formatarNumero(projetoExibicao.follows)}
+                    <Heart size={11} />
+                    {formatarNumero((projetoExibicao.follows || 0) + totalFavoritosDome)}
                   </span>
                 )}
                 <span className="uppercase">{projetoExibicao.project_type}</span>
@@ -1522,13 +1573,10 @@ export default function ProjetoDetalheModal({
                 {erroDetalhes && <p className="text-xs text-orange-200">{erroDetalhes}</p>}
                 {descricaoCompletaProjeto ? (
                   <article className="space-y-4 rounded-2xl border border-white/10 bg-black/25 p-4">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw, rehypeSanitize]}
-                      components={COMPONENTES_MARKDOWN}
-                    >
-                      {descricaoCompletaProjeto}
-                    </ReactMarkdown>
+                    <DescricaoProjetoMarkdown
+                      conteudo={descricaoCompletaProjeto}
+                      formatoEditor={projetoExibicao.source === "dome"}
+                    />
                   </article>
                 ) : (
                   <article className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/75 leading-7">
@@ -1618,10 +1666,20 @@ export default function ProjetoDetalheModal({
                           <p className="mt-0.5 text-white/55">
                             Loader: {(versao.loaders || []).join(", ") || "não informado"}
                           </p>
+                          {projeto.source === "dome" && versao.version_type && (
+                            <p className="mt-1 text-sky-300">{versao.version_type}</p>
+                          )}
                         </button>
                       );
                     })}
                   </div>
+                  {projeto.source === "dome" && versaoSelecionada?.changelog && (
+                    <article className="mt-4 rounded-xl border border-white/10 p-4 text-sm text-white/70">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                        {versaoSelecionada.changelog}
+                      </ReactMarkdown>
+                    </article>
+                  )}
                 </div>
               ))}
 

@@ -20,7 +20,7 @@ export interface AtividadeSocial {
   instanciaId?: string | null;
   instanciaNome?: string | null;
   servidor?: string | null;
-  source?: 'modrinth' | 'curseforge' | null;
+  source?: 'modrinth' | 'curseforge' | 'dome' | null;
   projectId?: string | null;
   versionId?: string | null;
   fileId?: string | null;
@@ -235,7 +235,7 @@ export interface AnaliseModpack {
   autorPerfilId: string;
   autorNome: string;
   autorHandle?: string | null;
-  source: "modrinth" | "curseforge";
+  source: "modrinth" | "curseforge" | "dome";
   projectId: string;
   projectNome: string;
   projectIcon?: string | null;

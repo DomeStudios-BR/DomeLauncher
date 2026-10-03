@@ -60,6 +60,7 @@ import {
   type PublicacaoInstanciaSocial,
 } from "../lib/eventosTransferenciaSocial";
 import ModalAnaliseModpack from "./social/ModalAnaliseModpack";
+import { EVENTO_PUBLICAR_MODPACK_DOME } from "../lib/eventosModpacksDome";
 import MigrarVersaoInstanciaModal from "./MigrarVersaoInstanciaModal";
 import ModalExclusaoInstancia from "./ModalExclusaoInstancia";
 import type { InstanciaParaExclusao } from "../stores/exclusoesInstancias";
@@ -102,7 +103,7 @@ interface ModpackInstalado {
   author: string;
   icon?: string | null;
   slug: string;
-  source: "modrinth" | "curseforge";
+  source: "modrinth" | "curseforge" | "dome";
   installedVersion: string;
 }
 
@@ -1503,7 +1504,7 @@ export default function LibraryPage({
                       Trocar versão
                     </ItemMenuContextual>
                   )}
-                  {modpack && (
+                  {modpack && modpack.source !== "dome" && (
                     <ItemMenuContextual icone={<Star size={13} />} onClick={() => {
                       setMenuContexto(null);
                       setModalAnalise({ instancia, modpack });
@@ -1530,18 +1531,29 @@ export default function LibraryPage({
                   }}>
                     Abrir pasta
                   </ItemMenuContextual>
+                  {!modpack && (
                   <ItemMenuContextual icone={<Globe size={13} />} onClick={() => {
                     setMenuContexto(null);
-                    window.dispatchEvent(new CustomEvent(EVENTO_PUBLICAR_INSTANCIA_SOCIAL, {
+                    window.dispatchEvent(new CustomEvent(EVENTO_PUBLICAR_MODPACK_DOME, {
                       detail: {
                         instanciaId: instancia.id,
                         nome: instancia.name,
-                        publicar: !publicacoesPorInstancia[instancia.id],
                       },
                     }));
                   }}>
-                    {publicacoesPorInstancia[instancia.id] ? "Tornar privada" : "Tornar pública"}
+                    Publicar modpack
                   </ItemMenuContextual>
+                  )}
+                  {publicacoesPorInstancia[instancia.id] && (
+                    <ItemMenuContextual icone={<Globe size={13} />} onClick={() => {
+                      setMenuContexto(null);
+                      window.dispatchEvent(new CustomEvent(EVENTO_PUBLICAR_INSTANCIA_SOCIAL, {
+                        detail: { instanciaId: instancia.id, nome: instancia.name, publicar: false },
+                      }));
+                    }}>
+                      Tornar privada para amigos
+                    </ItemMenuContextual>
+                  )}
                   <ItemMenuContextual
                     icone={exportandoId === instancia.id
                       ? <Loader2 size={13} className="animate-spin" />
@@ -1685,7 +1697,7 @@ export default function LibraryPage({
         onMigrada={onAtualizarInstancias}
       />
 
-      {modalAnalise && (
+      {modalAnalise && modalAnalise.modpack.source !== "dome" && (
         <ModalAnaliseModpack
           modpack={{
             projectId: modalAnalise.modpack.projectId,

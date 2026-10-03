@@ -1,3 +1,5 @@
+#[path = "modpacks_dome.rs"]
+pub(crate) mod modpacks_dome;
 #[path = "operacoes_sociais.rs"]
 pub(crate) mod operacoes_sociais;
 #[path = "pacotes_sociais.rs"]
@@ -299,8 +301,11 @@ pub struct InstanciaPublicaPerfilLauncherApi {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PayloadSalvarPerfilSocialLauncherApi {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub nome_social: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conta_minecraft_principal_uuid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bio: Option<String>,
@@ -1805,6 +1810,83 @@ pub async fn listar_analises_perfil(
         .map_err(|e| e.to_string())
 }
 
+fn validar_projeto_favorito(dados: &serde_json::Value) -> Result<(), String> {
+    if !matches!(
+        dados["source"].as_str(),
+        Some("modrinth" | "curseforge" | "dome")
+    ) {
+        return Err("Fonte do favorito inválida.".into());
+    }
+    let id = dados["projectId"].as_str().unwrap_or_default();
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|letra| letra.is_ascii_alphanumeric() || matches!(letra, b'_' | b'-'))
+    {
+        return Err("Projeto do favorito inválido.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn gerenciar_favoritos_projetos(
+    api_base_url: String,
+    acao: String,
+    dados: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match acao.as_str() {
+        "contagens" => {
+            let projetos = dados["projetos"]
+                .as_array()
+                .ok_or("Lista de projetos inválida.")?;
+            if projetos.is_empty() || projetos.len() > 150 {
+                return Err("Informe até 150 projetos para consultar os favoritos.".into());
+            }
+            for projeto in projetos {
+                validar_projeto_favorito(projeto)?;
+            }
+        }
+        "salvar" => {
+            validar_projeto_favorito(&dados)?;
+            if !dados["favoritado"].is_boolean() {
+                return Err("Estado do favorito inválido.".into());
+            }
+        }
+        _ => return Err("Ação de favoritos inválida.".into()),
+    }
+    let base = modpacks_dome::normalizar_base_modpacks(&api_base_url)?;
+    let cliente = criar_cliente_http_launcher()?;
+    let mut pedido = match acao.as_str() {
+        "contagens" => cliente.post(format!("{base}/api/launcher/social/favoritos/contagens")),
+        "salvar" => cliente.put(format!("{base}/api/launcher/social/favoritos")),
+        _ => return Err("Ação de favoritos inválida.".into()),
+    };
+    let sessao = crate::launcher::carregar_sessao_social_local()?
+        .and_then(|texto| serde_json::from_str::<serde_json::Value>(&texto).ok());
+    let token = sessao
+        .as_ref()
+        .and_then(|valor| valor["accessToken"].as_str());
+    if let Some(token) = token {
+        pedido = pedido.bearer_auth(normalizar_token_social(token)?);
+    } else if acao == "salvar" {
+        return Err("Entre com a Microsoft para sincronizar os favoritos.".into());
+    }
+    let resposta = pedido
+        .json(&dados)
+        .send()
+        .await
+        .map_err(|erro| erro.to_string())?;
+    if !resposta.status().is_success() {
+        return Err(extrair_mensagem_erro_launcher(
+            resposta,
+            "Não foi possível sincronizar favoritos.",
+        )
+        .await);
+    }
+    resposta.json().await.map_err(|erro| erro.to_string())
+}
+
 #[tauri::command]
 pub async fn listar_analises_projeto(
     api_base_url: String,
@@ -1897,7 +1979,50 @@ pub async fn excluir_analise_modpack(
 
 #[cfg(test)]
 mod testes {
-    use super::normalizar_api_base_url;
+    use super::{
+        normalizar_api_base_url, validar_projeto_favorito, PayloadSalvarPerfilSocialLauncherApi,
+    };
+
+    #[test]
+    fn favoritos_rejeitam_fontes_e_identificadores_invalidos_antes_do_http() {
+        for fonte in ["modrinth", "curseforge", "dome"] {
+            assert!(validar_projeto_favorito(&serde_json::json!({
+                "source": fonte, "projectId": "projeto-123"
+            }))
+            .is_ok());
+        }
+        for id in [
+            "",
+            "../projeto",
+            "projeto?token=segredo",
+            "projeto/com/barra",
+        ] {
+            assert!(validar_projeto_favorito(&serde_json::json!({
+                "source": "dome", "projectId": id
+            }))
+            .is_err());
+        }
+        assert!(validar_projeto_favorito(&serde_json::json!({
+            "source": "outra", "projectId": "123"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn salvar_bio_nao_envia_handle_nulo() {
+        let payload: PayloadSalvarPerfilSocialLauncherApi =
+            serde_json::from_value(serde_json::json!({ "bio": "Explorando mundos" })).unwrap();
+        let corpo = serde_json::to_value(payload).unwrap();
+        assert_eq!(corpo, serde_json::json!({ "bio": "Explorando mundos" }));
+    }
+
+    #[test]
+    fn preserva_handle_informado_no_patch() {
+        let payload: PayloadSalvarPerfilSocialLauncherApi =
+            serde_json::from_value(serde_json::json!({ "handle": "jogador" })).unwrap();
+        let corpo = serde_json::to_value(payload).unwrap();
+        assert_eq!(corpo, serde_json::json!({ "handle": "jogador" }));
+    }
 
     #[test]
     fn aceita_https_e_remove_barra_final() {

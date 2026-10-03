@@ -57,6 +57,10 @@ Presença e notificações seguem `React → socket.io-client → DomeAPI` diret
 Pacotes de instâncias passam por HTTP no Rust; Socket.IO transporta pedidos, estados e tokens.
 
 A tela de perfil próprio reutiliza `GET /api/launcher/social/profile/me` e `GET /api/launcher/friends`.
+O avatar Minecraft do perfil próprio e da barra lateral usa a conta ativa do launcher mesmo enquanto o vínculo social está sendo atualizado,
+com fallback para a principal e para a primeira conta vinculada. Perfis visitados usam somente as contas
+do jogador consultado. Remover o avatar personalizado mantém essa mesma seleção. O perfil usa uma renderização
+de 256 px para exibir a cabeça ampliada com nitidez; a barra social e os comentários usam 64 px, com o mesmo UUID.
 Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
 PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O avatar, o banner,
@@ -66,6 +70,11 @@ locais de instâncias nunca são enviados. Se a cota do armazenamento local acab
 o cache de preferências descarta imagens incorporadas em base64 sem invalidar o salvamento remoto. Comentários,
 emblemas e análises vêm da DomeAPI;
 sem sessão ou dados remotos, a tela não injeta identidade, comentários ou emblemas demonstrativos.
+O editor só fica disponível após carregar o perfil remoto. Ao salvar, favoritos já publicados mantêm suas URLs
+e metadados, mesmo sem a captura carregada na galeria paginada ou a instância instalada neste computador.
+Remoções dependem da seleção explícita; um favorito sem dados locais nem remotos interrompe o salvamento.
+A apresentação mantém as atividades recentes publicadas, cuja sincronização ocorre separadamente.
+Falhas ao recarregar análises preservam a lista exibida; navegar para outro perfil limpa a lista anterior.
 Análises só existem para instâncias com `modpack.json` do Modrinth/CurseForge; instâncias personalizadas
 não oferecem publicação, e a API rejeita qualquer `source` diferente desses dois.
 
@@ -214,6 +223,10 @@ A API local também tem `GET /auth/me`; o launcher usa `/social/profile/me`.
 | `POST /chat/send` | `send_launcher_chat_message` | `{ paraPerfilId, conteudo }` → HTTP `{ mensagem, ... }`; Rust extrai mensagem |
 
 Handle é normalizado para minúsculas e sem `@`; a UI aceita 3–24 caracteres em `[a-z0-9._]`.
+O PATCH preserva o handle quando ele está ausente, `null` ou vazio; atualizar bio ou instâncias não remove a identidade.
+O Rust omite campos opcionais não informados. A API recupera e persiste handles ausentes ou inválidos na inicialização
+e na leitura autenticada do perfil, incluindo login Minecraft e renovação da sessão. Colisões recebem sufixo numérico;
+handles válidos são preservados. O launcher guarda o perfil recuperado na sessão, sem exigir novo login.
 Rust apara mensagens, rejeita conteúdo vazio e mais de 500 caracteres. Parâmetros de rota são codificados
 para URL. Diferencie ID de pedido, ID de amizade, perfil social e UUID Minecraft.
 
@@ -251,7 +264,7 @@ Na integração existente, reutilize `obterTokenValido` antes de enviar requisi�
 
 Datas são strings interpretadas como datas pelo cliente. Campos opcionais podem admitir `null`; consulte
 os tipos Rust/TypeScript antes de mudar serialização. Atividade usa `launcher`, `modpack_exato` ou
-`instancia_personalizada`; `source` usa `modrinth` ou `curseforge`.
+`instancia_personalizada`; `source` usa `modrinth`, `curseforge` ou `dome`.
 
 O painel administra emblemas por `GET` e `POST /api/admin/launcher/emblemas` e distribui por
 `POST /api/admin/launcher/emblemas/:id/distribuir`. Imagens PNG, JPEG ou WebP de até 2 MB são enviadas como corpo
@@ -425,6 +438,83 @@ mantém o status. A API local responde erros como `{ erro: { codigo, mensagem } 
 Rejeições de `invoke` podem ser strings. O helper `mensagemErro` preserva strings de rejeição nativa e mensagens de `Error`. Não presuma que o usuário viu o status HTTP.
 Não existe uma camada global de retry para essas chamadas.
 
+## Modpacks da Dome em beta
+
+A fonte `dome` participa do Explorar somente para modpacks, com busca, paginação, filtros de Minecraft/loader
+e ordenação por data ou downloads. Em Relevância, os projetos Dome aparecem antes dos resultados Modrinth/CurseForge,
+inclusive após carregar novas páginas, respeitando as fontes e os filtros selecionados.
+Projetos da Dome não são mesclados com projetos externos pelo nome.
+A publicação separa o projeto (nome, resumo, descrição Markdown e foto PNG) das versões imutáveis
+(número, notas e canal estável/beta/alpha). Projetos sem versão ficam fora da busca.
+A criação já exige uma instância da biblioteca ou um arquivo `.dome` e publica a primeira versão no mesmo fluxo.
+`Meus modpacks` no Explorar navega para uma página do launcher com lista de projetos, criação em cinco etapas
+(conteúdo, informações, descrição, versão e revisão) e abas de gestão (informações, descrição, versões e configurações).
+`Publicar modpack` no menu da biblioteca é a única entrada que abre o editor em modal, com instância e nome preenchidos.
+Ambas as apresentações reutilizam os mesmos campos e operações; a permissão beta também é verificada na página.
+A lista de instâncias omite qualquer instalação com `modpack.json` reconhecido por `get_modpack_info`.
+Ao selecionar uma instância própria, nome e ícone são reutilizados nas informações. O ícone é normalizado em PNG
+para publicação, e a foto pode ser substituída pelo criador de ícones (geração ou importação PNG/JPEG/WebP). A importação não limita o tamanho do arquivo e normaliza a imagem em PNG de 256 × 256. O menu da biblioteca também omite a publicação de modpacks instalados.
+Se o envio falhar após criar o projeto, o editor mantém esse projeto selecionado para tentar a versão novamente.
+Publicações sociais antigas para amigos continuam podendo ser tornadas privadas; novas publicações usam a fonte Dome.
+
+O painel do site usa `GET /api/admin/launcher/modpacks/publicadores` e
+`PUT /api/admin/launcher/modpacks/publicadores/:perfilId`, com JSON `{ permitido }` e a sessão admin existente.
+A liberação fica em `publicadorModpacks` no perfil; padrão ausente significa negado. Revogar bloqueia
+novos projetos, edições, retiradas, exclusões e versões, preservando as publicações existentes.
+A API revalida a permissão sob a mesma trava da alteração e da revogação.
+
+As rotas ficam em `/api/launcher/modpacks`:
+
+- `GET /`: busca pública; `busca`, `minecraft`, `loader`, `sort`, `offset` e `limit`.
+- `GET /permissao` e `GET /meus`: sessão Dome para ler liberação e projetos próprios.
+- `POST /` e `PATCH /:id`: sessão Dome, liberação beta e autoria; foto opcional em Data URL PNG preparado pelo criador de ícones, sem limite específico de 1 MiB (o corpo JSON mantém seu limite global de 2 MiB).
+- `POST /:id/versoes`: sessão Dome, liberação e autoria; publica um `.dome` validado, sem substituir versões existentes.
+- `GET /:id`, `GET /:id/versoes` e `GET /:id/versoes/:versaoId/arquivo`: leitura/download públicos.
+- `DELETE /:id`: retira o projeto do Explorar e bloqueia novos downloads; instalações locais permanecem.
+- `GET /:id/minhas-versoes`: sessão Dome e autoria; lista versões próprias, inclusive de projetos retirados.
+- `DELETE /:id/versoes/:versaoId`: sessão Dome, liberação e autoria; exclui somente a versão escolhida.
+  A última versão excluída deixa o projeto como rascunho, disponível para publicar uma nova versão.
+- `DELETE /:id/definitivo`: sessão Dome, liberação e autoria; exclui o projeto e todas as suas versões.
+
+A lista de projetos e a aba Configurações oferecem exclusão do projeto; cada versão tem sua própria ação Excluir.
+As exclusões exigem confirmação com o nome do projeto ou o número da versão, e atualizam o Explorar e Meus modpacks.
+Instalações locais permanecem. O estado excluído e os arquivos pendentes são persistidos antes da limpeza do S3.
+Se o armazenamento falhar, os downloads continuam bloqueados e a limpeza é repetida ao consultar Meus modpacks.
+Projetos excluídos ficam invisíveis e não podem ser editados ou receber versões durante essa limpeza.
+Pacotes e ícone do projeto são removidos; mídias da descrição mantêm seu ciclo de vida independente.
+
+O upload da versão usa corpo binário: quatro bytes big-endian com o tamanho do JSON de metadados,
+JSON UTF-8 e os bytes do `.dome`. O limite beta é 64 MiB para o ZIP e 256 KiB para os metadados;
+o conteúdo completo admite 8 GiB e 10 mil entradas. Há limites de 20 projetos por publicador e 100 versões
+por projeto. Fotos e pacotes ficam no S3, projetos na tabela `launcher.modpacks` registrada como `modpacks_dome`.
+O contador de downloads registra requisições GET aceitas, incluindo tentativas repetidas.
+
+O formato continua sendo ZIP com `dome_manifest.json`, compatível com a exportação Dome existente.
+Na publicação, o Rust normaliza `mcType` e `loaderType` para minúsculas e converte `exportadoEm` de RFC3339
+para UTC com sufixo `Z`. A API também aceita datas RFC3339 com fuso e nomes como `Fabric`, `Forge` e `NeoForge`
+em pacotes já exportados, mantendo a validação de loaders conhecidos, compatibilidade e versão do carregador.
+A publicação a partir de uma instância reutiliza a exportação social com referências oficiais Modrinth,
+SHA-256 e arquivos locais quando não reconhecidos. Reutiliza a árvore de seleção das transferências sociais para o autor escolher pastas e arquivos,
+sem selecionar conteúdo automaticamente. Mostra toda a prévia da instância; conteúdo fora das pastas permitidas e arquivos de opções/servidores fica visível,
+com seleção desabilitada. A publicação mantém as regras da API para pacotes públicos. Ao enviar um arquivo exportado, o Rust remove `instance.json` e metadados privados do manifesto.
+A API recusa mundos, credenciais, caminhos inseguros, arquivos fora das pastas permitidas e referências externas
+fora de `cdn.modrinth.com`.
+
+`gerenciar_modpacks_dome`, `publicar_versao_modpack_dome` e `instalar_modpack_dome` mantêm o HTTP no Rust.
+Publicações leem a sessão protegida nativa; a origem permitida é `DOME_API_PUBLIC_URL` definida na compilação
+Rust ou `https://api.domestudios.com.br`, com localhost adicional apenas em builds de desenvolvimento.
+Não passe tokens pela interface para esses comandos.
+
+A instalação confere SHA-512 do pacote, valida o ZIP e restaura referências com hashes na preparação temporária.
+O vínculo público usa `modpack-dome.json`, separado de `compartilhamento.json`, e os metadados usam
+`modpack.json` com `source: dome`. A troca de versão exige jogo fechado, mesmo Minecraft/loader, aceite
+explícito para arquivos locais conflitantes e backup em `.social-backups`. Mundos, opções, lista de servidores
+e conteúdo pessoal não gerenciado são preservados. Análises sociais da Dome ainda não estão habilitadas.
+
+Implante DomeAPI e domesite antes de distribuir o launcher. Os testes HTTP usam banco e armazenamento isolados;
+a conferência visual usa IPC simulado e os testes Rust cobrem normalização, origens e atualização local.
+Isso não comprova login, upload S3 ou instalação de um pacote publicado entre contas reais em produção.
+
 ## Outros serviços e validação
 
 Microsoft/Xbox/Minecraft, skins, manifests Mojang, loaders e conteúdo Modrinth/CurseForge têm integrações
@@ -445,3 +535,45 @@ Ao mudar contratos, atualize comando Rust, registro, tipos/UI e este documento. 
 considere compatibilidade entre versões; alterar um checkout não implanta a API. Valide, conforme o escopo,
 login/renovação, perfil, amizade, chat entre duas contas, reconexão, presença e transferências aceitas,
 recusadas e com falha. Build/testes locais não comprovam OAuth ou disponibilidade em produção.
+
+### Mídias na descrição dos modpacks
+
+A descrição usa um editor visual único com formatação e anexos no cursor, armazenado como Markdown.
+Imagens e vídeos são nós inline com remoção individual e desfazer/refazer. A renderização pública reconhece
+os anexos de vídeo nas imagens Markdown e também nos links de mídia legados. Tabelas e listas de tarefas
+existentes são preservadas na edição. Imagens selecionadas permitem largura em pixels (32–1600),
+redimensionamento por ponteiro mantendo a proporção, alinhamento e link HTTPS. Parágrafos e títulos
+também aceitam esquerda/centro/direita. Esses atributos são gravados como HTML seguro dentro do Markdown
+(`width`, `align` e links), preservados ao reabrir o editor e reconhecidos na descrição pública após sanitização.
+Parágrafos e títulos com mídia são serializados como um bloco HTML, mantendo texto e anexos juntos.
+A descrição dos projetos Dome compartilha os estilos de conteúdo do editor e preserva mídia em linha,
+largura e alinhamento, sem centralização ou moldura automática. Projetos externos mantêm sua apresentação existente.
+
+O comando nativo `enviar_midia_modpack_dome` envia o arquivo selecionado, sem expor o token ao WebView,
+à rota autenticada beta `POST /api/launcher/modpacks/midias` como `application/octet-stream`.
+A API identifica assinaturas PNG/JPEG/WebP/GIF/MP4/WebM e armazena objetos com UUID.
+Imagens da descrição aceitam até 16 MiB; vídeos, até 64 MiB. Estes limites não se aplicam à importação
+da foto pelo criador de ícones. A resposta contém `url` e `tipo`.
+`GET /api/launcher/modpacks/midias/:arquivo` transmite a mídia pública com Content-Type fixo,
+nosniff, cache imutável e suporte a Range/206 para reprodução de vídeo. O CSP permite mídia da API Dome.
+
+
+## Favoritos de projetos e instalação pelo Explorar
+
+A lista de favoritos continua no armazenamento local. O launcher também registra o estado por conta na
+DomeAPI: `PUT /api/launcher/social/favoritos`, com Bearer e `{ source, projectId, favoritado }`.
+`source` aceita `modrinth`, `curseforge` e `dome`. Repetir o mesmo estado não cria votos adicionais;
+a chave do banco é conta + fonte + projeto. Desfavoritar remove apenas o registro da conta autenticada.
+
+`POST /api/launcher/social/favoritos/contagens` recebe `{ projetos: [{ source, projectId }] }`, com até
+150 projetos, e retorna a contagem Dome e `favoritadoPorMim`. A consulta pública não exige sessão;
+com Bearer, o último campo reflete a conta autenticada. O HTTP passa pelo comando Rust
+`gerenciar_favoritos_projetos`, que restringe a origem antes de ler a sessão protegida.
+Os contadores do Explorar e dos detalhes somam os seguidores do Modrinth aos favoritos Dome.
+Alterações offline ficam pendentes para nova tentativa, e os favoritos locais existentes são registrados
+na primeira consulta. A sincronização depende de uma sessão social válida; não transfere a lista entre dispositivos.
+
+O Explorar lê `get_modpack_info` para reconhecer projetos já instalados, incluindo variantes de outras fontes.
+O botão de modpack instalado fica desabilitado. Instalar inicia o fluxo em segundo plano sem navegar para os detalhes;
+mods, texturas e shaders usam um seletor compacto da instância de destino. O card continua abrindo os detalhes.
+A validação automatizada usa banco e IPC isolados, sem comprovar publicação da API nem download em produção.

@@ -44,6 +44,8 @@ Windows e Linux são os alvos atuais de release.
 | `src-tauri/src/auth.rs`, `src-tauri/src/auth_sisu.rs` | Autenticação Microsoft/Minecraft |
 | `src-tauri/src/discord_social.rs` | OAuth Discord com PKCE |
 | `src-tauri/src/comandos/social_launcher.rs` | HTTP da DomeAPI e transferência de pacotes |
+| `src/components/modpacks/`, `src/services/modpacksDome.ts` | Projetos, publicações e versões da fonte Dome em beta |
+| `src-tauri/src/comandos/modpacks_dome.rs` | HTTP, sessão protegida e instalação de pacotes públicos `.dome` |
 | `src-tauri/tauri.conf.json`, `src-tauri/capabilities/` | Bundle, CSP, updater e permissões |
 | `vite.config.ts` | Build e configuração social pública |
 | `.github/workflows/` | Validação e publicação |
