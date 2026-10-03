@@ -4,6 +4,7 @@ use crate::launcher::LauncherState;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha512};
+use std::path::{Path, PathBuf};
 use tauri::State;
 use tokio::io::AsyncWriteExt;
 
@@ -156,6 +157,25 @@ mod testes {
             assert_eq!(manifesto["exportadoEm"], "2026-10-02T12:30:45.123Z");
         }
     }
+
+    #[test]
+    fn prepara_instalacao_dome_dentro_da_pasta_de_instancias_configurada() {
+        let pasta_instancias =
+            std::env::temp_dir().join(format!("dome-instancias-teste-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&pasta_instancias).unwrap();
+        let limpeza_instancias =
+            pacotes_sociais::PastaTemporaria::nova(&std::env::temp_dir(), &pasta_instancias)
+                .unwrap();
+
+        let (preparacao, limpeza_preparacao) = criar_preparacao_modpack(&pasta_instancias).unwrap();
+        assert_eq!(preparacao.parent(), Some(pasta_instancias.as_path()));
+        assert!(preparacao.is_dir());
+
+        drop(limpeza_preparacao);
+        assert!(!preparacao.exists());
+        assert!(pasta_instancias.exists());
+        drop(limpeza_instancias);
+    }
 }
 
 fn validar_id(id: &str) -> Result<(), String> {
@@ -163,6 +183,17 @@ fn validar_id(id: &str) -> Result<(), String> {
         return Err("Identificador de modpack inválido.".into());
     }
     Ok(())
+}
+
+fn criar_preparacao_modpack(
+    pasta_instancias: &Path,
+) -> Result<(PathBuf, pacotes_sociais::PastaTemporaria), String> {
+    std::fs::create_dir_all(pasta_instancias).map_err(|e| e.to_string())?;
+    let pasta_preparacao =
+        pasta_instancias.join(format!(".dome-preparacao-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&pasta_preparacao).map_err(|e| e.to_string())?;
+    let limpeza = pacotes_sociais::PastaTemporaria::nova(pasta_instancias, &pasta_preparacao)?;
+    Ok((pasta_preparacao, limpeza))
 }
 
 fn token_publicador() -> Result<String, String> {
@@ -443,11 +474,9 @@ pub async fn instalar_modpack_dome(
     if !resposta.status().is_success() {
         return Err(extrair_mensagem_erro_launcher(resposta, "Falha ao baixar modpack.").await);
     }
-    let pasta = std::env::temp_dir().join("dome-modpacks");
-    tokio::fs::create_dir_all(&pasta)
-        .await
-        .map_err(|e| e.to_string())?;
-    let caminho = pasta.join(format!("{}.dome", uuid::Uuid::new_v4()));
+    let pasta_instancias = state.caminho_instancias()?;
+    let (pasta_preparacao, _preparacao) = criar_preparacao_modpack(&pasta_instancias)?;
+    let caminho = pasta_preparacao.join(format!("{}.dome", uuid::Uuid::new_v4()));
     let _temporario = pacotes_sociais::Temporario(caminho.clone());
     let mut arquivo = tokio::fs::File::create(&caminho)
         .await
@@ -471,11 +500,6 @@ pub async fn instalar_modpack_dome(
     {
         return Err("A integridade do download não confere.".into());
     }
-    let raiz = crate::launcher::pasta_preparacao_social();
-    std::fs::create_dir_all(&raiz).map_err(|e| e.to_string())?;
-    let pasta_preparacao = raiz.join(uuid::Uuid::new_v4().to_string());
-    std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;
-    let _preparacao = pacotes_sociais::PastaTemporaria::nova(&raiz, &pasta_preparacao)?;
     let estado_preparacao = LauncherState {
         account: state.account.clone(),
         accounts: state.accounts.clone(),

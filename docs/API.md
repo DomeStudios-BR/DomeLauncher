@@ -506,6 +506,9 @@ Rust ou `https://api.domestudios.com.br`, com localhost adicional apenas em buil
 Não passe tokens pela interface para esses comandos.
 
 A instalação confere SHA-512 do pacote, valida o ZIP e restaura referências com hashes na preparação temporária.
+Para modpacks Dome, o download do `.dome` e essa preparação ficam dentro da pasta de instâncias configurada.
+Isso permite a movimentação final mesmo quando a pasta de dados do launcher e a biblioteca estão em unidades
+diferentes. A pasta temporária é removida ao concluir ou falhar a instalação.
 O vínculo público usa `modpack-dome.json`, separado de `compartilhamento.json`, e os metadados usam
 `modpack.json` com `source: dome`. A troca de versão exige jogo fechado, mesmo Minecraft/loader, aceite
 explícito para arquivos locais conflitantes e backup em `.social-backups`. Mundos, opções, lista de servidores

@@ -243,15 +243,6 @@ export default function Favorites({ onAbrirProjeto }: FavoritesProps) {
           {/* Filtro por fonte */}
           <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
             <button
-              onClick={() => setFiltroFonte("dome")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                filtroFonte === "dome" ? "bg-sky-400 text-black" : "text-white/40 hover:text-white"
-              )}
-            >
-              Dome {contadores.dome ? `(${contadores.dome})` : ""}
-            </button>
-            <button
               onClick={() => setFiltroFonte("todos")}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
@@ -262,6 +253,20 @@ export default function Favorites({ onAbrirProjeto }: FavoritesProps) {
             >
               <Filter size={12} className="inline mr-1" />
               Todas
+            </button>
+            <button
+              onClick={() => setFiltroFonte("dome")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                filtroFonte === "dome" ? "bg-sky-400 text-black" : "text-white/40 hover:text-white"
+              )}
+            >
+              Dome
+              {contadores.dome ? (
+                <span className="ml-1 text-[9px] opacity-70">
+                  ({contadores.dome})
+                </span>
+              ) : null}
             </button>
             <button
               onClick={() => setFiltroFonte("modrinth")}
