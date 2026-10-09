@@ -77,110 +77,135 @@ fn generate_oauth_challenge() -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
 }
 
-// Assinatura de Requests (Proof of Possession - PoP)
+fn data_servidor(headers: &reqwest::header::HeaderMap) -> Option<DateTime<Utc>> {
+    headers
+        .get(reqwest::header::DATE)
+        .and_then(|valor| valor.to_str().ok())
+        .and_then(|valor| DateTime::parse_from_rfc2822(valor).ok())
+        .map(|data| data.with_timezone(&Utc))
+}
+
+fn erro_xbox(status: reqwest::StatusCode, etapa: &str, corpo: &str) -> String {
+    let codigo = serde_json::from_str::<serde_json::Value>(corpo)
+        .ok()
+        .and_then(|resposta| resposta.get("XErr").and_then(|valor| valor.as_u64()));
+    let orientacao = match codigo {
+        Some(2148916233) => "Entre em xbox.com e crie seu perfil Xbox antes de tentar novamente.",
+        Some(2148916238) => "Confira as permissões da conta no grupo familiar Microsoft.",
+        _ if status == reqwest::StatusCode::FORBIDDEN => {
+            "Sincronize a data e a hora do computador e tente novamente. Se persistir, confira a conexão e o perfil em xbox.com."
+        }
+        _ => "Tente novamente em alguns instantes.",
+    };
+    let detalhe = codigo
+        .map(|codigo| format!(", código Xbox {codigo}"))
+        .unwrap_or_default();
+    format!(
+        "Falha no Xbox ao {etapa} (HTTP {}{detalhe}). {orientacao}",
+        status.as_u16()
+    )
+}
+
+fn assinatura_xbox(
+    path_and_query: &str,
+    corpo: &[u8],
+    key: &DeviceTokenKey,
+    current_date: DateTime<Utc>,
+) -> String {
+    // FILETIME usa intervalos de 100 ns desde 1601; a época Unix começa 11.644.473.600 segundos depois.
+    let filetime = ((current_date.timestamp() as i128 + 11_644_473_600) * 10_000_000) as u64;
+    let mut payload = Vec::new();
+    for parte in [
+        &1_u32.to_be_bytes()[..],
+        &filetime.to_be_bytes()[..],
+        b"POST",
+        path_and_query.as_bytes(),
+        b"",
+        corpo,
+    ] {
+        payload.extend_from_slice(parte);
+        payload.push(0);
+    }
+    let signature: Signature = key.key.sign(&payload);
+    let mut header_bytes = Vec::new();
+    header_bytes.extend_from_slice(&1_u32.to_be_bytes());
+    header_bytes.extend_from_slice(&filetime.to_be_bytes());
+    header_bytes.extend_from_slice(&signature.to_bytes());
+
+    STANDARD.encode(header_bytes)
+}
+
 async fn send_signed_request<T: serde::de::DeserializeOwned>(
     client: &Client,
     url: &str,
     path_and_query: &str,
     body: serde_json::Value,
     key: &DeviceTokenKey,
-    current_date: DateTime<Utc>,
+    mut current_date: DateTime<Utc>,
 ) -> Result<(RequestWithDate<T>, reqwest::header::HeaderMap), String> {
-    // Windows FILETIME: 100-nanosecond intervals since January 1, 1601
-    // Unix Epoch (1970) is 11,644,473,600 seconds after 1601.
-    let unix_timestamp = current_date.timestamp() as i128; // i64 -> i128 safe
-    let filetime: u64 = ((unix_timestamp + 11644473600) * 10000000) as u64;
-
-    let body_vec = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-
-    // Structure for Signature (Policy Version 1):
-    // [PolicyVersion: u32 BE (1)][0u8][Timestamp: u64 BE][0u8][Method: POST][0u8][Path][0u8][Auth: ""][0u8][Body][0u8]
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&(1_u32).to_be_bytes()); // Policy Version 1
-    payload.push(0);
-    payload.extend_from_slice(&filetime.to_be_bytes()); // Timestamp
-    payload.push(0);
-    payload.extend_from_slice(b"POST");
-    payload.push(0);
-    payload.extend_from_slice(path_and_query.as_bytes());
-    payload.push(0);
-    payload.extend_from_slice(b""); // Authorization Header Empty
-    payload.push(0);
-    payload.extend_from_slice(&body_vec); // Body bytes
-    payload.push(0);
-
-    // Sign with P-256
-    let signature: Signature = key.key.sign(&payload);
-    let (r, s) = signature.split_bytes();
-
-    // Construct Signature Header:
-    // [PolicyVersion: u32 BE (1)][Timestamp: u64 BE][R: 32 bytes][S: 32 bytes]
-    let mut header_bytes = Vec::new();
-    header_bytes.extend_from_slice(&(1_u32).to_be_bytes());
-    header_bytes.extend_from_slice(&filetime.to_be_bytes());
-    header_bytes.extend_from_slice(&r);
-    header_bytes.extend_from_slice(&s);
-
-    let header_b64 = STANDARD.encode(header_bytes);
-
-    // Send Request
-    let mut req = client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json")
-        .header("Signature", header_b64);
-
-    // Add x-xbl-contract-version: 1 for all except sisu authorize (sometimes)
-    // Modrinth logic: if url != "https://sisu.xboxlive.com/authorize" { header("x-xbl-contract-version", "1") }
-    if url != "https://sisu.xboxlive.com/authorize" {
-        req = req.header("x-xbl-contract-version", "1");
+    let etapa = match path_and_query {
+        "/device/authenticate" => "autenticar o dispositivo",
+        "/authenticate" => "iniciar o login Microsoft",
+        "/authorize" => "autorizar a conta Microsoft",
+        _ => "autenticar a conta",
+    };
+    let corpo = serde_json::to_vec(&body).map_err(|_| "Não foi possível preparar o login Xbox.")?;
+    for tentativa in 0..2 {
+        let mut requisicao = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header(
+                "Signature",
+                assinatura_xbox(path_and_query, &corpo, key, current_date),
+            );
+        if path_and_query != "/authorize" {
+            requisicao = requisicao.header("x-xbl-contract-version", "1");
+        }
+        let resposta = requisicao.body(corpo.clone()).send().await.map_err(|_| {
+            format!("Não foi possível conectar ao Xbox para {etapa}. Confira sua conexão.")
+        })?;
+        let status = resposta.status();
+        let headers = resposta.headers().clone();
+        let data_remota = data_servidor(&headers);
+        let texto = resposta
+            .text()
+            .await
+            .map_err(|_| format!("Não foi possível ler a resposta do Xbox ao {etapa}."))?;
+        if !status.is_success() {
+            if tentativa == 0 && status == reqwest::StatusCode::FORBIDDEN {
+                if let Some(data) = data_remota {
+                    if (data - current_date).num_seconds().unsigned_abs() > 30 {
+                        current_date = data;
+                        continue;
+                    }
+                }
+            }
+            eprintln!("[Auth:Xbox] Falha ao {etapa}: HTTP {}", status.as_u16());
+            return Err(erro_xbox(status, etapa, &texto));
+        }
+        let valor = serde_json::from_str::<T>(&texto).map_err(|_| {
+            format!(
+                "O Xbox retornou uma resposta inválida ao {etapa} (HTTP {}).",
+                status.as_u16()
+            )
+        })?;
+        return Ok((
+            RequestWithDate {
+                date: data_remota.unwrap_or(current_date),
+                value: valor,
+            },
+            headers,
+        ));
     }
-
-    let res = req
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !res.status().is_success() {
-        let status = res.status();
-        let text = res.text().await.unwrap_or_default();
-        println!("❌ SISU/Xbox API Error: {} - URL: {}", status, url);
-        println!("❌ Response Body: {}", text);
-        return Err(format!("Xbox API Error ({}) - {}", status, text));
-    }
-
-    // Capture Date from response for clock sync
-    let date_header = res
-        .headers()
-        .get("Date")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
-        .map(|d| d.with_timezone(&Utc))
-        .unwrap_or(Utc::now());
-
-    let headers = res.headers().clone();
-
-    // Ler corpo como texto para debug (mantendo em caso de erro de parse)
-    let body_text = res.text().await.unwrap_or_default();
-
-    let val = serde_json::from_str::<T>(&body_text)
-        .map_err(|e| format!("JSON Parse Error: {} - Body: {}", e, body_text))?;
-
-    Ok((
-        RequestWithDate {
-            date: date_header,
-            value: val,
-        },
-        headers,
-    ))
+    unreachable!("a segunda tentativa sempre retorna")
 }
 
 // 1. Get Device Token
 async fn get_device_token(
     client: &Client,
     key: &DeviceTokenKey,
+    data: DateTime<Utc>,
 ) -> Result<RequestWithDate<DeviceToken>, String> {
     let (res, _) = send_signed_request(
         client,
@@ -205,7 +230,7 @@ async fn get_device_token(
             "TokenType": "JWT"
         }),
         key,
-        Utc::now(),
+        data,
     )
     .await?;
 
@@ -414,7 +439,7 @@ pub async fn login_microsoft_sisu(
 
     let key = generate_key()?;
 
-    let device_req = get_device_token(&client, &key).await?;
+    let device_req = get_device_token(&client, &key, Utc::now()).await?;
     let device_token = device_req.value.token;
 
     let verifier = generate_oauth_challenge();
@@ -553,6 +578,7 @@ pub async fn login_microsoft_sisu(
         .await
         .map_err(|e| e.to_string())?;
 
+    let data_oauth = data_servidor(oauth_res_raw.headers()).unwrap_or_else(Utc::now);
     let oauth_text = oauth_res_raw.text().await.map_err(|e| e.to_string())?;
 
     if oauth_text.contains("\"error\"") {
@@ -597,7 +623,7 @@ pub async fn login_microsoft_sisu(
         "/authorize",
         auth_body,
         &key,
-        Utc::now(),
+        data_oauth,
     )
     .await?;
 
@@ -672,7 +698,7 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
         .map_err(|e| e.to_string())?;
 
     let key = generate_key()?;
-    let device_req = get_device_token(&client, &key).await?;
+    let device_req = get_device_token(&client, &key, Utc::now()).await?;
     let device_token = device_req.value.token;
 
     let oauth_res_raw = client
@@ -688,6 +714,7 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
         .await
         .map_err(|e| format!("Erro ao renovar OAuth: {}", e))?;
 
+    let data_oauth = data_servidor(oauth_res_raw.headers()).unwrap_or(device_req.date);
     let oauth_text = oauth_res_raw
         .text()
         .await
@@ -727,7 +754,7 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
         "/authorize",
         auth_body,
         &key,
-        device_req.date,
+        data_oauth,
     )
     .await?;
 
@@ -783,6 +810,174 @@ pub async fn refresh_token_sisu_interno(state: &LauncherState) -> Result<Minecra
 mod tests {
     use super::{erro_perfil_minecraft, mensagem_erro_minecraft};
     use reqwest::StatusCode;
+
+    async fn simular_xbox(
+        status: &[&str],
+        data: chrono::DateTime<chrono::Utc>,
+    ) -> (String, tokio::task::JoinHandle<Vec<Vec<u8>>>) {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let respostas: Vec<_> = status.iter().map(|status| {
+            let corpo = if status.starts_with("403") { "" } else { "{}" };
+            format!("HTTP/1.1 {status}\r\nDate: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{corpo}", data.to_rfc2822(), corpo.len())
+        }).collect();
+        let tarefa = tokio::spawn(async move {
+            let mut capturas = Vec::new();
+            for resposta in respostas {
+                let (conexao, _) = listener.accept().await.unwrap();
+                let mut leitor = BufReader::new(conexao);
+                let mut assinatura = String::new();
+                let mut tamanho = 0;
+                loop {
+                    let mut linha = String::new();
+                    leitor.read_line(&mut linha).await.unwrap();
+                    if linha == "\r\n" {
+                        break;
+                    }
+                    if let Some((nome, valor)) = linha.split_once(':') {
+                        if nome.eq_ignore_ascii_case("signature") {
+                            assinatura = valor.trim().to_string();
+                        }
+                        if nome.eq_ignore_ascii_case("content-length") {
+                            tamanho = valor.trim().parse().unwrap();
+                        }
+                    }
+                }
+                let mut corpo = vec![0; tamanho];
+                leitor.read_exact(&mut corpo).await.unwrap();
+                use base64::Engine;
+                let assinatura = super::STANDARD.decode(assinatura).unwrap();
+                capturas.push([assinatura, corpo].concat());
+                leitor
+                    .get_mut()
+                    .write_all(resposta.as_bytes())
+                    .await
+                    .unwrap();
+            }
+            capturas
+        });
+        (url, tarefa)
+    }
+
+    #[tokio::test]
+    async fn corrige_relogio_e_assina_os_bytes_enviados_apos_403_vazio() {
+        use p256::ecdsa::signature::Verifier;
+        let data = chrono::Utc::now();
+        let (url, servidor) = simular_xbox(&["403 Forbidden", "200 OK"], data).await;
+        let chave = super::generate_key().unwrap();
+        let corpo = serde_json::json!({"teste": "ação", "numero": 1});
+        let (resposta, _) = super::send_signed_request::<serde_json::Value>(
+            &reqwest::Client::new(),
+            &url,
+            "/authorize",
+            corpo.clone(),
+            &chave,
+            data - chrono::Duration::hours(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resposta.date.timestamp(), data.timestamp());
+        let capturas = servidor.await.unwrap();
+        assert_eq!(capturas.len(), 2);
+        for (indice, captura) in capturas.iter().enumerate() {
+            let assinatura = &captura[..76];
+            let bytes = &captura[76..];
+            assert_eq!(bytes, serde_json::to_vec(&corpo).unwrap());
+            let filetime = u64::from_be_bytes(assinatura[4..12].try_into().unwrap());
+            let esperado = data - chrono::Duration::hours(if indice == 0 { 2 } else { 0 });
+            assert_eq!(
+                filetime / 10_000_000 - 11_644_473_600,
+                esperado.timestamp() as u64
+            );
+            let mut mensagem = Vec::new();
+            for parte in [
+                &assinatura[..4],
+                &assinatura[4..12],
+                b"POST",
+                b"/authorize",
+                b"",
+                bytes,
+            ] {
+                mensagem.extend_from_slice(parte);
+                mensagem.push(0);
+            }
+            chave
+                .key
+                .verifying_key()
+                .verify(
+                    &mensagem,
+                    &p256::ecdsa::Signature::from_slice(&assinatura[12..]).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn nao_repete_403_com_relogio_correto_e_limita_correcao_a_uma_tentativa() {
+        for atraso in [0, 7200] {
+            let data = chrono::Utc::now();
+            let status = if atraso == 0 {
+                vec!["403 Forbidden"]
+            } else {
+                vec!["403 Forbidden", "403 Forbidden"]
+            };
+            let (url, servidor) = simular_xbox(&status, data).await;
+            let erro = super::send_signed_request::<serde_json::Value>(
+                &reqwest::Client::new(),
+                &url,
+                "/authenticate",
+                serde_json::json!({}),
+                &super::generate_key().unwrap(),
+                data - chrono::Duration::seconds(atraso),
+            )
+            .await
+            .err()
+            .unwrap();
+            assert!(erro.contains("iniciar o login Microsoft (HTTP 403)"));
+            assert_eq!(servidor.await.unwrap().len(), status.len());
+        }
+    }
+
+    #[test]
+    fn erro_xbox_preserva_codigo_sem_expor_corpo_remoto() {
+        let erro = super::erro_xbox(
+            StatusCode::FORBIDDEN,
+            "autorizar a conta Microsoft",
+            r#"{"XErr":2148916233,"Token":"segredo"}"#,
+        );
+        assert!(erro.contains("2148916233"));
+        assert!(erro.contains("crie seu perfil Xbox"));
+        assert!(!erro.contains("segredo"));
+        assert!(
+            super::erro_xbox(StatusCode::FORBIDDEN, "autenticar o dispositivo", "")
+                .contains("HTTP 403")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "contata o Xbox real, sem credenciais de usuário"]
+    async fn autentica_dispositivo_no_xbox_com_relogio_adiantado() {
+        let cliente = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap();
+        let chave = super::generate_key().unwrap();
+        let resposta = super::get_device_token(
+            &cliente,
+            &chave,
+            chrono::Utc::now() + chrono::Duration::hours(2),
+        )
+        .await
+        .unwrap();
+        assert!(!resposta.value.token.is_empty());
+        assert!(
+            (resposta.date - chrono::Utc::now())
+                .num_seconds()
+                .unsigned_abs()
+                < 60
+        );
+    }
 
     #[test]
     fn extrai_mensagem_da_resposta_do_minecraft() {

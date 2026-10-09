@@ -56,6 +56,15 @@ fn normalizar_pacote(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
                     publico.insert(chave.into(), Value::String(normalizado));
                 }
             }
+            if publico.get("mcType").and_then(Value::as_str) == Some("modded") {
+                let loader = publico
+                    .get("loaderType")
+                    .and_then(Value::as_str)
+                    .filter(|loader| matches!(*loader, "fabric" | "forge" | "neoforge"))
+                    .ok_or("O pacote modificado precisa de um carregador Fabric, Forge ou NeoForge válido.")?
+                    .to_string();
+                publico.insert("mcType".into(), Value::String(loader));
+            }
             if let Some(valor) = publico.get("exportadoEm").and_then(Value::as_str) {
                 let data = chrono::DateTime::parse_from_rfc3339(valor)
                     .map_err(|_| "Data de exportação inválida no pacote .dome.".to_string())?;
@@ -126,11 +135,33 @@ mod testes {
     }
 
     #[test]
+    fn publicacao_recusa_tipo_modificado_sem_carregador_conhecido() {
+        for loader in [Value::Null, json!(""), json!("desconhecido")] {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file(
+                "dome_manifest.json",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            serde_json::to_writer(
+                &mut zip,
+                &json!({ "mcType": "modded", "loaderType": loader }),
+            )
+            .unwrap();
+            let resultado = normalizar_pacote(zip.finish().unwrap().into_inner());
+            assert!(resultado.unwrap_err().contains("carregador"));
+        }
+    }
+
+    #[test]
     fn publicacao_normaliza_data_e_loader_de_pacote_exportado() {
-        for (loader, esperado) in [
-            ("Fabric", "fabric"),
-            ("Forge", "forge"),
-            ("NeoForge", "neoforge"),
+        for (tipo, loader, esperado) in [
+            ("fabric", "Fabric", "fabric"),
+            ("forge", "Forge", "forge"),
+            ("neoforge", "NeoForge", "neoforge"),
+            ("modded", "Fabric", "fabric"),
+            ("modded", "Forge", "forge"),
+            ("modded", " NeoForge ", "neoforge"),
         ] {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
             zip.start_file(
@@ -141,7 +172,7 @@ mod testes {
             serde_json::to_writer(
                 &mut zip,
                 &json!({
-                    "mcType": esperado,
+                    "mcType": tipo,
                     "loaderType": loader,
                     "exportadoEm": "2026-10-02T12:30:45.123456789+00:00"
                 }),
@@ -471,7 +502,7 @@ pub async fn instalar_modpack_dome(
     {
         return Err("A integridade do download não confere.".into());
     }
-    let raiz = crate::launcher::pasta_preparacao_social();
+    let raiz = state.caminho_instancias()?.join(".social-staging");
     std::fs::create_dir_all(&raiz).map_err(|e| e.to_string())?;
     let pasta_preparacao = raiz.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { CheckCircle, X } from "../iconesPixelados";
+import { X } from "../iconesPixelados";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
 
 export interface NovidadesVersao {
@@ -18,7 +18,7 @@ interface NovidadesVersaoModalProps {
 
 function limparDescricaoRelease(conteudo: string): string {
     const linhas = conteudo.trim().split("\n");
-    const tituloCommit = /^(?:feat|fix|perf|refactor|style|docs|build|ci|chore|test|revert)(?:\([^)]*\))?!?:\s+/i;
+    const tituloCommit = /^(?:release|feat|fix|perf|refactor|style|docs|build|ci|chore|test|revert)(?:\([^)]*\))?!?:\s+/i;
 
     if (tituloCommit.test(linhas[0]?.trim() ?? "")) {
         linhas.shift();
@@ -86,14 +86,33 @@ export function NovidadesVersaoModal({ novidades, onClose }: NovidadesVersaoModa
                                         h1: ({ children }) => <h3 className="mb-3 text-xl font-bold text-white">{children}</h3>,
                                         h2: ({ children }) => <h3 className="mb-3 mt-5 text-lg font-bold text-white">{children}</h3>,
                                         h3: ({ children }) => <h4 className="mb-2 mt-4 font-bold text-white">{children}</h4>,
-                                        p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                                        ul: ({ children }) => <ul className="mb-3 space-y-2">{children}</ul>,
+                                        p: ({ children }) => (
+                                            <p className="mb-3 whitespace-pre-line last:mb-0">{children}</p>
+                                        ),
+                                        ul: ({ children }) => (
+                                            <ul className="mb-3 list-disc space-y-2 pl-5 marker:text-emerald-300">
+                                                {children}
+                                            </ul>
+                                        ),
                                         ol: ({ children }) => <ol className="mb-3 list-decimal space-y-2 pl-5">{children}</ol>,
                                         li: ({ children }) => (
-                                            <li className="flex items-start gap-2">
-                                                <CheckCircle size={13} className="mt-[7px] shrink-0 text-emerald-300" />
-                                                <span>{children}</span>
-                                            </li>
+                                            <li className="pl-1">{children}</li>
+                                        ),
+                                        strong: ({ children }) => (
+                                            <strong className="font-bold text-white">{children}</strong>
+                                        ),
+                                        code: ({ children }) => (
+                                            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-xs">
+                                                {children}
+                                            </code>
+                                        ),
+                                        pre: ({ children }) => (
+                                            <pre className="mb-3 overflow-x-auto bg-black/30 p-3">{children}</pre>
+                                        ),
+                                        blockquote: ({ children }) => (
+                                            <blockquote className="mb-3 border-l-2 border-emerald-300/50 pl-4">
+                                                {children}
+                                            </blockquote>
                                         ),
                                         a: ({ children }) => <span className="text-emerald-300">{children}</span>,
                                     }}

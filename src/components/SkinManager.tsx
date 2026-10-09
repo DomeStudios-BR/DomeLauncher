@@ -9,6 +9,11 @@ import { MiniaturaSkinMinecraft } from "./MiniaturaSkinMinecraft";
 import { MiniaturaCapaMinecraft } from "./MiniaturaCapaMinecraft";
 import { SKINS_PADRAO, type SkinPadrao } from "../assets/skinsPadrao";
 import {
+    carregarPreviewSkin,
+    obterPreviewSkinSalva,
+    type CapaMinecraft,
+} from "../services/cosmeticosSkin";
+import {
   CabecalhoMenuContextual,
   ItemMenuContextual,
   MenuContextual,
@@ -17,19 +22,6 @@ import {
 
 interface SkinManagerProps {
   user: MinecraftAccount | null;
-}
-
-interface CapaMinecraft {
-  id: string;
-  state: string;
-  url: string;
-  alias: string;
-}
-
-interface CosmeticosSkin {
-  variant: "classic" | "slim";
-  skinUrl?: string | null;
-  capes: CapaMinecraft[];
 }
 
 interface SkinAtualBaixada {
@@ -96,7 +88,14 @@ function bytesParaDataUrl(bytes: number[]): string {
   return `data:image/png;base64,${btoa(binario)}`;
 }
 
+function bytesDaTextura(textura: string): number[] {
+    return Array.from(atob(textura.split(",")[1]), (letra) => letra.charCodeAt(0));
+}
+
 export function SkinManager({ user }: SkinManagerProps) {
+    const [previewSalva] = useState(() => user ? obterPreviewSkinSalva(user.uuid) : null);
+    const contaAtualRef = useRef(user?.uuid);
+    contaAtualRef.current = user?.uuid;
   const [dragActive, setDragActive] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [modoEditor, setModoEditor] = useState<"skin" | "capa">("skin");
@@ -106,22 +105,24 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">(
     "idle"
   );
-  const [variant, setVariant] = useState<"classic" | "slim">("classic");
-  const [variantOriginal, setVariantOriginal] = useState<"classic" | "slim">("classic");
+  const [variant, setVariant] = useState<"classic" | "slim">(previewSalva?.cosmeticos.variant || "classic");
+  const [variantOriginal, setVariantOriginal] = useState<"classic" | "slim">(variant);
   const [aplicandoSkinPadrao, setAplicandoSkinPadrao] = useState<string | null>(null);
   const [mensagemStatus, setMensagemStatus] = useState<string | null>(null);
   const [erroStatus, setErroStatus] = useState<string | null>(null);
-  const [cachePreview, setCachePreview] = useState(() => Date.now());
   const [skinAtualUrl, setSkinAtualUrl] = useState<string | null>(null);
-  const [skinAtualDataUrl, setSkinAtualDataUrl] = useState<string | null>(null);
+  const [skinAtualDataUrl, setSkinAtualDataUrl] = useState<string | null>(previewSalva?.textura || null);
   const [previewArquivoUrl, setPreviewArquivoUrl] = useState<string | null>(null);
-  const [capas, setCapas] = useState<CapaMinecraft[]>([]);
-  const [capaSelecionadaId, setCapaSelecionadaId] = useState<string | null>(null);
-  const [capaOriginalId, setCapaOriginalId] = useState<string | null>(null);
+  const [capas, setCapas] = useState<CapaMinecraft[]>(previewSalva?.cosmeticos.capes || []);
+  const [capaSelecionadaId, setCapaSelecionadaId] = useState<string | null>(() =>
+      previewSalva?.cosmeticos.capes.find((capa) => capa.state.toLowerCase() === "active")?.id || null);
+  const [capaOriginalId, setCapaOriginalId] = useState<string | null>(capaSelecionadaId);
   const [skinsSalvas, setSkinsSalvas] = useState<SkinSalva[]>(carregarSkinsSalvas);
   const [nomeNovaSkin, setNomeNovaSkin] = useState("Minha skin");
   const [skinEditandoId, setSkinEditandoId] = useState<string | null>(null);
-  const [skinAtualId, setSkinAtualId] = useState<string | null>(null);
+  const [skinAtualId, setSkinAtualId] = useState<string | null>(() => previewSalva
+      ? identificarSkin(bytesDaTextura(previewSalva.textura), previewSalva.cosmeticos.variant)
+      : null);
   const [menuSkin, setMenuSkin] = useState<{ skin: SkinSalva; x: number; y: number } | null>(null);
   const [modoSeguro3d, setModoSeguro3d] = useState(modoSeguroSalvo);
 
@@ -136,8 +137,8 @@ export function SkinManager({ user }: SkinManagerProps) {
 
   const previewSkinUrl = useMemo(() => {
     if (!user) return "";
-    return skinAtualDataUrl || skinAtualUrl || SKINS_PADRAO[0].textureUrl;
-  }, [cachePreview, skinAtualDataUrl, skinAtualUrl, user]);
+    return skinAtualDataUrl || skinAtualUrl || "";
+  }, [skinAtualDataUrl, skinAtualUrl, user]);
   const previewEditorUrl = useMemo(
     () => previewArquivoUrl || previewSkinUrl,
     [previewArquivoUrl, previewSkinUrl]
@@ -160,19 +161,13 @@ export function SkinManager({ user }: SkinManagerProps) {
     };
   }, [selectedFile]);
 
-  const carregarCosmeticos = useCallback(async () => {
+  const carregarCosmeticos = useCallback(async (forcar = false) => {
     if (!user) return;
     try {
-      const [resultadoCosmeticos, resultadoSkin] = await Promise.allSettled([
-        invoke<CosmeticosSkin>("obter_cosmeticos_skin", {
-          accessToken: user.access_token,
-        }),
-        invoke<SkinAtualBaixada>("baixar_skin_atual", {
-          accessToken: user.access_token,
-        }),
-      ]);
-      if (resultadoCosmeticos.status === "fulfilled") {
-        const cosmeticos = resultadoCosmeticos.value;
+        const previa = await carregarPreviewSkin(user.uuid, user.access_token, forcar);
+        if (contaAtualRef.current !== user.uuid) return;
+        const cosmeticos = previa.cosmeticos;
+        setErroStatus(null);
         setVariant(cosmeticos.variant);
         setVariantOriginal(cosmeticos.variant);
         setSkinAtualUrl(cosmeticos.skinUrl || null);
@@ -180,15 +175,11 @@ export function SkinManager({ user }: SkinManagerProps) {
         const capaAtiva = cosmeticos.capes.find((capa) => capa.state.toLowerCase() === "active");
         setCapaSelecionadaId(capaAtiva?.id || null);
         setCapaOriginalId(capaAtiva?.id || null);
-      }
-      if (resultadoSkin.status === "rejected") {
-        setErroStatus("Não foi possível baixar sua skin. A prévia usa a textura disponível; tente reabrir a aba.");
-        return;
-      }
-      const skinAtual = resultadoSkin.value;
-      setVariant(skinAtual.variant);
-      setVariantOriginal(skinAtual.variant);
-      setSkinAtualDataUrl(bytesParaDataUrl(skinAtual.bytes));
+      const skinAtual = {
+          variant: cosmeticos.variant,
+          bytes: bytesDaTextura(previa.textura),
+      };
+      setSkinAtualDataUrl(previa.textura);
       const idAtual = identificarSkin(skinAtual.bytes, skinAtual.variant);
       setSkinAtualId(idAtual);
       setSkinsSalvas((atuais) => {
@@ -205,22 +196,19 @@ export function SkinManager({ user }: SkinManagerProps) {
         return lista;
       });
     } catch (erro) {
-      console.warn("Não foi possível carregar skins e capas:", erro);
+        if (contaAtualRef.current !== user.uuid) return;
+        const limiteRequisicoes = /\b429\b/.test(String(erro));
+        const motivo = limiteRequisicoes
+            ? "O serviço do Minecraft limitou as consultas. Aguarde um minuto."
+            : "Não foi possível atualizar sua skin.";
+        const cache = obterPreviewSkinSalva(user.uuid);
+        setErroStatus(`${motivo} ${cache ? "Exibindo a última skin carregada." : "Tente novamente em instantes."}`);
     }
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
-
-    let ativo = true;
-    void carregarCosmeticos().then(() => {
-      if (!ativo) return;
-    });
-
-    return () => {
-      ativo = false;
-    };
-  }, [cachePreview, carregarCosmeticos, user]);
+      void carregarCosmeticos();
+  }, [carregarCosmeticos]);
 
   if (!user) {
     return (
@@ -392,8 +380,7 @@ export function SkinManager({ user }: SkinManagerProps) {
       variant: variante,
       skinBytes: bytes,
     });
-    setCachePreview(Date.now());
-    await carregarCosmeticos();
+    await carregarCosmeticos(true);
   };
 
   const aplicarSkinPadrao = async (skin: SkinPadrao) => {
@@ -465,7 +452,7 @@ export function SkinManager({ user }: SkinManagerProps) {
           capeId: capaSelecionadaId,
         });
       }
-      if (!skinEditandoId) await carregarCosmeticos();
+      if (!skinEditandoId && capaSelecionadaId !== capaOriginalId) await carregarCosmeticos(true);
       setUploadStatus("success");
       setMensagemStatus(skinEditandoId ? "Skin salva atualizada." : "Visual atualizado.");
       setTimeout(() => {
@@ -489,8 +476,14 @@ export function SkinManager({ user }: SkinManagerProps) {
             {user.name}
           </span>
 
-          <div className="flex h-[400px] w-full items-center justify-center drop-shadow-2xl transition-transform duration-500 hover:scale-105">
-            {modoSeguro3d ? (
+          <div data-preview-skin className="flex h-[400px] w-full items-center justify-center drop-shadow-2xl transition-transform duration-500 hover:scale-105">
+            {!previewSkinUrl ? (
+                erroStatus ? (
+                    <span className="text-xs text-white/45">Prévia indisponível</span>
+                ) : (
+                    <Loader2 size={32} className="animate-spin text-emerald-500" aria-label="Carregando sua skin" />
+                )
+            ) : modoSeguro3d ? (
               <MiniaturaSkinMinecraft
                 skinUrl={previewSkinUrl}
                 modelo={variant}
@@ -718,7 +711,16 @@ export function SkinManager({ user }: SkinManagerProps) {
               </button>
 
               <div className="relative min-h-72 border-b border-white/8 bg-[radial-gradient(circle_at_50%_42%,rgba(52,211,153,0.09),transparent_58%)] md:border-b-0 md:border-r">
-                {modoSeguro3d ? (
+                {!previewEditorUrl ? (
+                    <div className="flex min-h-72 items-center justify-center">
+                        {erroStatus ? (
+                            <span className="text-xs text-white/45">Prévia indisponível</span>
+                        ) : (
+                            <Loader2 size={32} className="animate-spin text-emerald-500"
+                                aria-label="Carregando sua skin" />
+                        )}
+                    </div>
+                ) : modoSeguro3d ? (
                   <MiniaturaSkinMinecraft
                     skinUrl={previewEditorUrl}
                     modelo={variant}

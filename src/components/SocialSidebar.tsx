@@ -1,3 +1,5 @@
+import { ativarContaFavoritos, sincronizarColecaoFavoritos } from '../services/colecaoFavoritos';
+import { obterPerfilFavoritos } from '../services/favoritosProjetos';
 import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
 import { CompartilhamentosSociais } from './social/CompartilhamentosSociais';
 import { listen } from '@tauri-apps/api/event';
@@ -364,10 +366,20 @@ async function lerSessaoLocal(): Promise<SessaoSocial | null> {
   }
 }
 
+let persistenciaSessao = Promise.resolve();
+let revisaoPersistenciaSessao = 0;
+
 function salvarSessaoLocal(sessao: SessaoSocial | null): void {
+  const revisao = ++revisaoPersistenciaSessao;
+  const perfilId = sessao?.perfil.perfilId ?? null;
+  if (perfilId !== obterPerfilFavoritos()) void ativarContaFavoritos(null);
   localStorage.removeItem(CHAVE_SESSAO_SOCIAL);
-  void invoke('salvar_sessao_social_local', {
-    sessao: sessao ? JSON.stringify(sessao) : null,
+  persistenciaSessao = persistenciaSessao.catch(() => undefined).then(async () => {
+    await invoke('salvar_sessao_social_local', {
+      sessao: sessao ? JSON.stringify(sessao) : null,
+    });
+    if (revisao !== revisaoPersistenciaSessao) return;
+    void ativarContaFavoritos(perfilId).catch(() => undefined);
   }).catch((erro) => console.error('[social] falha ao proteger sessão local', erro));
 }
 
@@ -435,10 +447,6 @@ function gerarNomeInstanciaDisponivel(nomeBase: string, nomesExistentes: string[
   let sufixo = 2;
   while (nomes.has(`${base} ${sufixo}`.toLowerCase())) sufixo += 1;
   return `${base} ${sufixo}`;
-}
-
-function gerarIdInstancia(nomeInstancia: string): string {
-  return encodeURIComponent(nomeInstancia.toLowerCase().replace(/\s+/g, '_'));
 }
 
 export default function SocialSidebar({
@@ -624,6 +632,16 @@ export default function SocialSidebar({
       );
       setAparecerOffline(Boolean(novaSessao.perfil.aparecerOffline));
     }
+  }, []);
+
+  useEffect(() => {
+    const sincronizar = () => { void sincronizarColecaoFavoritos().catch(() => undefined); };
+    const intervalo = window.setInterval(sincronizar, 60000);
+    window.addEventListener('online', sincronizar);
+    return () => {
+      window.clearInterval(intervalo);
+      window.removeEventListener('online', sincronizar);
+    };
   }, []);
 
   const entrarMicrosoftPelaBarraSocial = useCallback(async () => {
@@ -1880,7 +1898,6 @@ export default function SocialSidebar({
         `${nomeBase} (social)`,
         (instancias ?? []).map((item) => item.name)
       );
-      const idInstancia = gerarIdInstancia(nomeInstancia);
 
       let loaderVersion: string | undefined;
       if (loaderNormalizado !== 'vanilla') {
@@ -1905,7 +1922,7 @@ export default function SocialSidebar({
         paramsCriacao.loaderVersion = loaderVersion;
       }
 
-      await invoke('create_instance', paramsCriacao);
+      const idInstancia = await invoke<string>('create_instance', paramsCriacao);
       await invoke('install_modpack_files', {
         instanceId: idInstancia,
         downloadUrl: arquivo.url,

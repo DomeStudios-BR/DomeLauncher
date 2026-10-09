@@ -91,8 +91,29 @@ try {
             const destinoImagem = process.env.DOME_CAPTURA_SKINS;
             if (destinoImagem) await pagina.screenshot({ path: destinoImagem });
             console.log("Validado: modelos clássico e slim carregados com bundle minificado e CSP de produção.");
+            await pagina.goto(`${url}gerenciador-carregamento`);
+            const carregamentoSkin = pagina.getByLabel("Carregando sua skin", { exact: true });
+            await carregamentoSkin.waitFor();
+            if (await carregamentoSkin.locator("..").locator("canvas").count()) {
+                throw new Error("A prévia exibiu um modelo antes de receber a skin da conta.");
+            }
+            await carregamentoSkin.waitFor({ state: "detached" });
+            await pagina.waitForFunction(() => document.querySelectorAll("canvas").length >= 12);
+            if (await pagina.locator("html").getAttribute("data-consultas-perfil") !== "1" ||
+                await pagina.locator("html").getAttribute("data-consulta-duplicada")) {
+                throw new Error("A abertura consultou o perfil mais de uma vez.");
+            }
+            console.log("Validado: abertura aguarda a skin da conta sem exibir Steve provisoriamente.");
+            await pagina.goto(`${url}gerenciador-limite`);
+            await pagina.getByText("O serviço do Minecraft limitou as consultas.", { exact: false }).waitFor();
+            await pagina.locator("[data-preview-skin] canvas").waitFor();
+            if (await pagina.getByText("Prévia indisponível", { exact: true }).count()) {
+                throw new Error("A prévia salva desapareceu após limite de consultas.");
+            }
+            await pagina.reload();
+            await pagina.getByText("Exibindo a última skin carregada.", { exact: false }).waitFor();
+            console.log("Validado: a última skin da conta permanece visível após erro 429 e reinício da tela.");
             await pagina.goto(`${url}gerenciador`);
-            await pagina.getByText("Não foi possível baixar sua skin.", { exact: false }).waitFor();
             await pagina.waitForFunction(() => {
                 const miniaturas = [...document.querySelectorAll('canvas[aria-label="Prévia da skin"]')];
                 return miniaturas.length >= 9 && miniaturas.every((canvas) => {
@@ -109,7 +130,7 @@ try {
             if (await pagina.getByText("Não foi possível carregar a textura.", { exact: false }).count()) {
                 throw new Error("Textura oficial falhou no modal.");
             }
-            console.log("Validado: seleção de skins e modal de capas com falha parcial da conta e textura HTTP via IPC.");
+            console.log("Validado: seleção de skins e modal de capas com textura HTTP via IPC.");
             await pagina.goto(`${url}gerenciador`);
             await pagina.getByRole("button", { name: "Abrir ações de Skin teste" }).click();
             await pagina.getByText("Editar", { exact: true }).click();

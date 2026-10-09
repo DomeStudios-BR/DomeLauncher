@@ -1,8 +1,8 @@
 use super::*;
 use tauri::Manager;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+/// Use na entrada do executável desktop, passando o contexto gerado para a interface daquela compilação.
+pub fn run(contexto: tauri::Context<tauri::Wry>) {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(janela) = app.get_webview_window("main") {
@@ -153,6 +153,6 @@ pub fn run() {
             crate::comandos::presenca_discord::atualizar_discord_presence,
             crate::comandos::presenca_discord::encerrar_discord_presence,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(contexto)
+        .expect("Erro ao executar o aplicativo Tauri");
 }

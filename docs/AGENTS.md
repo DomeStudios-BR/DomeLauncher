@@ -66,7 +66,7 @@ pixelados usados pela interface ficam reunidos em `src/assets/dadosIconesPixelad
 
 ## Ambiente e comandos
 
-Use Bun, nunca npm. Consulte `package.json` antes de inventar scripts. A CI usa Bun 1.3.5 e Rust estável
+Use Bun, nunca npm. Consulte `package.json` antes de inventar scripts. A CI usa Bun 1.3.5 e Rust 1.99.0
 com `rustfmt` e `clippy`. No Windows, tenha WebView2 e ferramentas C++ necessárias ao Rust/Tauri. No Linux,
 tenha os pacotes de desenvolvimento do WebKitGTK 4.1 (`libwebkit2gtk-4.1-dev`) além de `librsvg2-dev`,
 `libgtk-3-dev` e `patchelf` para empacotar. Execute na raiz do launcher:
@@ -79,6 +79,11 @@ bun run dev
 `bun run dev` abre o Tauri; `bun run vite` inicia somente o frontend e não valida IPC, disco ou login nativo.
 `bun run tauri:build` gera o bundle. Variáveis públicas podem ficar em `.env.local`; veja a `API.md`.
 Não coloque segredos em código, exemplos, logs ou no bundle.
+
+A biblioteca Rust usa somente `rlib` porque os alvos atuais são desktop. `main.rs` gera o contexto Tauri e
+o passa para `aplicacao::bootstrap::run`; mantenha a incorporação dos assets nessa entrada para evitar recompilar
+o backend inteiro quando apenas a interface mudar. Uma futura implementação mobile deverá rever os tipos
+de biblioteca e a entrada exigida pelo Tauri.
 
 ## Convenções de implementação
 
@@ -128,6 +133,11 @@ e limpeza temporária explicitamente.
 
 ## Downloads e instâncias
 
+`create_instance` reserva uma pasta exclusiva com sufixo numérico quando o nome normalizado já existe,
+inclusive em criações simultâneas, e retorna o ID efetivamente criado. Instalações subsequentes de modpacks
+devem usar esse retorno. Editar o nome na interface altera apenas `instance.json`, preservando a pasta e o ID
+para evitar renomeações de diretórios bloqueados pelo jogo ou por outros processos.
+
 A exclusão de instâncias exige confirmação e continua em segundo plano. O progresso percentual e erros aparecem
 em um indicador compacto, inclusive após navegar para outra aba. Exclusões adicionais aguardam em fila.
 
@@ -169,6 +179,10 @@ com `bunx playwright install chromium` se necessário. `DOME_CAPTURA_SKINS` acei
 O teste verifica os modelos clássico/slim no build de produção e a necessidade de `data:` em `connect-src`
 para buffers GLTF lidos por `fetch`. Não substitui conferir o instalador no WebView2.
 
+A aba de skins consulta o perfil uma vez por minuto por conta e compartilha consultas entre montagens da tela.
+A última textura carregada fica salva por UUID para preservar a prévia durante falhas, incluindo HTTP 429.
+Alterações de skin ou capa forçam nova consulta. A abertura não usa Steve como textura provisória.
+
 Ao concluir, informe mudanças, validação e limitações reais. Forneça título de commit e descrição em português.
 Não crie commit, push, tag ou release apenas por terminar uma edição.
 
@@ -181,10 +195,46 @@ Antes da release: instalação congelada, auditoria, `bun run verificar` e `git 
 Mantenha versões iguais em `package.json`, `src-tauri/Cargo.toml` e `src-tauri/tauri.conf.json`, atualizando
 o lockfile Rust quando necessário.
 
-O commit de release (ex: `release: Dome Launcher v0.3.3`) integrado na `main` ou o push de tag `v*` dispara
-automaticamente o workflow `release-launcher.yml`. O workflow valida a sincronização das 3 versões, cria e envia a
-tag remota caso ainda não exista, compila e publica o NSIS (Windows), o `.deb`/`.AppImage` (Linux) e o `latest.json`.
-Chaves de assinatura pertencem aos secrets da CI.
+O commit de release (ex: `release: Dome Launcher v0.3.3`) integrado na `main` dispara a publicação após o sucesso
+do workflow `validar-launcher` daquele commit. O push de tag `v*` e o disparo manual também acionam
+`release-launcher.yml`. Nesses casos, a CI reaproveita somente a aprovação de um push na `main` com o mesmo SHA
+e repositório; sem essa aprovação, executa Clippy e testes nas duas plataformas antes de empacotar.
+A validação Windows de um push na `main` guarda `dist` no artefato `frontend-producao`. A release pode
+reutilizá lo nas duas plataformas somente quando ele pertence à execução aprovada do mesmo SHA e não expirou.
+`src-tauri/tauri.ci.conf.json` desativa o comando de frontend apenas nesse caso. Sem o artefato, o build Tauri
+executa normalmente TypeScript e Vite. A interface atual não depende de variáveis de plataforma do Tauri;
+se isso mudar, a reutilização entre plataformas deverá ser revista.
+
+O workflow valida a sincronização das 3 versões, cria e envia a tag remota caso ainda não exista e compila
+Windows e Linux em paralelo. Os instaladores NSIS, `.deb` e `.AppImage` e suas assinaturas são transferidos
+como artefatos para uma etapa única de publicação. `scripts/gerar-manifesto-atualizacao.ts` exige os três
+instaladores assinados e preserva as notas do commit no `latest.json`. Uma release nova permanece como rascunho
+até todos os uploads terminarem. Chaves de assinatura pertencem aos secrets da CI.
+
+`.github/actions/preparar-compilacao/action.yml` centraliza Bun, Rust e caches. Pacotes baixados ficam em um
+cache separado dos resultados Cargo. Validação preserva somente `target/debug`; release preserva somente
+`target/release`, excluindo bundles e arquivos incrementais. Isso reduz transferências e impede que uma
+validação sem resultados de release substitua o cache usado para publicar. Sistema operacional, arquitetura,
+versão Rust, perfil, manifestos e commit participam das chaves; o Cargo confere novamente os dados restaurados.
+
+O `sccache` 0.18.0 guarda unidades compiladas no serviço de cache do GitHub e publica suas estatísticas nos logs.
+Ele complementa o cache de diretórios quando o Cargo precisa recompilar dependências. Erros de comunicação
+com o servidor permitem compilar sem esse reaproveitamento. Na CI, compilação incremental e informações
+de depuração dos perfis `dev` e `test` ficam desativadas; as asserções e os testes continuam ativos.
+Essas opções não alteram o perfil local nem reduzem a otimização do executável de release.
+
+Caches de tags diferentes não são compartilhados pelo GitHub; a branch principal pode alimentar novas tags.
+A primeira execução e mudanças de compilador ou dependências ainda podem exigir compilação completa.
+Ao atualizar Rust ou sccache, revise versões e chaves na ação local. A release guarda o relatório Cargo no
+artefato `tempos-compilacao` de cada plataforma. Compare execuções com estados de cache equivalentes.
+
+No modelo atual, `frontendDist` é incorporado ao executável pelo Tauri. `tauri bundle` pode empacotar um binário
+já compilado, mas não atualiza os arquivos da interface incorporados nele. Reutilizar esse executável entre
+releases com interfaces diferentes exigiria servir a interface separadamente e rever instalação, CSP,
+compatibilidade com os comandos Rust e atualização assinada. O cache de dependências é o reaproveitamento
+adotado sem alterar essa arquitetura. Separar o contexto no executável permite reutilizar a biblioteca quando
+seus inputs permanecem iguais, mas alterações de versão, configuração ou código Rust ainda podem invalidar
+esse resultado. O ganho real deve ser medido em uma execução remota do novo workflow.
 
 O smoke test deve cobrir instalação limpa no Windows sem ferramentas de desenvolvimento, login Microsoft,
 Vanilla/Fabric/Forge/NeoForge, seleção/instalação de Java, Modrinth/CurseForge, mundo local, conexão a servidor,
@@ -194,3 +244,5 @@ Só declare publicação após o workflow terminar e os assets remotos serem con
 Detecção da atualização, interação para instalar e disponibilidade do pacote são verificações distintas.
 A descrição publicada no `latest.json` é guardada antes da instalação e exibida uma única vez, em um modal de
 novidades, quando a versão instalada for aberta pela primeira vez. Preserve esse vínculo com `releaseBody`.
+
+As notas versionadas em `.github/releases/vX.Y.Z.md` têm prioridade sobre a mensagem do commit para o corpo da release e do manifesto. Isso preserva as novidades mesmo em merges que alteram a descrição do commit.

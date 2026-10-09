@@ -72,7 +72,7 @@ function TelaSkinsRecuperavel({ user }: { user: MinecraftAccount | null }) {
       onTentarNovamente={() => setTentativa((valor) => valor + 1)}
     >
       <Suspense fallback={<EsqueletoAba />}>
-        <GerenciadorSkins user={user} />
+        <GerenciadorSkins key={user?.uuid} user={user} />
       </Suspense>
     </LimiteErroSkins>
   );
@@ -1214,7 +1214,7 @@ export default function App() {
                 activeTab === "profile"
                   ? "border-emerald-400/45 bg-emerald-500/12"
                   : user
-                  ? "border-emerald-400/40 bg-[#171717]"
+                  ? "border-white/10 bg-[#171717] hover:border-white/25"
                   : "cursor-not-allowed border-white/10 bg-[#141414] opacity-35"
               )}
               title={user ? "Abrir perfil da comunidade" : "Entre com a Microsoft para acessar seu perfil"}
@@ -1599,7 +1599,15 @@ export default function App() {
                 exit={{ opacity: 0, x: -10 }}
               >
                 <Favorites
-                  onAbrirProjeto={(projeto) => abrirProjeto("favorites", projeto)}
+                  instalacoesEmAndamento={instalacoesDiretas.map((item) => `${item.source}:${item.id}`)}
+                  onAbrirProjeto={(projeto, instalarAgora) => {
+                    if (!instalarAgora) { abrirProjeto("favorites", projeto); return; }
+                    if (!user && projeto.project_type === "modpack") { setIsLoginOpen(true); return; }
+                    setErroInstalacaoDireta(null);
+                    setInstalacoesDiretas((atuais) => atuais.some((item) =>
+                      item.id === projeto.id && item.source === projeto.source)
+                      ? atuais : [...atuais, projeto]);
+                  }}
                 />
               </motion.div>
             )}
@@ -1734,6 +1742,7 @@ export default function App() {
 
         <AnimatePresence>
           {instanciaBarra &&
+            activeTab !== "meus-modpacks" &&
             activeTab !== "instance-manager" &&
             activeTab !== "project-detail" && (
             <motion.footer

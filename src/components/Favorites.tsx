@@ -1,441 +1,330 @@
-import { useState, useEffect, useMemo } from "react";
+﻿import { useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
+import { Heart, Search, Download, Trash2, FolderPlus, Pencil, FolderOpen, Image, Sparkles } from '../iconesPixelados';
+import type { ProjetoConteudo } from './ProjetoDetalheModal';
+import { motion, AnimatePresence } from 'framer-motion';
+import CabecalhoGrupo from './CabecalhoGrupo';
+import CardFavorito from './CardFavorito';
+import { cn } from '../lib/utils';
+import { EVENTO_FAVORITOS_ATUALIZADOS } from '../services/favoritosProjetos';
 import {
-  Heart,
-  Package,
-  Image,
-  Sparkles,
-  Trash2,
-  ExternalLink,
-  Search,
-  Filter,
-  Copy,
-} from "../iconesPixelados";
-import { motion, AnimatePresence } from "framer-motion";
-import { cn } from "../lib/utils";
-import type { ProjetoConteudo } from "./ProjetoDetalheModal";
-import { obterImagemProjeto } from "../lib/imagemProjeto";
+    loadFavorites, saveFavorites, addFavorite, removeFavorite, isFavorite, chaveFavorito,
+    carregarGruposFavoritos, salvarGruposFavoritos, sincronizarColecaoFavoritos,
+    EVENTO_SINCRONIZACAO_FAVORITOS, obterEstadoSincronizacaoFavoritos, type GrupoFavoritos,
+} from '../services/colecaoFavoritos';
 import {
-  CabecalhoMenuContextual,
-  ItemMenuContextual,
-  MenuContextual,
-  SeparadorMenuContextual,
-} from "./context-menu/MenuContextual";
+    CabecalhoMenuContextual, ItemMenuContextual, MenuContextual, SeparadorMenuContextual,
+} from './context-menu/MenuContextual';
+import { ExternalLink, Copy, Package } from '../iconesPixelados';
 
-import { registrarFavorito } from "../services/favoritosProjetos";
-
+export { loadFavorites, saveFavorites, addFavorite, removeFavorite, isFavorite };
 export interface FavoriteItem {
-  id: string;
-  title: string;
-  description: string;
-  icon_url: string;
-  author: string;
-  type: "mod" | "modpack" | "resourcepack" | "shader";
-  source: "modrinth" | "curseforge" | "dome";
-  slug: string;
-  downloads?: number;
+    id: string;
+    title: string;
+    description: string;
+    icon_url: string;
+    author: string;
+    type: 'mod' | 'modpack' | 'resourcepack' | 'shader';
+    source: 'modrinth' | 'curseforge' | 'dome';
+    slug: string;
+    downloads?: number;
+    indisponivel?: boolean;
 }
-
-const STORAGE_KEY = "dome_favorites";
-
-export function loadFavorites(): FavoriteItem[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveFavorites(favorites: FavoriteItem[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
-}
-
-export function addFavorite(item: FavoriteItem) {
-  const favorites = loadFavorites();
-  if (!favorites.find((f) => f.id === item.id && f.source === item.source)) {
-    favorites.push(item);
-    saveFavorites(favorites);
-    registrarFavorito({ source: item.source, projectId: item.id }, true);
-  }
-}
-
-export function removeFavorite(id: string, source?: FavoriteItem["source"]) {
-  const anteriores = loadFavorites();
-  const removidos = anteriores.filter((f) => f.id === id && (!source || f.source === source));
-  const favorites = anteriores.filter((f) => !removidos.includes(f));
-  saveFavorites(favorites);
-  removidos.forEach((item) => {
-    registrarFavorito({ source: item.source, projectId: item.id }, false);
-  });
-}
-
-export function isFavorite(id: string, source?: FavoriteItem["source"]): boolean {
-  return loadFavorites().some((f) => f.id === id && (!source || f.source === source));
-}
-
-const TYPE_ICONS = {
-  mod: Package,
-  modpack: Package,
-  resourcepack: Image,
-  shader: Sparkles,
-};
-
-const TYPE_LABELS = {
-  mod: "Mod",
-  modpack: "Modpack",
-  resourcepack: "Resource Pack",
-  shader: "Shader",
-};
-
-// Opções de filtro por tipo
-type FiltroTipo = "todos" | "mod" | "modpack" | "resourcepack" | "shader";
-type FiltroFonte = "todos" | "modrinth" | "curseforge" | "dome";
-
-const FILTROS_TIPO: { id: FiltroTipo; label: string; icon: typeof Package }[] = [
-  { id: "todos", label: "Todos", icon: Heart },
-  { id: "modpack", label: "Modpacks", icon: Package },
-  { id: "mod", label: "Mods", icon: Package },
-  { id: "resourcepack", label: "Textures", icon: Image },
-  { id: "shader", label: "Shaders", icon: Sparkles },
-];
-
 interface FavoritesProps {
-  onAbrirProjeto: (projeto: ProjetoConteudo) => void;
+    onAbrirProjeto: (projeto: ProjetoConteudo, instalarAgora?: boolean) => void;
+    instalacoesEmAndamento?: string[];
 }
+const ABAS_TIPO = [
+    { valor: 'todos', nome: 'Todos', Icone: Heart },
+    { valor: 'mod', nome: 'Mods', Icone: Package },
+    { valor: 'modpack', nome: 'Modpacks', Icone: Package },
+    { valor: 'resourcepack', nome: 'Texturas', Icone: Image },
+    { valor: 'shader', nome: 'Shaders', Icone: Sparkles },
+];
+const SEM_GRUPO = 'sem_grupo';
 
-export default function Favorites({ onAbrirProjeto }: FavoritesProps) {
-  const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
-  const [busca, setBusca] = useState("");
-  const [filtroTipo, setFiltroTipo] = useState<FiltroTipo>("todos");
-  const [filtroFonte, setFiltroFonte] = useState<FiltroFonte>("todos");
-  const [menuContexto, setMenuContexto] = useState<{
-    item: FavoriteItem;
-    x: number;
-    y: number;
-  } | null>(null);
+export default function Favorites({ onAbrirProjeto, instalacoesEmAndamento = [] }: FavoritesProps) {
+    const [favoritos, setFavoritos] = useState(loadFavorites);
+    const [grupos, setGrupos] = useState(carregarGruposFavoritos);
+    const [busca, setBusca] = useState('');
+    const [tipo, setTipo] = useState('todos');
+    const [nomeGrupo, setNomeGrupo] = useState('');
+    const [editandoGrupo, setEditandoGrupo] = useState<string | null>(null);
+    const [grupoExclusao, setGrupoExclusao] = useState<GrupoFavoritos | null>(null);
+    const [menuGrupo, setMenuGrupo] = useState<{ grupo: GrupoFavoritos; x: number; y: number } | null>(null);
+    const [favoritoArrastado, setFavoritoArrastado] = useState<string | null>(null);
+    const [grupoArrastado, setGrupoArrastado] = useState<string | null>(null);
+    const [grupoDestino, setGrupoDestino] = useState<string | null>(null);
+    const inputGrupo = useRef<HTMLInputElement>(null);
+    const [sincronizacao, setSincronizacao] = useState(obterEstadoSincronizacaoFavoritos);
+    const [menu, setMenu] = useState<{ item: FavoriteItem; x: number; y: number } | null>(null);
 
-  useEffect(() => {
-    setFavorites(loadFavorites());
-  }, []);
+    useEffect(() => {
+        const atualizar = () => { setFavoritos(loadFavorites()); setGrupos(carregarGruposFavoritos()); };
+        const atualizarErro = () => setSincronizacao(obterEstadoSincronizacaoFavoritos());
+        atualizar();
+        window.addEventListener(EVENTO_FAVORITOS_ATUALIZADOS, atualizar);
+        window.addEventListener(EVENTO_SINCRONIZACAO_FAVORITOS, atualizarErro);
+        void sincronizarColecaoFavoritos().catch(() => undefined);
+        return () => {
+            window.removeEventListener(EVENTO_FAVORITOS_ATUALIZADOS, atualizar);
+            window.removeEventListener(EVENTO_SINCRONIZACAO_FAVORITOS, atualizarErro);
+        };
+    }, []);
 
-  // Aplicar filtros e busca
-  const favoritosFiltrados = useMemo(() => {
-    return favorites.filter((item) => {
-      // Filtro por tipo
-      if (filtroTipo !== "todos" && item.type !== filtroTipo) return false;
-      // Filtro por fonte
-      if (filtroFonte !== "todos" && item.source !== filtroFonte) return false;
-      // Busca por texto
-      if (busca.trim()) {
-        const termo = busca.toLowerCase();
-        return (
-          item.title.toLowerCase().includes(termo) ||
-          item.author.toLowerCase().includes(termo) ||
-          item.description.toLowerCase().includes(termo)
-        );
-      }
-      return true;
-    });
-  }, [favorites, filtroTipo, filtroFonte, busca]);
+    const filtrados = useMemo(() => favoritos.filter((item) => {
+        if (tipo !== 'todos' && item.type !== tipo) return false;
+        return `${item.title} ${item.author} ${item.description}`.toLowerCase().includes(busca.trim().toLowerCase());
+    }), [favoritos, tipo, busca]);
+    const ordemSemGrupo = grupos.find((grupo) => grupo.id === SEM_GRUPO);
+    const semGrupo = favoritos.filter((item) => !grupos.some((grupo) => grupo.id !== SEM_GRUPO
+        && grupo.favoritos.includes(chaveFavorito(item)))).map(chaveFavorito);
+    const grupoPadrao: GrupoFavoritos = {
+        id: SEM_GRUPO, nome: ordemSemGrupo?.nome ?? 'Favoritos', recolhido: ordemSemGrupo?.recolhido ?? false,
+        favoritos: [...(ordemSemGrupo?.favoritos ?? []).filter((chave) => semGrupo.includes(chave)),
+            ...semGrupo.filter((chave) => !ordemSemGrupo?.favoritos.includes(chave))],
+    };
+    const exibidos = grupos.map((grupo) => grupo.id === SEM_GRUPO ? grupoPadrao : grupo);
+    if (!ordemSemGrupo) exibidos.unshift(grupoPadrao);
+    function moverFavorito(chave: string, grupoId: string, antesDe?: string, posicao: 'antes' | 'depois' = 'antes') {
+        if (!favoritos.some((item) => chaveFavorito(item) === chave) || chave === antesDe) return;
+        const novos = exibidos.map((grupo) => ({
+            ...grupo, favoritos: grupo.favoritos.filter((item) => item !== chave),
+        }));
+        const destino = novos.find((grupo) => grupo.id === grupoId);
+        if (destino) {
+            const indice = antesDe ? destino.favoritos.indexOf(antesDe) : -1;
+            const insercao = indice < 0 ? destino.favoritos.length : indice + Number(posicao === 'depois');
+            destino.favoritos.splice(insercao, 0, chave);
+        }
+        salvarGruposFavoritos(novos);
+    }
+    function renomearGrupo(grupo: GrupoFavoritos) {
+        setEditandoGrupo(grupo.id); setNomeGrupo(grupo.nome);
+        window.setTimeout(() => inputGrupo.current?.select(), 50);
+    }
+    function criarGrupo() {
+        if (exibidos.length >= 100) return;
+        const grupo = { id: crypto.randomUUID().replace(/-/g, ''), nome: 'Novo Grupo',
+            recolhido: false, favoritos: [] };
+        salvarGruposFavoritos([...exibidos, grupo]);
+        renomearGrupo(grupo);
+    }
+    function salvarNomeGrupo(id: string) {
+        if (!nomeGrupo.trim()) return;
+        salvarGruposFavoritos(exibidos.map((grupo) => grupo.id === id ? { ...grupo, nome: nomeGrupo.trim() } : grupo));
+        setEditandoGrupo(null);
+    }
+    function excluirGrupo(grupo: GrupoFavoritos) {
+        const destino = exibidos.find((item) => item.id !== grupo.id);
+        if (!destino) return;
+        salvarGruposFavoritos(exibidos.filter((item) => item.id !== grupo.id).map((item) => item.id === destino.id
+            ? { ...item, id: grupo.id === SEM_GRUPO ? SEM_GRUPO : item.id,
+                favoritos: [...new Set([...item.favoritos, ...grupo.favoritos])] } : item));
+        setGrupoExclusao(null);
+    }
+    function limparDestinoArrasto() {
+        document.querySelectorAll<HTMLElement>('[data-favorito-id][data-destino-arrasto]').forEach((card) => {
+            delete card.dataset.destinoArrasto;
+        });
+    }
+    function obterDestinoArrasto(x: number, y: number) {
+        const elemento = document.elementFromPoint(x, y);
+        const card = elemento?.closest<HTMLElement>('[data-favorito-id][data-grupo-id]');
+        const grupo = elemento?.closest<HTMLElement>('[data-grupo-favoritos]');
+        return { card, grupoId: grupo?.dataset.grupoId };
+    }
+    function moverArrasto(_id: string, x: number, y: number) {
+        limparDestinoArrasto();
+        const { card, grupoId } = obterDestinoArrasto(x, y);
+        setGrupoDestino(grupoId ?? null);
+        if (card) card.dataset.destinoArrasto = x < card.getBoundingClientRect().left
+            + card.getBoundingClientRect().width / 2 ? 'antes' : 'depois';
+    }
+    function finalizarArrasto(id?: string, x?: number, y?: number) {
+        if (id && x !== undefined && y !== undefined) {
+            const { card, grupoId } = obterDestinoArrasto(x, y);
+            if (grupoId) moverFavorito(id, grupoId, card?.dataset.favoritoId,
+                card?.dataset.destinoArrasto === 'depois' ? 'depois' : 'antes');
+        }
+        limparDestinoArrasto(); setFavoritoArrastado(null); setGrupoDestino(null);
+    }
+    function iniciarArrastoGrupo(evento: MouseEvent, id: string) {
+        if (evento.button !== 0) return;
+        evento.preventDefault(); evento.stopPropagation(); setGrupoArrastado(id);
+    }
+    function entrarGrupoDestino(id: string) {
+        if (!grupoArrastado || grupoArrastado === id) return;
+        const novos = [...exibidos];
+        const origem = novos.findIndex((grupo) => grupo.id === grupoArrastado);
+        const destino = novos.findIndex((grupo) => grupo.id === id);
+        if (origem < 0 || destino < 0) return;
+        const [movido] = novos.splice(origem, 1);
+        novos.splice(destino, 0, movido);
+        salvarGruposFavoritos(novos);
+    }
+    useEffect(() => {
+        if (!grupoArrastado && !favoritoArrastado) return;
+        const cursor = document.body.style.cursor;
+        const selecao = document.body.style.userSelect;
+        document.body.style.cursor = 'grabbing'; document.body.style.userSelect = 'none';
+        const encerrar = () => setGrupoArrastado(null);
+        window.addEventListener('mouseup', encerrar);
+        window.addEventListener('blur', encerrar);
+        return () => {
+            window.removeEventListener('mouseup', encerrar); window.removeEventListener('blur', encerrar);
+            document.body.style.cursor = cursor; document.body.style.userSelect = selecao;
+        };
+    }, [grupoArrastado, favoritoArrastado]);
+    function abrir(item: FavoriteItem, instalarAgora = false) {
+        onAbrirProjeto({ ...item, project_type: item.type }, instalarAgora);
+    }
+    function obterUrl(item: FavoriteItem) {
+        if (item.source === 'dome') return `https://domestudios.com.br/modpacks/${item.id}`;
+        if (item.source === 'modrinth') return `https://modrinth.com/${item.type}/${item.slug}`;
+        const categorias = { mod: 'mc-mods', modpack: 'modpacks', resourcepack: 'texture-packs', shader: 'shaders' };
+        return `https://www.curseforge.com/minecraft/${categorias[item.type]}/${item.slug}`;
+    }
 
-  // Contadores para badges dos filtros
-  const contadores = useMemo(() => {
-    const cont: Record<string, number> = { todos: favorites.length };
-    favorites.forEach((item) => {
-      cont[item.type] = (cont[item.type] || 0) + 1;
-      cont[item.source] = (cont[item.source] || 0) + 1;
-    });
-    return cont;
-  }, [favorites]);
-
-  const handleRemove = (id: string) => {
-    removeFavorite(id);
-    setFavorites(loadFavorites());
-  };
-
-  const obterUrlProjeto = (item: FavoriteItem) =>
-      item.source === "modrinth"
-        ? `https://modrinth.com/${item.type}/${item.slug}`
-        : item.type === "modpack"
-          ? `https://www.curseforge.com/minecraft/modpacks/${item.slug}`
-          : item.type === "resourcepack"
-            ? `https://www.curseforge.com/minecraft/texture-packs/${item.slug}`
-            : item.type === "shader"
-              ? `https://www.curseforge.com/minecraft/shaders/${item.slug}`
-              : `https://www.curseforge.com/minecraft/mc-mods/${item.slug}`;
-
-  const openProject = (item: FavoriteItem) => {
-    window.open(obterUrlProjeto(item), "_blank");
-  };
-
-  const abrirDetalhes = (item: FavoriteItem) => {
-    onAbrirProjeto({
-      id: item.id,
-      title: item.title,
-      description: item.description,
-      icon_url: item.icon_url,
-      author: item.author,
-      source: item.source,
-      slug: item.slug,
-      project_type: item.type,
-    });
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Cabeçalho */}
-      <div className="flex items-center gap-3 mb-2">
-        <div className="p-3 bg-pink-500/10 rounded-2xl border border-pink-500/20">
-          <Heart className="text-pink-500" size={24} />
+    return <div className="space-y-5">
+        <div className="flex items-center gap-3">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border
+                border-pink-500/20 bg-pink-500/10">
+                <Heart size={24} className="text-pink-500" />
+            </div>
+            <span className="text-sm text-white/50">{favoritos.length} favoritos</span>
         </div>
-        <div className="flex-1">
-          <p className="text-xs uppercase tracking-wider text-white/35 font-bold">
-            Sua coleção
-          </p>
-          <p className="text-white/40 text-sm">
-            {favorites.length} {favorites.length === 1 ? "favorito" : "favoritos"}
-          </p>
-        </div>
-      </div>
-
-      {/* Barra de busca e filtros */}
-      <div className="flex flex-col gap-4">
-        {/* Busca */}
+        {sincronizacao.erro && <div role="alert" className="text-sm text-amber-300">
+            Não foi possível sincronizar. Suas alterações estão salvas neste computador.
+            <button className="ml-3 underline" onClick={() => {
+                void sincronizarColecaoFavoritos().catch(() => undefined);
+            }}>Tentar novamente</button>
+        </div>}
         <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={18} />
-          <input
-            type="text"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar nos favoritos..."
-            className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500/40 transition-all"
-          />
+            <Search className="absolute left-4 top-3 text-white/30" size={18} />
+            <input aria-label="Buscar favoritos" placeholder="Buscar nos favoritos" value={busca}
+                onChange={(evento) => setBusca(evento.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm" />
         </div>
-
-        {/* Filtros */}
-        <div className="flex flex-wrap items-center gap-4">
-          {/* Filtro por tipo */}
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-            {FILTROS_TIPO.map((filtro) => (
-              <button
-                key={filtro.id}
-                onClick={() => setFiltroTipo(filtro.id)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5",
-                  filtroTipo === filtro.id
-                    ? "bg-pink-500 text-white"
-                    : "text-white/40 hover:text-white"
-                )}
-              >
-                <filtro.icon size={12} />
-                {filtro.label}
-                {contadores[filtro.id] ? (
-                  <span className="ml-1 text-[9px] opacity-70">
-                    ({contadores[filtro.id]})
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex-1" />
-
-          {/* Filtro por fonte */}
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-            <button
-              onClick={() => setFiltroFonte("dome")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                filtroFonte === "dome" ? "bg-sky-400 text-black" : "text-white/40 hover:text-white"
-              )}
-            >
-              Dome {contadores.dome ? `(${contadores.dome})` : ""}
-            </button>
-            <button
-              onClick={() => setFiltroFonte("todos")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                filtroFonte === "todos"
-                  ? "bg-white/15 text-white"
-                  : "text-white/40 hover:text-white"
-              )}
-            >
-              <Filter size={12} className="inline mr-1" />
-              Todas
-            </button>
-            <button
-              onClick={() => setFiltroFonte("modrinth")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                filtroFonte === "modrinth"
-                  ? "bg-emerald-500 text-black"
-                  : "text-white/40 hover:text-white"
-              )}
-            >
-              Modrinth
-              {contadores.modrinth ? (
-                <span className="ml-1 text-[9px] opacity-70">
-                  ({contadores.modrinth})
-                </span>
-              ) : null}
-            </button>
-            <button
-              onClick={() => setFiltroFonte("curseforge")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border",
-                filtroFonte === "curseforge"
-                  ? "bg-[#f16436] text-white border-[#f16436]"
-                  : "text-white/40 hover:text-white border-transparent"
-              )}
-            >
-              CurseForge
-              {contadores.curseforge ? (
-                <span className="ml-1 text-[9px] opacity-70">
-                  ({contadores.curseforge})
-                </span>
-              ) : null}
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center gap-3 border-b border-white/10 pb-3">
+            <div role="group" aria-label="Tipo de conteúdo" className="flex flex-wrap gap-1">
+                {ABAS_TIPO.map(({ valor, nome, Icone }) => <button key={valor} type="button"
+                    aria-pressed={tipo === valor} onClick={() => setTipo(valor)} className={cn(
+                        'flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors',
+                        tipo === valor ? 'bg-pink-500/10 text-pink-300' : 'text-white/50 hover:text-white',
+                    )}><Icone size={15} aria-hidden="true" />{nome}</button>)}
+            </div>
+            <button onClick={criarGrupo} title="Criar grupo" aria-label="Criar grupo" className={cn(
+                'ml-auto flex shrink-0 items-center gap-1.5 px-3 py-2 bg-white/3 border border-white/5 rounded-xl',
+                'text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all',
+            )}><FolderPlus size={13} /></button>
         </div>
-      </div>
-
-      {/* Lista de favoritos */}
-      {favorites.length === 0 ? (
-        <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-3xl">
-          <Heart size={48} className="mx-auto mb-4 text-white/10" />
-          <p className="text-white/40 font-bold">Nenhum favorito ainda</p>
-          <p className="text-white/30 text-sm mt-1">
-            Explore mods e modpacks e adicione aos favoritos
-          </p>
-        </div>
-      ) : favoritosFiltrados.length === 0 ? (
-        <div className="text-center py-16 border-2 border-dashed border-white/5 rounded-3xl">
-          <Search size={40} className="mx-auto mb-4 text-white/10" />
-          <p className="text-white/40 font-bold">Nenhum resultado</p>
-          <p className="text-white/30 text-sm mt-1">
-            Tente ajustar os filtros ou a busca
-          </p>
-        </div>
-      ) : (
-        <AnimatePresence>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {favoritosFiltrados.map((item) => {
-              const TypeIcon = TYPE_ICONS[item.type] || Package;
-              return (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  onClick={() => abrirDetalhes(item)}
-                  onContextMenu={(evento) => {
-                    evento.preventDefault();
-                    evento.stopPropagation();
-                    setMenuContexto({ item, x: evento.clientX, y: evento.clientY });
-                  }}
-                  className="bg-white/3 border border-white/5 rounded-2xl p-4 group hover:border-white/10 transition-all cursor-pointer"
-                >
-                  <div className="flex gap-4">
-                    <img
-                      src={obterImagemProjeto(item.icon_url, item.type, item.id)}
-                      alt={item.title}
-                      className="w-14 h-14 rounded-xl bg-black/40 object-cover shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-bold truncate group-hover:text-emerald-400 transition-colors">
-                        {item.title}
-                      </h3>
-                      <p className="text-xs text-white/40">por {item.author}</p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="bg-white/5 px-2 py-0.5 rounded text-[10px] font-bold uppercase flex items-center gap-1">
-                          <TypeIcon size={10} />
-                          {TYPE_LABELS[item.type]}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                            item.source === "modrinth"
-                              ? "bg-emerald-500/10 text-emerald-400"
-                              : "bg-orange-500/10 text-orange-400"
-                          }`}
-                        >
-                          {item.source}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-sm text-white/50 line-clamp-2 mt-3">
-                    {item.description}
-                  </p>
-
-                  <div className="flex gap-2 mt-4">
-                    <button
-                      onClick={(evento) => {
-                        evento.stopPropagation();
-                        openProject(item);
-                      }}
-                      className="px-3 bg-white/5 hover:bg-white/10 rounded-xl py-2 text-sm font-bold flex items-center justify-center gap-2 transition-all"
-                    >
-                      <ExternalLink size={14} />
-                    </button>
-                    <button
-                      onClick={(evento) => {
-                        evento.stopPropagation();
-                        handleRemove(item.id);
-                      }}
-                      className="p-2 bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400 rounded-xl transition-all"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </AnimatePresence>
-      )}
-
-      <MenuContextual
-        aberto={menuContexto !== null}
-        x={menuContexto?.x ?? 0}
-        y={menuContexto?.y ?? 0}
-        onFechar={() => setMenuContexto(null)}
-        rotulo="Ações do favorito"
-      >
-        {menuContexto && (
-          <>
-            <CabecalhoMenuContextual
-              titulo={menuContexto.item.title}
-              subtitulo={`${TYPE_LABELS[menuContexto.item.type]} · ${menuContexto.item.source}`}
-            />
-            <ItemMenuContextual icone={<Package size={13} />} onClick={() => {
-              abrirDetalhes(menuContexto.item);
-              setMenuContexto(null);
-            }}>
-              Ver detalhes
-            </ItemMenuContextual>
-            <ItemMenuContextual icone={<ExternalLink size={13} />} onClick={() => {
-              openProject(menuContexto.item);
-              setMenuContexto(null);
-            }}>
-              Abrir página do projeto
-            </ItemMenuContextual>
-            <ItemMenuContextual icone={<Copy size={13} />} onClick={() => {
-              void navigator.clipboard.writeText(obterUrlProjeto(menuContexto.item));
-              setMenuContexto(null);
-            }}>
-              Copiar link
-            </ItemMenuContextual>
-            <SeparadorMenuContextual />
-            <ItemMenuContextual icone={<Trash2 size={13} />} perigo onClick={() => {
-              handleRemove(menuContexto.item.id);
-              setMenuContexto(null);
-            }}>
-              Remover dos favoritos
-            </ItemMenuContextual>
-          </>
-        )}
-      </MenuContextual>
-    </div>
-  );
+        {!favoritos.length && <p role="status" className="py-12 text-center text-white/40">
+            {sincronizacao.carregando ? 'Carregando favoritos' : 'Nenhum favorito ainda'}
+        </p>}
+        {favoritos.length > 0 && !filtrados.length && <p className="text-white/40">Nenhum resultado</p>}
+        {exibidos.map((grupo) => {
+            const itens = grupo.favoritos.map((chave) => filtrados.find((item) => chaveFavorito(item) === chave))
+                .filter((item): item is FavoriteItem => Boolean(item));
+            if ((busca || tipo !== 'todos') && !itens.length) return null;
+            return <motion.div key={grupo.id} layout="position"
+                transition={{ layout: { duration: 0.16, ease: 'easeOut' } }}
+                onMouseEnter={() => entrarGrupoDestino(grupo.id)} data-grupo-favoritos data-grupo-id={grupo.id}
+                className={cn('rounded-xl border transition-colors', grupoDestino === grupo.id
+                    ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-transparent',
+                    grupoArrastado === grupo.id ? 'opacity-45' : 'opacity-100')}>
+                <CabecalhoGrupo nome={grupo.nome} quantidade={itens.length} recolhido={grupo.recolhido}
+                    editando={editandoGrupo === grupo.id} nomeEditado={nomeGrupo} inputRef={inputGrupo}
+                    podeExcluir={exibidos.length > 1} onAlternar={() => salvarGruposFavoritos(exibidos.map((item) =>
+                        item.id === grupo.id ? { ...item, recolhido: !item.recolhido } : item))}
+                    onRenomear={() => renomearGrupo(grupo)} onNomeChange={setNomeGrupo}
+                    onNomeSalvar={() => salvarNomeGrupo(grupo.id)} onExcluir={() => setGrupoExclusao(grupo)}
+                    onIniciarArrasto={(evento) => iniciarArrastoGrupo(evento, grupo.id)}
+                    onMenuContexto={(evento) => {
+                        evento.preventDefault(); setMenuGrupo({ grupo, x: evento.clientX, y: evento.clientY });
+                    }} />
+                <AnimatePresence>{!grupo.recolhido && <motion.div initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.15 }} className="overflow-hidden">
+                    {!itens.length ? <div className={cn(
+                        'mx-1 mb-2 rounded-xl border border-dashed border-white/5 py-6',
+                        'text-center text-xs text-white/10',
+                    )}>Arraste favoritos para este grupo</div>
+                    : <div className="grid grid-cols-1 gap-4 px-1 pb-2 md:grid-cols-2 xl:grid-cols-3">
+                        {itens.map((item) => <CardFavorito key={chaveFavorito(item)} item={item} grupoId={grupo.id}
+                            instalando={instalacoesEmAndamento.includes(chaveFavorito(item))}
+                            arrastando={favoritoArrastado === chaveFavorito(item)} onAbrir={abrir}
+                            onRemover={(item) => removeFavorite(item.id, item.source)}
+                            onMenu={(evento, item) => {
+                                evento.preventDefault(); setMenu({ item, x: evento.clientX, y: evento.clientY });
+                            }} onIniciarArrasto={setFavoritoArrastado} onMoverArrasto={moverArrasto}
+                            onFinalizarArrasto={finalizarArrasto} />)}
+                    </div>}
+                </motion.div>}</AnimatePresence>
+            </motion.div>;
+        })}
+        {grupoExclusao && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setGrupoExclusao(null)}>
+            <div role="alertdialog" aria-modal="true" aria-labelledby="titulo-excluir-grupo-favoritos"
+                className="w-full max-w-sm border border-white/12 bg-[#151516] shadow-2xl"
+                onClick={(evento) => evento.stopPropagation()}>
+                <div className="border-b border-white/8 px-4 py-3">
+                    <p id="titulo-excluir-grupo-favoritos"
+                        className="text-xs font-black uppercase tracking-wide text-white/85">Excluir grupo</p>
+                </div>
+                <p className="px-4 py-4 text-xs leading-relaxed text-white/55">
+                    O grupo <strong className="text-white/85">{grupoExclusao.nome}</strong> será excluído.
+                    Os favoritos serão movidos para outro grupo.
+                </p>
+                <div className="flex justify-end gap-2 border-t border-white/8 px-4 py-3">
+                    <button autoFocus onClick={() => setGrupoExclusao(null)} className={cn(
+                        'px-3 py-2 text-[10px] font-bold uppercase tracking-wide',
+                        'text-white/45 hover:text-white/75',
+                    )}>Cancelar</button>
+                    <button onClick={() => excluirGrupo(grupoExclusao)} className={cn(
+                        'border border-red-400/25 bg-red-400/8 px-3 py-2 text-[10px] font-bold',
+                        'uppercase tracking-wide text-red-200 hover:bg-red-400/14',
+                    )}>Excluir grupo</button>
+                </div>
+            </div>
+        </div>}
+        <MenuContextual aberto={menuGrupo !== null} x={menuGrupo?.x ?? 0} y={menuGrupo?.y ?? 0}
+            onFechar={() => setMenuGrupo(null)} rotulo="Ações do grupo">
+            {menuGrupo && <>
+                <CabecalhoMenuContextual titulo={menuGrupo.grupo.nome} />
+                <ItemMenuContextual icone={<Pencil size={13} />} onClick={() => {
+                    renomearGrupo(menuGrupo.grupo); setMenuGrupo(null);
+                }}>Renomear grupo</ItemMenuContextual>
+                <ItemMenuContextual icone={<Trash2 size={13} />} perigo disabled={exibidos.length <= 1}
+                    onClick={() => { setGrupoExclusao(menuGrupo.grupo); setMenuGrupo(null); }}>Excluir grupo</ItemMenuContextual>
+            </>}
+        </MenuContextual>
+        <MenuContextual aberto={menu !== null} x={menu?.x ?? 0} y={menu?.y ?? 0}
+            onFechar={() => setMenu(null)} rotulo="Ações do favorito">
+            {menu && <>
+                <CabecalhoMenuContextual titulo={menu.item.title} subtitulo={menu.item.source} />
+                <ItemMenuContextual icone={<Package size={13} />} onClick={() => {
+                    abrir(menu.item); setMenu(null);
+                }}>Ver detalhes</ItemMenuContextual>
+                <ItemMenuContextual icone={<Download size={13} />} disabled={menu.item.indisponivel}
+                    onClick={() => {
+                    abrir(menu.item, true); setMenu(null);
+                }}>Instalar</ItemMenuContextual>
+                <ItemMenuContextual icone={<ExternalLink size={13} />} onClick={() => {
+                    window.open(obterUrl(menu.item), '_blank'); setMenu(null);
+                }}>Abrir página do projeto</ItemMenuContextual>
+                <ItemMenuContextual icone={<Copy size={13} />} onClick={() => {
+                    void navigator.clipboard.writeText(obterUrl(menu.item)); setMenu(null);
+                }}>Copiar link</ItemMenuContextual>
+                <SeparadorMenuContextual />
+                {exibidos.map((grupo) => <ItemMenuContextual key={grupo.id} icone={<FolderOpen size={13} />}
+                    disabled={grupo.favoritos.includes(chaveFavorito(menu.item))} onClick={() => {
+                        moverFavorito(chaveFavorito(menu.item), grupo.id); setMenu(null);
+                    }}>Mover para {grupo.nome}</ItemMenuContextual>)}
+                <SeparadorMenuContextual />
+                <ItemMenuContextual icone={<Trash2 size={13} />} perigo onClick={() => {
+                    removeFavorite(menu.item.id, menu.item.source); setMenu(null);
+                }}>Remover dos favoritos</ItemMenuContextual>
+            </>}
+        </MenuContextual>
+    </div>;
 }

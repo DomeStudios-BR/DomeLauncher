@@ -1678,6 +1678,7 @@ pub(crate) struct DetalhesProjetoCurseforge {
     author: String,
     slug: String,
     downloads: Option<u64>,
+    project_type: String,
     categorias: Vec<String>,
     galeria: Vec<ImagemGaleriaProjetoCurseforge>,
 }
@@ -1806,6 +1807,13 @@ pub(crate) async fn buscar_detalhes_projeto_curseforge(
         author,
         slug,
         downloads: dados["downloadCount"].as_u64(),
+        project_type: match dados["classId"].as_u64() {
+            Some(4471) => "modpack",
+            Some(12) => "resourcepack",
+            Some(6552) => "shader",
+            _ => "mod",
+        }
+        .to_string(),
         categorias,
         galeria,
     })

@@ -907,122 +907,24 @@ export default function Explore({
               }
             >
               <div className={cn(
-                "grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)]",
-                "gap-2 rounded-2xl border border-white/10 bg-white/[0.035] p-3"
+                "grid grid-cols-6",
+                "gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4"
               )}>
-                <div className="order-3 min-w-0">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
-                    Minecraft
-                  </span>
-                  <div ref={seletorVersaoRef} className="relative">
-                    <div
-                      className={cn(
-                        "flex items-center rounded-xl border border-white/10 bg-[#171717]",
-                        "focus-within:border-emerald-500/50"
-                      )}
-                    >
-                      <Search size={13} className="ml-3 shrink-0 text-white/35" />
-                      <input
-                        type="text"
-                        role="combobox"
-                        aria-label="Pesquisar versão do Minecraft"
-                        aria-expanded={seletorVersaoAberto}
-                        aria-controls="opcoes-versao-minecraft"
-                        autoComplete="off"
-                        value={seletorVersaoAberto ? pesquisaVersao : versaoMinecraft}
-                        placeholder={versaoMinecraft || "Todas as versões"}
-                        onFocus={() => setSeletorVersaoAberto(true)}
-                        onChange={(evento) => {
-                          setPesquisaVersao(evento.target.value);
-                          setSeletorVersaoAberto(true);
-                        }}
-                        className="min-w-0 flex-1 bg-transparent px-2 py-2 text-xs font-bold text-white outline-none"
-                      />
-                      <button
-                        type="button"
-                        aria-label={seletorVersaoAberto ? "Fechar versões" : "Abrir versões"}
-                        onClick={() => {
-                          setPesquisaVersao("");
-                          setSeletorVersaoAberto((aberto) => !aberto);
-                        }}
-                        className="self-stretch px-3 text-white/35 transition-colors hover:text-white/70"
-                      >
-                        <ChevronDown
-                          size={14}
-                          className={cn("transition-transform", seletorVersaoAberto && "rotate-180")}
-                        />
-                      </button>
-                    </div>
-
-                    <AnimatePresence>
-                      {seletorVersaoAberto && (
-                        <motion.div
-                          id="opcoes-versao-minecraft"
-                          role="listbox"
-                          initial={{ opacity: 0, y: -4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          className={cn(
-                            "scrollbar-custom absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto",
-                            "rounded-xl border border-white/10 bg-[#171717] p-1 shadow-2xl"
-                          )}
-                        >
-                          <button
-                            type="button"
-                            role="option"
-                            aria-selected={!versaoMinecraft}
-                            onClick={() => selecionarVersaoMinecraft("")}
-                            className={cn(
-                              "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
-                              !versaoMinecraft && "bg-emerald-500/15 text-emerald-300"
-                            )}
-                          >
-                            Todas as versões
-                          </button>
-                          {versoesMinecraftFiltradas.map((versao) => (
-                            <button
-                              key={versao}
-                              type="button"
-                              role="option"
-                              aria-selected={versaoMinecraft === versao}
-                              onClick={() => selecionarVersaoMinecraft(versao)}
-                              className={cn(
-                                "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
-                                versaoMinecraft === versao && "bg-emerald-500/15 text-emerald-300"
-                              )}
-                            >
-                              {versao}
-                            </button>
-                          ))}
-                          {versoesMinecraftFiltradas.length === 0 && pesquisaVersao.trim() && (
-                            <p className="px-3 py-4 text-center text-xs text-white/40">
-                              Nenhuma versão encontrada.
-                            </p>
-                          )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </div>
-
-                <label className="order-4 min-w-0">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
-                    Modloader
+                <div className="col-span-2 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold text-white/45">
+                    Ordenar por
                   </span>
                   <div className="relative">
                     <select
-                      value={loader}
-                      aria-label="Modloader"
-                      onChange={(evento) => setLoader(evento.target.value as LoaderFiltro)}
-                      disabled={!["mod", "modpack"].includes(contentType)}
+                      aria-label="Ordenação dos resultados"
+                      value={ordenacao}
+                      onChange={(evento) => setOrdenacao(evento.target.value as OrdenacaoBusca)}
                       className={cn(
                         "w-full appearance-none rounded-xl border border-white/10 bg-[#171717]",
-                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50",
-                        "disabled:cursor-not-allowed disabled:opacity-35"
+                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50"
                       )}
                     >
-                      <option value="">Todos os loaders</option>
-                      {LOADERS.map((opcao) => (
+                      {ORDENACOES.map((opcao) => (
                         <option key={opcao.id} value={opcao.id}>{opcao.nome}</option>
                       ))}
                     </select>
@@ -1031,90 +933,13 @@ export default function Explore({
                       className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/35"
                     />
                   </div>
-                </label>
-
-                <div className="order-5 min-w-0">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
-                    Fonte
-                  </span>
-                  <div ref={seletorFontesRef} className="relative">
-                    <button
-                      type="button"
-                      aria-haspopup="listbox"
-                      aria-expanded={seletorFontesAberto}
-                      onClick={() => setSeletorFontesAberto((aberto) => !aberto)}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#171717]",
-                        "px-3 py-2 text-left text-xs font-bold text-white outline-none focus:border-emerald-500/50"
-                      )}
-                    >
-                      <span className="truncate">{resumoFontes}</span>
-                      <ChevronDown
-                        size={14}
-                        className={cn(
-                          "shrink-0 text-white/35 transition-transform",
-                          seletorFontesAberto && "rotate-180"
-                        )}
-                      />
-                    </button>
-
-                    <AnimatePresence>
-                      {seletorFontesAberto && (
-                        <motion.div
-                          role="listbox"
-                          aria-label="Fontes do conteúdo"
-                          aria-multiselectable="true"
-                          initial={{ opacity: 0, y: -4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          className={cn(
-                            "absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-white/10",
-                            "bg-[#171717] p-1 shadow-2xl"
-                          )}
-                        >
-                          {FONTES.filter((fonte) => contentType === "modpack" || fonte !== "dome").map((opcaoFonte) => {
-                            const ativa = fontesSelecionadas[opcaoFonte];
-                            const nomeFonte = opcaoFonte === "dome" ? "Dome (beta)" : opcaoFonte === "modrinth" ? "Modrinth" : "CurseForge";
-
-                            return (
-                              <button
-                                key={opcaoFonte}
-                                type="button"
-                                role="option"
-                                aria-selected={ativa}
-                                onClick={() => alternarFonte(opcaoFonte)}
-                                className={cn(
-                                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold",
-                                  "transition-colors hover:bg-white/5",
-                                  ativa && opcaoFonte === "modrinth" && "bg-[#1bd96a]/10 text-[#1bd96a]",
-                                  ativa && opcaoFonte === "curseforge" && "bg-orange-400/10 text-orange-300",
-                                  !ativa && "text-white/60"
-                                )}
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  className={cn(
-                                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                                    ativa ? "border-current bg-current/10" : "border-white/20 bg-black/20"
-                                  )}
-                                >
-                                  {ativa && <Check size={11} strokeWidth={3} />}
-                                </span>
-                                <span className="truncate">{nomeFonte}</span>
-                              </button>
-                            );
-                          })}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
                 </div>
 
-                <div className="order-2 min-w-0">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-white/35">
+                <div className="col-span-2 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold text-white/45">
                     Categorias
                   </span>
-                  <div ref={seletorCategoriasRef} className="relative grid gap-1.5">
+                  <div ref={seletorCategoriasRef} className="relative grid grid-cols-1 gap-1.5">
                     <button
                       type="button"
                       aria-haspopup="listbox"
@@ -1127,7 +952,7 @@ export default function Explore({
                         "disabled:cursor-not-allowed disabled:opacity-35"
                       )}
                     >
-                      <span className="truncate">
+                      <span className="min-w-0 flex-1 truncate">
                         {carregandoCategorias
                           ? "Carregando categorias..."
                           : erroCategorias
@@ -1238,26 +1063,195 @@ export default function Explore({
                   </div>
                 </div>
 
-                <div className="order-1 min-w-0">
-                  <span
-                    className={cn(
-                      "mb-1.5 block text-[10px] font-bold uppercase",
-                      "tracking-wider text-white/35"
-                    )}
-                  >
-                    Ordenar por
+                <div className="col-span-2 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold text-white/45">
+                    Fonte
+                  </span>
+                  <div ref={seletorFontesRef} className="relative">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={seletorFontesAberto}
+                      onClick={() => setSeletorFontesAberto((aberto) => !aberto)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#171717]",
+                        "px-3 py-2 text-left text-xs font-bold text-white outline-none focus:border-emerald-500/50"
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{resumoFontes}</span>
+                      <ChevronDown
+                        size={14}
+                        className={cn(
+                          "shrink-0 text-white/35 transition-transform",
+                          seletorFontesAberto && "rotate-180"
+                        )}
+                      />
+                    </button>
+
+                    <AnimatePresence>
+                      {seletorFontesAberto && (
+                        <motion.div
+                          role="listbox"
+                          aria-label="Fontes do conteúdo"
+                          aria-multiselectable="true"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className={cn(
+                            "absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-white/10",
+                            "bg-[#171717] p-1 shadow-2xl"
+                          )}
+                        >
+                          {FONTES.filter((fonte) => contentType === "modpack" || fonte !== "dome").map((opcaoFonte) => {
+                            const ativa = fontesSelecionadas[opcaoFonte];
+                            const nomeFonte = opcaoFonte === "dome" ? "Dome (beta)" : opcaoFonte === "modrinth" ? "Modrinth" : "CurseForge";
+
+                            return (
+                              <button
+                                key={opcaoFonte}
+                                type="button"
+                                role="option"
+                                aria-selected={ativa}
+                                onClick={() => alternarFonte(opcaoFonte)}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold",
+                                  "transition-colors hover:bg-white/5",
+                                  ativa && opcaoFonte === "modrinth" && "bg-[#1bd96a]/10 text-[#1bd96a]",
+                                  ativa && opcaoFonte === "curseforge" && "bg-orange-400/10 text-orange-300",
+                                  !ativa && "text-white/60"
+                                )}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                    ativa ? "border-current bg-current/10" : "border-white/20 bg-black/20"
+                                  )}
+                                >
+                                  {ativa && <Check size={11} strokeWidth={3} />}
+                                </span>
+                                <span className="truncate">{nomeFonte}</span>
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
+                <div className="col-span-3 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold text-white/45">
+                    Minecraft
+                  </span>
+                  <div ref={seletorVersaoRef} className="relative">
+                    <div
+                      className={cn(
+                        "flex items-center rounded-xl border border-white/10 bg-[#171717]",
+                        "focus-within:border-emerald-500/50"
+                      )}
+                    >
+                      <input
+                        type="text"
+                        role="combobox"
+                        aria-label="Pesquisar versão do Minecraft"
+                        aria-expanded={seletorVersaoAberto}
+                        aria-controls="opcoes-versao-minecraft"
+                        autoComplete="off"
+                        value={seletorVersaoAberto ? pesquisaVersao : versaoMinecraft}
+                        placeholder={versaoMinecraft || "Todas as versões"}
+                        onFocus={() => setSeletorVersaoAberto(true)}
+                        onChange={(evento) => {
+                          setPesquisaVersao(evento.target.value);
+                          setSeletorVersaoAberto(true);
+                        }}
+                        className="min-w-0 flex-1 bg-transparent px-3 py-2 text-xs font-bold text-white outline-none"
+                      />
+                      <button
+                        type="button"
+                        aria-label={seletorVersaoAberto ? "Fechar versões" : "Abrir versões"}
+                        onClick={() => {
+                          setPesquisaVersao("");
+                          setSeletorVersaoAberto((aberto) => !aberto);
+                        }}
+                        className="self-stretch px-3 text-white/35 transition-colors hover:text-white/70"
+                      >
+                        <ChevronDown
+                          size={14}
+                          className={cn("transition-transform", seletorVersaoAberto && "rotate-180")}
+                        />
+                      </button>
+                    </div>
+
+                    <AnimatePresence>
+                      {seletorVersaoAberto && (
+                        <motion.div
+                          id="opcoes-versao-minecraft"
+                          role="listbox"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className={cn(
+                            "scrollbar-custom absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto",
+                            "rounded-xl border border-white/10 bg-[#171717] p-1 shadow-2xl"
+                          )}
+                        >
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={!versaoMinecraft}
+                            onClick={() => selecionarVersaoMinecraft("")}
+                            className={cn(
+                              "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
+                              !versaoMinecraft && "bg-emerald-500/15 text-emerald-300"
+                            )}
+                          >
+                            Todas as versões
+                          </button>
+                          {versoesMinecraftFiltradas.map((versao) => (
+                            <button
+                              key={versao}
+                              type="button"
+                              role="option"
+                              aria-selected={versaoMinecraft === versao}
+                              onClick={() => selecionarVersaoMinecraft(versao)}
+                              className={cn(
+                                "w-full rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-white/10",
+                                versaoMinecraft === versao && "bg-emerald-500/15 text-emerald-300"
+                              )}
+                            >
+                              {versao}
+                            </button>
+                          ))}
+                          {versoesMinecraftFiltradas.length === 0 && pesquisaVersao.trim() && (
+                            <p className="px-3 py-4 text-center text-xs text-white/40">
+                              Nenhuma versão encontrada.
+                            </p>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
+                <label className="col-span-3 min-w-0">
+                  <span className="mb-1.5 block text-[10px] font-bold text-white/45">
+                    Modloader
                   </span>
                   <div className="relative">
                     <select
-                      aria-label="Ordenação dos resultados"
-                      value={ordenacao}
-                      onChange={(evento) => setOrdenacao(evento.target.value as OrdenacaoBusca)}
+                      value={loader}
+                      aria-label="Modloader"
+                      onChange={(evento) => setLoader(evento.target.value as LoaderFiltro)}
+                      disabled={!["mod", "modpack"].includes(contentType)}
                       className={cn(
                         "w-full appearance-none rounded-xl border border-white/10 bg-[#171717]",
-                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50"
+                        "px-3 py-2 pr-9 text-xs font-bold text-white outline-none focus:border-emerald-500/50",
+                        "disabled:cursor-not-allowed disabled:opacity-35"
                       )}
                     >
-                      {ORDENACOES.map((opcao) => (
+                      <option value="">Todos os loaders</option>
+                      {LOADERS.map((opcao) => (
                         <option key={opcao.id} value={opcao.id}>{opcao.nome}</option>
                       ))}
                     </select>
@@ -1266,8 +1260,7 @@ export default function Explore({
                       className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/35"
                     />
                   </div>
-                </div>
-
+                </label>
               </div>
             </motion.div>
           )}

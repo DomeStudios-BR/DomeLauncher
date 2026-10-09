@@ -158,6 +158,39 @@ pub(crate) fn publicar_modpack_local(
     )
 }
 
+fn copiar_preparacao(origem: &Path, destino: &Path) -> Result<(), String> {
+    std::fs::create_dir(destino).map_err(|erro| erro.to_string())?;
+    for entrada in std::fs::read_dir(origem).map_err(|erro| erro.to_string())? {
+        let entrada = entrada.map_err(|erro| erro.to_string())?;
+        let tipo = entrada.file_type().map_err(|erro| erro.to_string())?;
+        let alvo = destino.join(entrada.file_name());
+        if tipo.is_dir() {
+            copiar_preparacao(&entrada.path(), &alvo)?;
+        } else if tipo.is_file() {
+            std::fs::copy(entrada.path(), alvo).map_err(|erro| erro.to_string())?;
+        } else {
+            return Err("A instância preparada contém links ou arquivos especiais.".into());
+        }
+    }
+    Ok(())
+}
+
+fn ativar_preparacao(origem: &Path, destino: &Path) -> Result<(), String> {
+    match std::fs::rename(origem, destino) {
+        Ok(()) => return Ok(()),
+        Err(erro) if erro.kind() == std::io::ErrorKind::CrossesDevices => {}
+        Err(erro) => return Err(erro.to_string()),
+    }
+    let raiz = destino.parent().ok_or("Instância sem pasta de destino.")?;
+    let temporaria = raiz.join(format!(".dome-transferencia-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&temporaria).map_err(|erro| erro.to_string())?;
+    let _limpeza = pacotes_sociais::PastaTemporaria::nova(raiz, &temporaria)?;
+    let preparada = temporaria.join("instancia");
+    copiar_preparacao(origem, &preparada)?;
+    std::fs::rename(&preparada, destino)
+        .map_err(|erro| format!("Falha ao ativar a instância copiada: {erro}"))
+}
+
 fn publicar_preparada(
     state: &LauncherState,
     mut preparada: Instance,
@@ -247,7 +280,7 @@ fn publicar_preparada(
     if let Some(backup) = &backup {
         std::fs::rename(&preparada.path, backup).map_err(|e| e.to_string())?;
     }
-    if let Err(erro) = std::fs::rename(&origem, &preparada.path) {
+    if let Err(erro) = ativar_preparacao(&origem, &preparada.path) {
         if let Some(backup) = &backup {
             std::fs::rename(backup, &preparada.path).map_err(|e| {
                 format!(
@@ -281,6 +314,125 @@ mod testes {
         )
         .unwrap();
         instancia
+    }
+
+    #[test]
+    #[ignore = "requer duas unidades graváveis; DOME_TESTE_UNIDADE_DESTINO indica a segunda"]
+    fn publica_e_atualiza_instancia_entre_unidades_preservando_backup() {
+        let segunda =
+            std::env::var_os("DOME_TESTE_UNIDADE_DESTINO").expect("Informe a segunda unidade");
+        let origem = std::env::temp_dir().join(format!("dome-origem-{}", uuid::Uuid::new_v4()));
+        let raiz = std::path::PathBuf::from(segunda)
+            .join(format!("dome-destino-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::create_dir_all(&raiz).unwrap();
+        let _limpeza_origem =
+            pacotes_sociais::PastaTemporaria::nova(&std::env::temp_dir(), &origem).unwrap();
+        let _limpeza_destino =
+            pacotes_sociais::PastaTemporaria::nova(raiz.parent().unwrap(), &raiz).unwrap();
+        let preparada = instancia(&origem, "nova", b"novo");
+        let prova = raiz.join("prova");
+        assert_eq!(
+            std::fs::rename(&preparada.path, &prova).unwrap_err().kind(),
+            std::io::ErrorKind::CrossesDevices
+        );
+        let state = LauncherState {
+            account: Default::default(),
+            accounts: Default::default(),
+            instances_path: Arc::new(Mutex::new(raiz.clone())),
+            processos_instancias: Default::default(),
+        };
+        let antiga = instancia(&raiz, "original", b"antigo");
+        let vinculo = VinculoSocial {
+            compartilhamento_id: "teste".into(),
+            api_base_url: "https://api.test".into(),
+            versao: 1,
+            arquivos: pacotes_sociais::previa(&antiga).unwrap().arquivos,
+            substituir_alteracoes_locais: false,
+        };
+        std::fs::write(antiga.path.join("options.txt"), b"pessoal").unwrap();
+        let novo = VinculoSocial {
+            versao: 2,
+            arquivos: pacotes_sociais::previa(&preparada).unwrap().arquivos,
+            ..vinculo.clone()
+        };
+        let atualizada = publicar_modpack_local(
+            &state,
+            preparada.clone(),
+            Some((antiga, vinculo)),
+            novo.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(atualizada.path.join("mods/exemplo.jar")).unwrap(),
+            b"novo"
+        );
+        assert_eq!(
+            std::fs::read(atualizada.path.join("options.txt")).unwrap(),
+            b"pessoal"
+        );
+        assert!(preparada.path.exists());
+        let backup = std::fs::read_dir(raiz.join(".social-backups"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            std::fs::read(backup.join("mods/exemplo.jar")).unwrap(),
+            b"antigo"
+        );
+        assert!(!std::fs::read_dir(&raiz).unwrap().any(|entrada| entrada
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".dome-transferencia-")));
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let falha = instancia(&origem, "falha", b"nao ativar");
+            let arquivos = pacotes_sociais::previa(&falha).unwrap().arquivos;
+            let bloqueado = falha.path.join("bloqueado.bin");
+            std::fs::write(&bloqueado, b"bloqueado").unwrap();
+            let _arquivo_aberto = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(bloqueado)
+                .unwrap();
+            let erro = publicar_modpack_local(
+                &state,
+                falha.clone(),
+                Some((atualizada.clone(), novo.clone())),
+                VinculoSocial { arquivos, ..novo },
+            );
+            assert!(erro.is_err());
+            assert!(falha.path.exists());
+            assert_eq!(
+                std::fs::read(atualizada.path.join("mods/exemplo.jar")).unwrap(),
+                b"novo"
+            );
+            assert_eq!(
+                std::fs::read(atualizada.path.join("options.txt")).unwrap(),
+                b"pessoal"
+            );
+            assert_eq!(
+                std::fs::read_dir(raiz.join(".social-backups"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+            assert!(!std::fs::read_dir(&raiz).unwrap().any(|entrada| entrada
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".dome-transferencia-")));
+        }
+        let instalada =
+            publicar_local(&state, instancia(&origem, "outra", b"outra"), None).unwrap();
+        assert_eq!(
+            std::fs::read(instalada.path.join("mods/exemplo.jar")).unwrap(),
+            b"outra"
+        );
     }
 
     #[test]

@@ -1,3 +1,5 @@
+import CabecalhoGrupo from './CabecalhoGrupo';
+import { useArrastoItem } from '../hooks/useArrastoItem';
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import {
   Play,
@@ -11,7 +13,6 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowUpDown,
-  GripVertical,
   FolderOpen,
   X,
   Pencil,
@@ -2191,89 +2192,10 @@ function GrupoWidget({
           : "border-transparent"
       } ${grupoSendoArrastado ? "opacity-45" : "opacity-100"}`}
     >
-      {/* Header do grupo */}
-      <div
-        className="flex items-center gap-2 py-1.5 px-1 group/header"
-        onContextMenu={onAbrirMenuContextoGrupo}
-      >
-        <div
-          onMouseDown={onIniciarArrastoGrupo}
-          className={cn(
-            "cursor-grab text-white/15 transition-colors hover:text-white/45",
-            "active:cursor-grabbing"
-          )}
-          title="Arrastar grupo"
-        >
-          <GripVertical size={12} />
-        </div>
-        <button
-          onClick={onToggle}
-          className="p-1 text-white/25 hover:text-white/50 transition-colors"
-        >
-          {grupo.collapsed ? (
-            <ChevronRight size={14} />
-          ) : (
-            <ChevronDown size={14} />
-          )}
-        </button>
-
-        {editando ? (
-          <div className="flex items-center gap-1.5 flex-1">
-            <input
-              ref={inputRef}
-              value={nomeEdit}
-              onChange={(e) => onNomeChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onNomeSalvar();
-                if (e.key === "Escape") onNomeSalvar();
-              }}
-              onBlur={onNomeSalvar}
-              className={cn(
-                "rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-sm font-bold",
-                "focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-              )}
-              autoFocus
-            />
-          </div>
-        ) : (
-          <div
-            onMouseDown={onIniciarArrastoGrupo}
-            className={cn(
-              "flex flex-1 cursor-grab items-center gap-2",
-              "active:cursor-grabbing"
-            )}
-            title="Arrastar grupo"
-          >
-            <FolderOpen size={13} className="text-white/20" />
-            <span className="text-xs font-bold text-white/40 uppercase tracking-wider">
-              {grupo.name}
-            </span>
-            <span className="text-[10px] text-white/15 font-medium">
-              {instances.length}
-            </span>
-          </div>
-        )}
-
-        {/* Ações do grupo */}
-        <div className="flex items-center gap-0.5">
-          <button
-            onClick={onRenomear}
-            className="p-1 text-white/20 hover:text-white/40 transition-colors"
-            title="Renomear grupo"
-          >
-            <Pencil size={11} />
-          </button>
-          {podeDeletar && (
-            <button
-              onClick={onDeletar}
-              className="p-1 text-white/25 hover:text-red-400 transition-colors"
-              title="Excluir grupo"
-            >
-              <Trash2 size={11} />
-            </button>
-          )}
-        </div>
-      </div>
+      <CabecalhoGrupo nome={grupo.name} quantidade={instances.length} recolhido={grupo.collapsed}
+        editando={editando} nomeEditado={nomeEdit} inputRef={inputRef} podeExcluir={podeDeletar}
+        onAlternar={onToggle} onRenomear={onRenomear} onNomeChange={onNomeChange} onNomeSalvar={onNomeSalvar}
+        onExcluir={onDeletar} onIniciarArrasto={onIniciarArrastoGrupo} onMenuContexto={onAbrirMenuContextoGrupo} />
 
       {/* Conteúdo */}
       <AnimatePresence>
@@ -2360,132 +2282,6 @@ function GrupoWidget({
   );
 }
 
-function useArrastoInstancia({
-  instanceId,
-  onIniciar,
-  onMover,
-  onFinalizar,
-}: {
-  instanceId: string;
-  onIniciar: (id: string) => void;
-  onMover: (id: string, x: number, y: number) => void;
-  onFinalizar: (id?: string, x?: number, y?: number) => void;
-}) {
-  const inicioRef = useRef<{
-    ponteiroId: number;
-    x: number;
-    y: number;
-    ativo: boolean;
-  } | null>(null);
-  const ignorarCliqueRef = useRef(false);
-  const elementoRef = useRef<HTMLDivElement | null>(null);
-  const callbacksRef = useRef({ onIniciar, onMover, onFinalizar });
-  callbacksRef.current = { onIniciar, onMover, onFinalizar };
-
-  useEffect(() => {
-    let quadradoFlutuante: HTMLElement | null = null;
-    let deslocamentoX = 0;
-    let deslocamentoY = 0;
-    const encerrar = (evento?: PointerEvent) => {
-      const inicio = inicioRef.current;
-      if (!inicio || (evento && evento.pointerId !== inicio.ponteiroId)) return;
-      inicioRef.current = null;
-      quadradoFlutuante?.remove();
-      quadradoFlutuante = null;
-      if (inicio.ativo) {
-        callbacksRef.current.onFinalizar(
-          evento ? instanceId : undefined,
-          evento?.clientX,
-          evento?.clientY
-        );
-      }
-    };
-    const mover = (evento: PointerEvent) => {
-      const inicio = inicioRef.current;
-      if (!inicio || evento.pointerId !== inicio.ponteiroId) return;
-      if ((evento.buttons & 1) === 0) {
-        encerrar();
-        return;
-      }
-      if (!inicio.ativo) {
-        if (Math.hypot(evento.clientX - inicio.x, evento.clientY - inicio.y) < 5) return;
-        inicio.ativo = true;
-        ignorarCliqueRef.current = true;
-        const elemento = elementoRef.current;
-        if (elemento) {
-          const limites = elemento.getBoundingClientRect();
-          deslocamentoX = inicio.x - limites.left;
-          deslocamentoY = inicio.y - limites.top;
-          quadradoFlutuante = elemento.cloneNode(true) as HTMLElement;
-          quadradoFlutuante.removeAttribute("data-instancia-id");
-          quadradoFlutuante.removeAttribute("data-grupo-id");
-          quadradoFlutuante.removeAttribute("data-destino-arrasto");
-          quadradoFlutuante.setAttribute("aria-hidden", "true");
-          Object.assign(quadradoFlutuante.style, {
-            position: "fixed",
-            width: `${limites.width}px`,
-            height: `${limites.height}px`,
-            margin: "0",
-            pointerEvents: "none",
-            zIndex: "1000",
-            opacity: "1",
-            transform: "none",
-            transition: "none",
-            backgroundColor: "#202523",
-            boxShadow: "0 12px 30px #0008",
-          });
-          document.body.appendChild(quadradoFlutuante);
-        }
-        callbacksRef.current.onIniciar(instanceId);
-      }
-      if (quadradoFlutuante) {
-        quadradoFlutuante.style.left = `${evento.clientX - deslocamentoX}px`;
-        quadradoFlutuante.style.top = `${evento.clientY - deslocamentoY}px`;
-      }
-      evento.preventDefault();
-      callbacksRef.current.onMover(instanceId, evento.clientX, evento.clientY);
-    };
-    const cancelar = () => encerrar();
-    const tecla = (evento: KeyboardEvent) => {
-      if (evento.key === "Escape") cancelar();
-    };
-    window.addEventListener("pointermove", mover, { passive: false });
-    window.addEventListener("pointerup", encerrar, true);
-    window.addEventListener("pointercancel", cancelar);
-    window.addEventListener("blur", cancelar);
-    window.addEventListener("keydown", tecla);
-    return () => {
-      window.removeEventListener("pointermove", mover);
-      window.removeEventListener("pointerup", encerrar, true);
-      window.removeEventListener("pointercancel", cancelar);
-      window.removeEventListener("blur", cancelar);
-      window.removeEventListener("keydown", tecla);
-      cancelar();
-    };
-  }, [instanceId]);
-
-  const aoPressionar = (evento: React.PointerEvent<HTMLDivElement>) => {
-    if (evento.button !== 0 || !evento.isPrimary) return;
-    ignorarCliqueRef.current = false;
-    elementoRef.current = evento.currentTarget;
-    inicioRef.current = {
-      ponteiroId: evento.pointerId,
-      x: evento.clientX,
-      y: evento.clientY,
-      ativo: false,
-    };
-    evento.preventDefault();
-  };
-
-  const consumirCliqueArrasto = () => {
-    if (!ignorarCliqueRef.current) return false;
-    ignorarCliqueRef.current = false;
-    return true;
-  };
-
-  return { aoPressionar, consumirCliqueArrasto };
-}
-
 // ===== CARD GRID (estilo PrismLauncher) =====
 function CardGrid({
   instance,
@@ -2524,8 +2320,8 @@ function CardGrid({
     ativa,
     agoraSegundos
   );
-  const controleArrasto = useArrastoInstancia({
-    instanceId: instance.id,
+  const controleArrasto = useArrastoItem({
+    itemId: instance.id,
     onIniciar: onIniciarArrasto,
     onMover: onMoverArrasto,
     onFinalizar: onFinalizarArrasto,
@@ -2643,8 +2439,8 @@ function CardList({
     ativa,
     agoraSegundos
   );
-  const controleArrasto = useArrastoInstancia({
-    instanceId: instance.id,
+  const controleArrasto = useArrastoItem({
+    itemId: instance.id,
     onIniciar: onIniciarArrasto,
     onMover: onMoverArrasto,
     onFinalizar: onFinalizarArrasto,
