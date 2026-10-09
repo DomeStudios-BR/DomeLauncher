@@ -2232,14 +2232,10 @@ export default function InstanceManager({
 
     setSaving(true);
     try {
-      let idAtual = instanceId;
+      const idAtual = instanceId;
 
       // Atualizar nome se mudou
       if (nomeAtualizado !== instanceDetails.name) {
-        idAtual = await invoke<string>("rename_instance_folder", {
-          instanceId,
-          newFolderName: nomeAtualizado,
-        });
         await invoke("update_instance_name", {
           instanceId: idAtual,
           newName: nomeAtualizado,
@@ -2254,11 +2250,6 @@ export default function InstanceManager({
       }
 
       setIsEditing(false);
-      if (idAtual !== instanceId) {
-        onInstanceUpdate?.(idAtual);
-        return;
-      }
-
       await loadInstanceDetails();
       onInstanceUpdate?.();
     } catch (error) {

@@ -15,10 +15,33 @@ const bytes = Array.from(atob(skinUrl.split(",")[1]), (letra) => letra.charCodeA
 localStorage.setItem("dome-skins-salvas", JSON.stringify([
     { id: "teste", nome: "Skin teste", variant: "classic", bytes, salvaEm: Date.now() },
 ]));
+if (location.pathname === "/gerenciador-carregamento") localStorage.removeItem("dome-preview-skin:teste");
+if (location.pathname === "/gerenciador-limite") {
+    const salva = JSON.parse(localStorage.getItem("dome-preview-skin:teste") || "null");
+    if (salva) {
+        salva.atualizadaEm = 0;
+        localStorage.setItem("dome-preview-skin:teste", JSON.stringify(salva));
+    }
+}
 Object.assign(window, {
     isTauri: true,
     __TAURI_INTERNALS__: {
         invoke: async (comando: string) => {
+            if (comando === "obter_cosmeticos_skin") {
+                const consultas = Number(document.documentElement.dataset.consultasPerfil || "0") + 1;
+                document.documentElement.dataset.consultasPerfil = String(consultas);
+                if (location.pathname === "/gerenciador-limite") {
+                    throw new Error("Não foi possível consultar o perfil do Minecraft (429 Too Many Requests)");
+                }
+            }
+            if (comando === "baixar_skin_atual") {
+                document.documentElement.dataset.consultaDuplicada = "true";
+            }
+            if (location.pathname === "/gerenciador-carregamento" &&
+                (comando === "obter_cosmeticos_skin" || comando === "baixar_skin_atual")) {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                if (comando === "baixar_skin_atual") return { variant: "slim", bytes };
+            }
             if (comando === "obter_cosmeticos_skin") return {
                 variant: "slim", skinUrl: "http://textures.minecraft.net/texture/teste",
                 capes: [{ id: "teste", state: "ACTIVE", alias: "Capa teste",
@@ -32,9 +55,9 @@ Object.assign(window, {
 });
 
 createRoot(document.getElementById("root")!).render(
-    location.pathname === "/gerenciador" ? <SkinManager user={{
+    location.pathname.startsWith("/gerenciador") ? <React.StrictMode><SkinManager user={{
         uuid: "teste", name: "Jogador teste", access_token: "teste",
-    }} /> : <div style={{ display: "flex", gap: 32 }}>
+    }} /></React.StrictMode> : <div style={{ display: "flex", gap: 32 }}>
         {(["classic", "slim"] as const).map((modelo) => (
             <section key={modelo} id={modelo} style={{ width: 300, height: 400 }}>
                 <SkinPreviewRenderer

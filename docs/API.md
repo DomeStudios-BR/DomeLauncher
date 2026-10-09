@@ -7,6 +7,12 @@ Minecraft por uma sessão Dome em `POST /api/launcher/auth/minecraft/exchange`. 
 no serviço oficial, localiza o perfil pelo UUID ou cria um novo perfil, sem exigir Discord. A sessão social continua
 protegida no arquivo nativo `social-session.dat`.
 
+As requisições assinadas Xbox/SISU enviam exatamente os bytes usados na assinatura. Em caso de HTTP 403,
+se a hora do cabeçalho `Date` diferir em mais de 30 segundos da assinatura, o launcher refaz a assinatura e tenta
+mais uma vez com a hora do servidor. A autorização após OAuth usa a hora da resposta Microsoft recente,
+tanto no login quanto na renovação. Falhas informam etapa, status e código Xbox quando presente, sem expor o corpo
+remoto ou credenciais. Um 403 persistente continua sendo erro e orienta conferir relógio, conexão e perfil Xbox.
+
 As etapas de token e perfil do Minecraft validam o status HTTP e repetem até três vezes somente falhas transitórias
 de conexão, limite de requisições e erros 5xx. Uma resposta 404 do perfil indica que a conta Microsoft ainda não tem
 um perfil Minecraft Java; ela não é tratada como falha genérica nem cria uma identidade Dome incompleta.
@@ -61,7 +67,7 @@ O avatar Minecraft do perfil próprio e da barra lateral usa a conta ativa do la
 com fallback para a principal e para a primeira conta vinculada. Perfis visitados usam somente as contas
 do jogador consultado. Remover o avatar personalizado mantém essa mesma seleção. O perfil usa uma renderização
 de 256 px para exibir a cabeça ampliada com nitidez; a barra social e os comentários usam 64 px, com o mesmo UUID.
-Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias, favoritos,
+Identidade, presença, contas vinculadas, lista e quantidade de amigos vêm da DomeAPI; instâncias,
 tempo jogado e último acesso vêm do armazenamento local do launcher. `listar_capturas_perfil` lê até 12 arquivos
 PNG/JPEG recentes, de até 8 MB cada, somente das pastas `screenshots` das instâncias cadastradas. O avatar, o banner,
 as capturas favoritas, a bio, os metadados públicos das instâncias recentes e favoritas e os emblemas exibidos
@@ -490,7 +496,7 @@ por projeto. Fotos e pacotes ficam no S3, projetos na tabela `launcher.modpacks`
 O contador de downloads registra requisições GET aceitas, incluindo tentativas repetidas.
 
 O formato continua sendo ZIP com `dome_manifest.json`, compatível com a exportação Dome existente.
-Na publicação, o Rust normaliza `mcType` e `loaderType` para minúsculas e converte `exportadoEm` de RFC3339
+Na publicação, o Rust normaliza `mcType` e `loaderType` para minúsculas. Quando `mcType` é `modded`, usa o carregador conhecido de `loaderType` e recusa pacotes sem Fabric, Forge ou NeoForge válido. Também converte `exportadoEm` de RFC3339
 para UTC com sufixo `Z`. A API também aceita datas RFC3339 com fuso e nomes como `Fabric`, `Forge` e `NeoForge`
 em pacotes já exportados, mantendo a validação de loaders conhecidos, compatibilidade e versão do carregador.
 A publicação a partir de uma instância reutiliza a exportação social com referências oficiais Modrinth,
@@ -577,3 +583,42 @@ O Explorar lê `get_modpack_info` para reconhecer projetos já instalados, inclu
 O botão de modpack instalado fica desabilitado. Instalar inicia o fluxo em segundo plano sem navegar para os detalhes;
 mods, texturas e shaders usam um seletor compacto da instância de destino. O card continua abrindo os detalhes.
 A validação automatizada usa banco e IPC isolados, sem comprovar publicação da API nem download em produção.
+
+## Ativação local de pacotes
+
+A preparação de modpacks Dome e instâncias compartilhadas fica em `.social-staging` dentro da pasta de instâncias
+configurada, para que a ativação e o backup usem a mesma unidade. Se uma preparação externa estiver em outra unidade,
+a publicação copia o conteúdo para uma pasta temporária no destino e só então renomeia para ativá-lo. Falhas na cópia
+preservam a origem, limpam o destino parcial e restauram a instância anterior quando houver backup. Links simbólicos
+e arquivos especiais são rejeitados nessa cópia.
+
+## Coleção de favoritos
+
+Os favoritos de projetos são vinculados ao perfil Dome da sessão protegida. O launcher carrega a coleção
+no login e tenta sincronizar alterações ao editar, ao recuperar a conexão e a cada minuto. O cache e as filas
+pendentes são separados por perfil. Encerrar a sessão deixa de exibir o cache daquela conta.
+Favoritos locais sem conta são importados para a próxima conta autenticada e retirados do armazenamento de visitante.
+
+* GET /api/launcher/social/favoritos: exige autenticação e retorna favoritos com source, projectId e dados,
+  além da lista de grupos.
+* PUT /api/launcher/social/favoritos: mantém o contrato source, projectId e favoritado, aceitando dados opcionais
+  com id, source, title, description, icon_url, author, slug e type. Remover um favorito elimina somente o voto
+  daquele perfil. Metadados ausentes em clientes antigos preservam os dados já salvos.
+* PUT /api/launcher/social/favoritos/grupos: salva grupos ordenados com id, nome, recolhido e favoritos.
+  Cada referência usa a chave source:projectId. Uma referência só pode pertencer a um grupo.
+
+O comando gerenciar_favoritos_projetos aceita listar e grupos, além de salvar e contagens. Operações da coleção
+incluem perfilId para que o Rust rejeite uma troca de sessão antes de enviar a requisição. Tokens permanecem
+na sessão nativa. Erros mantêm as alterações pendentes e permitem nova tentativa pela tela de favoritos.
+Alterações simultâneas de grupos em computadores diferentes seguem o último salvamento recebido pela API.
+
+A estrutura relacional adiciona dados à tabela launcher.favoritos e cria launcher.grupos_favoritos de forma
+idempotente na inicialização da API. Favoritos antigos sem metadados são recuperados nas fontes originais.
+Projetos indisponíveis continuam visíveis pelo identificador, com a instalação desabilitada.
+O botão Instalar reutiliza o fluxo existente, incluindo escolha de destino e versão compatível.
+Estas mudanças precisam ser implantadas na DomeAPI junto da versão correspondente do launcher.
+
+A verificação bun run verificar:favoritos compila a tela com os componentes compartilhados da biblioteca e testa
+criação, renomeação, recolhimento, exclusão e reordenação de grupos, arraste de favoritos, menu contextual e
+acionamento de Instalar em 960 por 640. Os testes de sincronização usam IPC simulado; os testes HTTP da API usam
+persistência isolada. Eles não comprovam login real, migração no banco implantado ou download no aplicativo nativo.

@@ -196,7 +196,7 @@ export default function CreateInstanceModal({
   const handleCreate = async () => {
     if (!name.trim() || !version || !isVersionSelectionValid) return;
 
-    const instanceId = name.toLowerCase().replace(/\s+/g, "_");
+    const instanceId = crypto.randomUUID();
 
     // Adicionar ao estado de criação
     const creatingInstance: CreatingInstance = {

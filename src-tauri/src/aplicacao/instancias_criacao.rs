@@ -712,6 +712,33 @@ fn preparar_diretorio_launcher_para_instalador(
     Ok(())
 }
 
+/// Reserva uma pasta exclusiva antes dos downloads, inclusive em criações simultâneas.
+fn reservar_pasta_nova_instancia(
+    raiz: &std::path::Path,
+    nome: &str,
+) -> Result<(String, std::path::PathBuf), String> {
+    let id_base = super::instancias_basicas::normalizar_nome_pasta_instancia(nome);
+    if id_base.is_empty() {
+        return Err("O nome da instância não pode ficar vazio.".to_string());
+    }
+    std::fs::create_dir_all(raiz)
+        .map_err(|e| format!("Erro ao preparar pasta de instâncias: {}", e))?;
+    for contador in 1u64.. {
+        let id = if contador == 1 {
+            id_base.clone()
+        } else {
+            format!("{}_{}", id_base, contador)
+        };
+        let pasta = raiz.join(&id);
+        match std::fs::create_dir(&pasta) {
+            Ok(()) => return Ok((id, pasta)),
+            Err(erro) if erro.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(erro) => return Err(format!("Erro ao criar pasta da instância: {}", erro)),
+        }
+    }
+    Err("Não foi possível reservar uma pasta para a instância.".to_string())
+}
+
 #[tauri::command]
 pub(crate) async fn create_instance(
     state: State<'_, LauncherState>,
@@ -721,7 +748,7 @@ pub(crate) async fn create_instance(
     loader_type: Option<String>,
     loader_version: Option<String>,
     icon: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     println!("=== INICIANDO CRIAÇÃO DE INSTÂNCIA ===");
     println!("Nome: {}, Versão: {}, Tipo: {}", name, version, mc_type);
     // Check Auth
@@ -761,11 +788,7 @@ pub(crate) async fn create_instance(
         .map_err(|e| e.to_string())?;
 
     // 3. Preparar diretório
-    let id = urlencoding::encode(&name.to_lowercase().replace(' ', "_")).to_string();
-    let instance_path = caminho_instancia_por_id(&state, &id)?;
-    if !instance_path.exists() {
-        std::fs::create_dir_all(&instance_path).map_err(|e| e.to_string())?;
-    }
+    let (id, instance_path) = reservar_pasta_nova_instancia(&state.caminho_instancias()?, &name)?;
 
     // 4. Baixar arquivos essenciais do Minecraft primeiro
     download_instance_files(&instance_path, &details).await?;
@@ -865,7 +888,7 @@ pub(crate) async fn create_instance(
 
     // 6. Instância criada com os arquivos preparados para o primeiro launch
     println!("=== CRIAÇÃO DE INSTÂNCIA CONCLUÍDA COM SUCESSO ===");
-    Ok(())
+    Ok(id)
 }
 
 #[derive(Debug, Serialize)]
@@ -1950,10 +1973,44 @@ pub(super) fn coletar_argumentos_jvm_manifesto(
 mod testes {
     use super::{
         adjust_forge_manifest, extrair_perfil_forge_instalador, garantir_jar_forge_legado,
-        prefixo_neoforge_para_minecraft,
+        prefixo_neoforge_para_minecraft, reservar_pasta_nova_instancia,
     };
     use crate::launcher::VersionDetail;
     use std::io::Write;
+
+    #[test]
+    fn criacoes_simultaneas_preservam_instancia_existente() {
+        let raiz = std::env::temp_dir().join(format!("dome_criacao_{}", uuid::Uuid::new_v4()));
+        let (id, pasta) = reservar_pasta_nova_instancia(&raiz, "Meu Pack").unwrap();
+        assert_eq!(id, "meu_pack");
+        std::fs::write(pasta.join("instance.json"), b"loader original").unwrap();
+        let (id_repetido, _) = reservar_pasta_nova_instancia(&raiz, "Meu Pack").unwrap();
+        assert_eq!(id_repetido, "meu_pack_2");
+        // A pasta ocupada pode nem conter um registro: instalações parciais também são preservadas.
+        std::fs::create_dir(raiz.join("meu_pack_3")).unwrap();
+        let tarefas: Vec<_> = (0..4)
+            .map(|_| {
+                let raiz = raiz.clone();
+                std::thread::spawn(move || {
+                    reservar_pasta_nova_instancia(&raiz, "MEU:Pack").unwrap()
+                })
+            })
+            .collect();
+        let ids: std::collections::HashSet<_> = tarefas
+            .into_iter()
+            .map(|tarefa| tarefa.join().unwrap().0)
+            .collect();
+        assert_eq!(ids.len(), 4);
+        assert!(!ids.contains(&id));
+        assert!(!ids.contains("meu_pack_2"));
+        assert!(!ids.contains("meu_pack_3"));
+        assert_eq!(
+            std::fs::read(pasta.join("instance.json")).unwrap(),
+            b"loader original"
+        );
+        assert!(reservar_pasta_nova_instancia(&raiz, "...").is_err());
+        std::fs::remove_dir_all(&raiz).unwrap();
+    }
 
     fn instalador_simulado(nome_perfil: &str, perfil: &str, nome_jar: &str) -> Vec<u8> {
         let arquivo = std::io::Cursor::new(Vec::new());

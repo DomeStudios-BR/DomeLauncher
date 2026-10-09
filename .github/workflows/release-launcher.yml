@@ -2,10 +2,12 @@ name: release-launcher
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
+  workflow_run:
+    workflows: [validar-launcher]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -15,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-launcher
@@ -22,21 +25,70 @@ concurrency:
 
 jobs:
   preparar-release:
-    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.id == github.repository_id)
+    runs-on: ubuntu-24.04
     outputs:
       deve_publicar: ${{ steps.verificar.outputs.deve_publicar }}
       versao_tag: ${{ steps.verificar.outputs.versao_tag }}
       corpo_release: ${{ steps.verificar.outputs.corpo_release }}
+      commit: ${{ steps.origem.outputs.commit }}
+      validado: ${{ steps.origem.outputs.validado }}
+      frontend_run_id: ${{ steps.origem.outputs.frontend_run_id }}
     steps:
+      - name: Identificar commit e validação existente
+        id: origem
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const commit = context.payload.workflow_run?.head_sha ?? context.sha;
+            let validado = context.eventName === "workflow_run";
+            let validacaoId = context.payload.workflow_run?.id;
+            if (!validado) {
+              const resposta = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: "validar-launcher.yml", head_sha: commit,
+                event: "push", status: "success", per_page: 100
+              });
+              const aprovada = resposta.data.workflow_runs.find(execucao =>
+                execucao.head_sha === commit && execucao.head_branch === "main" &&
+                execucao.head_repository?.id === context.payload.repository.id
+              );
+              validado = Boolean(aprovada);
+              validacaoId = aprovada?.id;
+            }
+            let frontendRunId = "";
+            if (validacaoId) {
+              const artefatos = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner, repo, run_id: validacaoId
+              });
+              if (artefatos.some(artefato => artefato.name === "frontend-producao" && !artefato.expired)) {
+                frontendRunId = String(validacaoId);
+              }
+            }
+            core.setOutput("commit", commit);
+            core.setOutput("validado", String(validado));
+            core.setOutput("frontend_run_id", frontendRunId);
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ steps.origem.outputs.commit }}
           fetch-depth: 0
 
       - name: Verificar gatilho e preparar release
         id: verificar
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENTO: ${{ github.event_name }}
+          TIPO_REF: ${{ github.ref_type }}
+          REF: ${{ github.ref }}
+          NOME_REF: ${{ github.ref_name }}
+          TAG_MANUAL: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -44,8 +96,8 @@ jobs:
           DEVE_PUBLICAR=false
           TAG=""
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ "$EVENTO" = "workflow_dispatch" ]; then
+            INPUT_TAG="$TAG_MANUAL"
             if [ -n "$INPUT_TAG" ]; then
               TAG="$INPUT_TAG"
               [[ "$TAG" =~ ^v ]] || TAG="v$TAG"
@@ -55,18 +107,16 @@ jobs:
             DEVE_PUBLICAR=true
             echo "Disparo manual via workflow_dispatch para tag: $TAG"
 
-          elif [ "${{ github.ref_type }}" = "tag" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG="${{ github.ref_name }}"
+          elif [ "$TIPO_REF" = "tag" ] || [[ "$REF" == refs/tags/* ]]; then
+            TAG="$NOME_REF"
             DEVE_PUBLICAR=true
             echo "Disparo via push de tag: $TAG"
 
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          elif [ "$EVENTO" = "workflow_run" ]; then
             SUBJECT="$(git log -1 --pretty=%s)"
             MENSAGEM="$(git log -1 --pretty=%B)"
             echo "Subject do commit: $SUBJECT"
-
-            # Identifica commits de release (ex: "release: Dome Launcher v0.3.2")
-            if echo "$SUBJECT" | grep -iqE '^release(\([^)]+\))?:' || echo "$MENSAGEM" | grep -iqE '(^|\n)release(\([^)]+\))?:'; then
+            if echo "$SUBJECT" | grep -iqE '^release(\([^)]+\))?:' || echo "$MENSAGEM" | grep -iqE '^release(\([^)]+\))?:'; then
               echo "Commit identificado como release!"
               VERSAO="$(echo "$SUBJECT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
               if [ -z "$VERSAO" ]; then
@@ -89,8 +139,10 @@ jobs:
             echo "deve_publicar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          # Validar sincronizacao dos manifestos
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag inválida: $TAG. Use o formato v0.0.0."
+            exit 1
+          fi
           ESPERADA="${TAG#v}"
           PKG="$(node -p "require('./package.json').version")"
           TAURI="$(node -p "require('./src-tauri/tauri.conf.json').version")"
@@ -101,15 +153,13 @@ jobs:
             echo "::error::A versao $TAG diverge dos manifestos: package=$PKG, tauri=$TAURI, cargo=$CARGO. Sincronize as 3 versoes antes de lancar a release."
             exit 1
           fi
-
-          # Se a release ja existir publicada no GitHub Releases, pula para evitar reexecucao duplicada (exceto workflow_dispatch)
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          RASCUNHO="$(gh release view "$TAG" --repo "${{ github.repository }}" \
+            --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [ "$EVENTO" != "workflow_dispatch" ] && [ "$RASCUNHO" = "false" ]; then
             echo "A release $TAG ja esta publicada no GitHub Releases. Pulando build duplicado."
             echo "deve_publicar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          # Se a tag ainda nao existe no remoto, cria e envia a tag
           if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
             echo "Tag $TAG nao encontrada no remoto. Criando tag..."
             git config user.name "github-actions[bot]"
@@ -118,10 +168,17 @@ jobs:
             git push origin "$TAG"
             echo "Tag $TAG enviada com sucesso para o repositorio."
           else
+            if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::A tag $TAG aponta para outro commit. Selecione o commit correspondente."
+              exit 1
+            fi
             echo "Tag $TAG ja existe no remoto."
           fi
 
           CORPO="$(git log -1 --pretty=%B)"
+          if [ -f ".github/releases/$TAG.md" ]; then
+            CORPO="$(cat ".github/releases/$TAG.md")"
+          fi
           DELIMITER="EOF_RELEASE_DESC_${RANDOM}"
 
           echo "deve_publicar=true" >> "$GITHUB_OUTPUT"
@@ -130,182 +187,140 @@ jobs:
           echo "$CORPO" >> "$GITHUB_OUTPUT"
           echo "$DELIMITER" >> "$GITHUB_OUTPUT"
 
-  publicar-windows:
+  compilar:
     needs: preparar-release
     if: needs.preparar-release.outputs.deve_publicar == 'true'
-    runs-on: windows-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plataforma: windows
+            sistema: windows-latest
+            bundles: nsis
+          - plataforma: linux
+            sistema: ubuntu-24.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.sistema }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-
-      - name: Configurar Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.5
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-
-      - name: Instalar dependencias
-        run: bun install --frozen-lockfile
-
-      - name: Validar versao dos manifestos
-        shell: pwsh
-        run: |
-          $versaoTag = "${{ needs.preparar-release.outputs.versao_tag }}" -replace '^v', ''
-          $versaoPackage = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $versaoTauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          $versaoCargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
-            Select-Object -First 1).Matches.Groups[1].Value
-
-          $versoes = @($versaoPackage, $versaoTauri, $versaoCargo)
-          if ($versoes | Where-Object { $_ -ne $versaoTag }) {
-            throw "A tag v$versaoTag diverge dos manifestos: package=$versaoPackage, tauri=$versaoTauri, cargo=$versaoCargo."
-          }
-
-      - name: Validar frontend e backend
-        run: bun run verificar
-
-      - name: Obter descricao da release a partir do commit
-        id: mensagem_commit
-        shell: pwsh
-        run: |
-          $mensagem = (git log -1 --pretty=%B).Trim()
-          if (-not $mensagem) {
-            $mensagem = "Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}"
-          }
-          "corpo<<EOF" >> $env:GITHUB_OUTPUT
-          $mensagem >> $env:GITHUB_OUTPUT
-          "EOF" >> $env:GITHUB_OUTPUT
-
-      - name: Build e publicar release
-        id: publicar_release
-        uses: tauri-apps/tauri-action@v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: ./
-          tauriScript: bun run tauri --
-          tagName: ${{ needs.preparar-release.outputs.versao_tag }}
-          releaseName: Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}
-          releaseBody: ${{ steps.mensagem_commit.outputs.corpo }}
-          releaseDraft: false
-          prerelease: false
-          updaterJsonPreferNsis: true
-
-  publicar-linux:
-    needs: [preparar-release, publicar-windows]
-    if: needs.preparar-release.outputs.deve_publicar == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+          ref: ${{ needs.preparar-release.outputs.commit }}
 
       - name: Instalar dependências do sistema
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgtk-3-dev librsvg2-dev patchelf file libssl-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            libgtk-3-dev librsvg2-dev patchelf file libssl-dev
 
-      - name: Configurar Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Preparar ferramentas e cache
+        uses: ./.github/actions/preparar-compilacao
         with:
-          bun-version: 1.3.5
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
+          perfil: release
 
       - name: Instalar dependências
         run: bun install --frozen-lockfile
 
-      - name: Validar frontend e backend
-        run: bun run verificar
+      - name: Reutilizar frontend aprovado do mesmo commit
+        if: needs.preparar-release.outputs.frontend_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-producao
+          path: dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.preparar-release.outputs.frontend_run_id }}
 
-      - name: Obter descricao da release a partir do commit
-        id: mensagem_commit
+      - name: Auditar dependências
+        run: bun audit
+
+      - name: Validar backend quando não houver aprovação do mesmo commit
+        if: needs.preparar-release.outputs.validado != 'true'
         run: |
-          mensagem="$(git log -1 --pretty=%B | tr -d '\n')"
-          if [ -z "$mensagem" ]; then
-            mensagem="Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}"
-          fi
-          {
-            echo "corpo<<EOF"
-            echo "$mensagem"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
 
-      - name: Build e publicar release Linux
-        id: publicar_linux
+      - name: Compilar e assinar instaladores
         uses: tauri-apps/tauri-action@v0.6.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
+          APPIMAGE_EXTRACT_AND_RUN: '1'
         with:
           projectPath: ./
           tauriScript: bun run tauri --
-          tagName: ${{ needs.preparar-release.outputs.versao_tag }}
-          releaseName: Dome Launcher ${{ needs.preparar-release.outputs.versao_tag }}
-          releaseBody: ${{ steps.mensagem_commit.outputs.corpo }}
-          releaseDraft: false
-          prerelease: false
-          updaterJsonPreferNsis: false
+          args: >-
+            --bundles ${{ matrix.bundles }}
+            ${{ needs.preparar-release.outputs.frontend_run_id != '' &&
+                '--config src-tauri/tauri.ci.conf.json' || '' }}
+            -- --locked --timings
+
+      - name: Guardar tempos de compilação
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempos-compilacao-${{ matrix.plataforma }}
+          path: src-tauri/target/cargo-timings/cargo-timing.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Guardar instaladores assinados
+        uses: actions/upload-artifact@v4
+        with:
+          name: instaladores-${{ matrix.plataforma }}
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.sig
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
 
   finalizar-release:
-    needs: [preparar-release, publicar-windows, publicar-linux]
-    if: needs.preparar-release.outputs.deve_publicar == 'true'
-    runs-on: ubuntu-latest
-
+    needs: [preparar-release, compilar]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Remover assets extras da release
-        uses: actions/github-script@v8
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const tag = "${{ needs.preparar-release.outputs.versao_tag }}";
-            const release = await github.rest.repos.getReleaseByTag({
-              owner,
-              repo,
-              tag
-            });
-            const assets = await github.paginate(
-              github.rest.repos.listReleaseAssets,
-              {
-                owner,
-                repo,
-                release_id: release.data.id
-              }
-            );
-            const permitido = /\.(exe|deb|AppImage|sig|rpm|tar\.gz)$|latest\.json$/;
-            for (const asset of assets) {
-              if (!permitido.test(asset.name)) {
-                await github.rest.repos.deleteReleaseAsset({
-                  owner,
-                  repo,
-                  asset_id: asset.id
-                });
-              }
-            }
+          ref: ${{ needs.preparar-release.outputs.commit }}
+
+      - name: Configurar Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Baixar instaladores assinados
+        uses: actions/download-artifact@v4
+        with:
+          pattern: instaladores-*
+          path: artefatos
+          merge-multiple: true
+
+      - name: Gerar manifesto de atualização
+        env:
+          VERSAO_TAG: ${{ needs.preparar-release.outputs.versao_tag }}
+          CORPO_RELEASE: ${{ needs.preparar-release.outputs.corpo_release }}
+        run: |
+          bun test scripts/tests/manifesto-atualizacao.test.ts
+          bun scripts/gerar-manifesto-atualizacao.ts artefatos
+
+      - name: Publicar release completa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSAO_TAG: ${{ needs.preparar-release.outputs.versao_tag }}
+          CORPO_RELEASE: ${{ needs.preparar-release.outputs.corpo_release }}
+          COMMIT_RELEASE: ${{ needs.preparar-release.outputs.commit }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$CORPO_RELEASE" > "$RUNNER_TEMP/notas-release.txt"
+          if ! gh release view "$VERSAO_TAG" >/dev/null 2>&1; then
+            gh release create "$VERSAO_TAG" --draft --verify-tag --target "$COMMIT_RELEASE" \
+              --title "Dome Launcher $VERSAO_TAG" --notes-file "$RUNNER_TEMP/notas-release.txt"
+          fi
+          mapfile -d '' arquivos < <(find artefatos -type f -print0)
+          gh release upload "$VERSAO_TAG" "${arquivos[@]}" --clobber
+          gh release edit "$VERSAO_TAG" --draft=false --latest \
+            --title "Dome Launcher $VERSAO_TAG" --notes-file "$RUNNER_TEMP/notas-release.txt"

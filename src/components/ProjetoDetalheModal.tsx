@@ -241,10 +241,6 @@ function gerarNomeInstanciaDisponivel(nomeBase: string, nomesExistentes: string[
   return `${base} ${sufixo}`;
 }
 
-function gerarIdInstancia(nomeInstancia: string): string {
-  return encodeURIComponent(nomeInstancia.toLowerCase().replace(/\s+/g, "_"));
-}
-
 function escolherVersaoLoaderIdeal(
   loader: string,
   versoes: Array<{ version: string; stable?: boolean }>,
@@ -454,7 +450,7 @@ export default function ProjetoDetalheModal({
   const { contagens: contagensFavoritos, revisao: revisaoFavoritos } = useFavoritosProjetos(
     somenteInstalacao ? [] : [{ source: projeto.source, projectId: projeto.id }]
   );
-  useEffect(() => setFavorito(isFavorite(projeto.id, projeto.source)), [projeto.id, revisaoFavoritos]);
+  useEffect(() => setFavorito(isFavorite(projeto.id, projeto.source)), [projeto.id, projeto.source, revisaoFavoritos]);
   const contagemDome = contagensFavoritos[`${projeto.source}:${projeto.id}`];
   const totalFavoritosDome = obterTotalFavoritos({ source: projeto.source, projectId: projeto.id }, contagemDome);
   const [analises, setAnalises] = useState<AnaliseModpack[]>([]);
@@ -1055,8 +1051,8 @@ export default function ProjetoDetalheModal({
           nomeBaseInstancia,
           instancias.map((item) => item.name)
         );
-        const idInstancia = instanciaModpackAlvo?.id || gerarIdInstancia(nomeInstancia);
-        idOverlayCriacao = `${idInstancia}_${Date.now().toString(36)}`;
+        let idInstancia = instanciaModpackAlvo?.id || "";
+        idOverlayCriacao = crypto.randomUUID();
 
         const criandoInstancia: CreatingInstance = {
           id: idOverlayCriacao,
@@ -1140,7 +1136,7 @@ export default function ProjetoDetalheModal({
             paramsCriacao.loaderType = loaderSelecionado;
             paramsCriacao.loaderVersion = loaderVersion;
           }
-          await invoke("create_instance", paramsCriacao);
+          idInstancia = await invoke<string>("create_instance", paramsCriacao);
         }
         updateCreatingInstance(idOverlayCriacao, {
           progress: 45,

@@ -1629,7 +1629,7 @@ async fn receber_pacote_social(
     if cancelamento.is_cancelled() {
         return Err("Transferência cancelada.".into());
     }
-    let raiz_preparacao = crate::launcher::pasta_preparacao_social();
+    let raiz_preparacao = state.caminho_instancias()?.join(".social-staging");
     std::fs::create_dir_all(&raiz_preparacao).map_err(|e| e.to_string())?;
     let pasta_preparacao = raiz_preparacao.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;
@@ -1835,7 +1835,14 @@ pub async fn gerenciar_favoritos_projetos(
     acao: String,
     dados: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    if dados.to_string().len() > 1_000_000 {
+        return Err("Limite de dados dos favoritos excedido.".into());
+    }
     match acao.as_str() {
+        "listar" => {}
+        "grupos" => {
+            validar_grupos_favoritos(&dados)?;
+        }
         "contagens" => {
             let projetos = dados["projetos"]
                 .as_array()
@@ -1858,6 +1865,8 @@ pub async fn gerenciar_favoritos_projetos(
     let base = modpacks_dome::normalizar_base_modpacks(&api_base_url)?;
     let cliente = criar_cliente_http_launcher()?;
     let mut pedido = match acao.as_str() {
+        "listar" => cliente.get(format!("{base}/api/launcher/social/favoritos")),
+        "grupos" => cliente.put(format!("{base}/api/launcher/social/favoritos/grupos")),
         "contagens" => cliente.post(format!("{base}/api/launcher/social/favoritos/contagens")),
         "salvar" => cliente.put(format!("{base}/api/launcher/social/favoritos")),
         _ => return Err("Ação de favoritos inválida.".into()),
@@ -1867,9 +1876,18 @@ pub async fn gerenciar_favoritos_projetos(
     let token = sessao
         .as_ref()
         .and_then(|valor| valor["accessToken"].as_str());
+    if let Some(perfil_id) = dados["perfilId"].as_str() {
+        if sessao
+            .as_ref()
+            .and_then(|valor| valor["perfil"]["perfilId"].as_str())
+            != Some(perfil_id)
+        {
+            return Err("A conta dos favoritos foi alterada.".into());
+        }
+    }
     if let Some(token) = token {
         pedido = pedido.bearer_auth(normalizar_token_social(token)?);
-    } else if acao == "salvar" {
+    } else if acao != "contagens" {
         return Err("Entre com a Microsoft para sincronizar os favoritos.".into());
     }
     let resposta = pedido
@@ -1885,6 +1903,56 @@ pub async fn gerenciar_favoritos_projetos(
         .await);
     }
     resposta.json().await.map_err(|erro| erro.to_string())
+}
+
+fn validar_grupos_favoritos(dados: &serde_json::Value) -> Result<(), String> {
+    let grupos = dados["grupos"]
+        .as_array()
+        .ok_or("Lista de grupos inválida.")?;
+    if grupos.len() > 100 {
+        return Err("Limite de grupos excedido.".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut referencias = std::collections::HashSet::new();
+    for grupo in grupos {
+        let id = grupo["id"]
+            .as_str()
+            .ok_or("Identificador do grupo inválido.")?;
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|letra| letra.is_ascii_alphanumeric() || letra == b'_')
+            || !ids.insert(id)
+        {
+            return Err("Identificador do grupo inválido ou repetido.".into());
+        }
+        let nome = grupo["nome"].as_str().ok_or("Nome do grupo inválido.")?;
+        if nome.trim().is_empty() || nome.chars().count() > 80 || !grupo["recolhido"].is_boolean() {
+            return Err("Dados do grupo inválidos.".into());
+        }
+        let favoritos = grupo["favoritos"]
+            .as_array()
+            .ok_or("Favoritos do grupo inválidos.")?;
+        if favoritos.len() > 5000 {
+            return Err("Limite de favoritos do grupo excedido.".into());
+        }
+        for favorito in favoritos {
+            let chave = favorito
+                .as_str()
+                .ok_or("Referência do favorito inválida.")?;
+            let (fonte, projeto) = chave
+                .split_once(':')
+                .ok_or("Referência do favorito inválida.")?;
+            validar_projeto_favorito(
+                &serde_json::json!({ "source": fonte, "projectId": projeto }),
+            )?;
+            if !referencias.insert(chave) {
+                return Err("Favorito repetido nos grupos.".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1980,7 +2048,8 @@ pub async fn excluir_analise_modpack(
 #[cfg(test)]
 mod testes {
     use super::{
-        normalizar_api_base_url, validar_projeto_favorito, PayloadSalvarPerfilSocialLauncherApi,
+        normalizar_api_base_url, validar_grupos_favoritos, validar_projeto_favorito,
+        PayloadSalvarPerfilSocialLauncherApi,
     };
 
     #[test]
@@ -2006,6 +2075,29 @@ mod testes {
             "source": "outra", "projectId": "123"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn grupos_favoritos_rejeitam_duplicatas_e_referencias_invalidas() {
+        let grupo = serde_json::json!({
+            "id": "grupo", "nome": "Coleção", "recolhido": false,
+            "favoritos": ["modrinth:projeto123"]
+        });
+        assert!(
+            validar_grupos_favoritos(&serde_json::json!({ "grupos": [grupo.clone()] })).is_ok()
+        );
+        assert!(validar_grupos_favoritos(
+            &serde_json::json!({ "grupos": [grupo.clone(), grupo.clone()] })
+        )
+        .is_err());
+        let mut outro = grupo.clone();
+        outro["id"] = serde_json::json!("outro");
+        assert!(
+            validar_grupos_favoritos(&serde_json::json!({ "grupos": [grupo, outro.clone()] }))
+                .is_err()
+        );
+        outro["favoritos"] = serde_json::json!(["dome:../projeto"]);
+        assert!(validar_grupos_favoritos(&serde_json::json!({ "grupos": [outro] })).is_err());
     }
 
     #[test]
