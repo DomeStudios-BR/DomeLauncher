@@ -559,6 +559,9 @@ Rust ou `https://api.domestudios.com.br`, com localhost adicional apenas em buil
 Não passe tokens pela interface para esses comandos.
 
 A instalação confere SHA-512 do pacote, valida o ZIP e restaura referências com hashes na preparação temporária.
+Na atualização, a compatibilidade consulta todas as versões de Minecraft e loaders declarados pela API.
+Os nomes dos loaders são comparados sem distinguir maiúsculas de minúsculas, aceitando os rótulos locais
+`Fabric`, `Forge` e `NeoForge`. Mods locais adicionais não participam dessa verificação de compatibilidade.
 O vínculo público usa `modpack-dome.json`, separado de `compartilhamento.json`, e os metadados usam
 `modpack.json` com `source: dome`. A troca de versão exige jogo fechado, mesmo Minecraft/loader, aceite
 explícito para arquivos locais conflitantes e backup em `.social-backups`. Mundos, opções, lista de servidores
