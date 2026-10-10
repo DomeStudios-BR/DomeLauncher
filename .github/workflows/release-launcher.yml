@@ -241,6 +241,10 @@ jobs:
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
           cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
 
+      - name: Remover instaladores de versões anteriores (cache)
+        shell: bash
+        run: rm -rf src-tauri/target/release/bundle
+
       - name: Compilar e assinar instaladores
         uses: tauri-apps/tauri-action@v0.6.2
         env:
