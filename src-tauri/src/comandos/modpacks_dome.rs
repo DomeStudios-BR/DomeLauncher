@@ -9,6 +9,29 @@ use tokio::io::AsyncWriteExt;
 
 const LIMITE_PUBLICACAO: u64 = 64 * 1024 * 1024;
 
+fn versao_compativel_com_instancia(
+    versao: &Value,
+    versao_minecraft: &str,
+    loader: Option<&str>,
+) -> bool {
+    let loader = loader.unwrap_or("vanilla").trim();
+    let minecraft_compativel = versao["game_versions"]
+        .as_array()
+        .is_some_and(|versoes| {
+            versoes
+                .iter()
+                .any(|versao| versao.as_str() == Some(versao_minecraft))
+        });
+    let loader_compativel = versao["loaders"].as_array().is_some_and(|loaders| {
+        loaders.iter().any(|valor| {
+            valor
+                .as_str()
+                .is_some_and(|valor| valor.trim().eq_ignore_ascii_case(loader))
+        })
+    });
+    minecraft_compativel && loader_compativel
+}
+
 pub(super) fn normalizar_base_modpacks(valor: &str) -> Result<String, String> {
     let base = normalizar_api_base_url(valor)?;
     let url = url::Url::parse(&base).map_err(|e| e.to_string())?;
@@ -96,6 +119,34 @@ fn normalizar_pacote(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 mod testes {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn atualizacao_aceita_rotulos_locais_dos_loaders_publicados() {
+        for (publicado, local) in [
+            ("fabric", "Fabric"),
+            ("forge", "Forge"),
+            ("neoforge", "NeoForge"),
+            ("vanilla", "Vanilla"),
+        ] {
+            let versao = json!({ "game_versions": ["1.20.1"], "loaders": [publicado] });
+            assert!(versao_compativel_com_instancia(&versao, "1.20.1", Some(local)));
+            assert!(!versao_compativel_com_instancia(&versao, "1.21.1", Some(local)));
+            assert!(!versao_compativel_com_instancia(&versao, "1.20.1", Some("quilt")));
+        }
+    }
+
+    #[test]
+    fn atualizacao_consulta_toda_a_lista_de_compatibilidade() {
+        let versao = json!({
+            "game_versions": ["1.20", "1.20.1"],
+            "loaders": ["forge", "fabric"]
+        });
+        assert!(versao_compativel_com_instancia(&versao, "1.20.1", Some("Fabric")));
+        assert!(!versao_compativel_com_instancia(&versao, "1.20.1", None));
+        assert!(!versao_compativel_com_instancia(&json!({}), "1.20.1", None));
+        let vanilla = json!({ "game_versions": ["1.20.1"], "loaders": ["vanilla"] });
+        assert!(versao_compativel_com_instancia(&vanilla, "1.20.1", None));
+    }
 
     #[test]
     fn restringe_origem_antes_de_acessar_a_sessao_protegida() {
@@ -454,10 +505,11 @@ pub async fn instalar_modpack_dome(
         if vinculo.compartilhamento_id != projeto_id || vinculo.api_base_url != base {
             return Err("Esta instância não pertence ao modpack escolhido.".into());
         }
-        if versao["game_versions"][0].as_str() != Some(&instancia.version)
-            || versao["loaders"][0].as_str()
-                != Some(instancia.loader_type.as_deref().unwrap_or("vanilla"))
-        {
+        if !versao_compativel_com_instancia(
+            versao,
+            &instancia.version,
+            instancia.loader_type.as_deref(),
+        ) {
             return Err("A atualização exige a mesma versão do Minecraft e o mesmo loader.".into());
         }
         Some((instancia, vinculo))
