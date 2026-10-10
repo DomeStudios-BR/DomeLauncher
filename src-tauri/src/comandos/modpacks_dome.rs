@@ -15,13 +15,11 @@ fn versao_compativel_com_instancia(
     loader: Option<&str>,
 ) -> bool {
     let loader = loader.unwrap_or("vanilla").trim();
-    let minecraft_compativel = versao["game_versions"]
-        .as_array()
-        .is_some_and(|versoes| {
-            versoes
-                .iter()
-                .any(|versao| versao.as_str() == Some(versao_minecraft))
-        });
+    let minecraft_compativel = versao["game_versions"].as_array().is_some_and(|versoes| {
+        versoes
+            .iter()
+            .any(|versao| versao.as_str() == Some(versao_minecraft))
+    });
     let loader_compativel = versao["loaders"].as_array().is_some_and(|loaders| {
         loaders.iter().any(|valor| {
             valor
@@ -129,9 +127,21 @@ mod testes {
             ("vanilla", "Vanilla"),
         ] {
             let versao = json!({ "game_versions": ["1.20.1"], "loaders": [publicado] });
-            assert!(versao_compativel_com_instancia(&versao, "1.20.1", Some(local)));
-            assert!(!versao_compativel_com_instancia(&versao, "1.21.1", Some(local)));
-            assert!(!versao_compativel_com_instancia(&versao, "1.20.1", Some("quilt")));
+            assert!(versao_compativel_com_instancia(
+                &versao,
+                "1.20.1",
+                Some(local)
+            ));
+            assert!(!versao_compativel_com_instancia(
+                &versao,
+                "1.21.1",
+                Some(local)
+            ));
+            assert!(!versao_compativel_com_instancia(
+                &versao,
+                "1.20.1",
+                Some("quilt")
+            ));
         }
     }
 
@@ -141,7 +151,11 @@ mod testes {
             "game_versions": ["1.20", "1.20.1"],
             "loaders": ["forge", "fabric"]
         });
-        assert!(versao_compativel_com_instancia(&versao, "1.20.1", Some("Fabric")));
+        assert!(versao_compativel_com_instancia(
+            &versao,
+            "1.20.1",
+            Some("Fabric")
+        ));
         assert!(!versao_compativel_com_instancia(&versao, "1.20.1", None));
         assert!(!versao_compativel_com_instancia(&json!({}), "1.20.1", None));
         let vanilla = json!({ "game_versions": ["1.20.1"], "loaders": ["vanilla"] });
