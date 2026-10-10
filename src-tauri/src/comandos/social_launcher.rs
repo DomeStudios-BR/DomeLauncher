@@ -1,9 +1,13 @@
+#[path = "anexos_relatos.rs"]
+pub(crate) mod anexos_relatos;
 #[path = "modpacks_dome.rs"]
 pub(crate) mod modpacks_dome;
 #[path = "operacoes_sociais.rs"]
 pub(crate) mod operacoes_sociais;
 #[path = "pacotes_sociais.rs"]
 pub(crate) mod pacotes_sociais;
+#[path = "relatos_problemas.rs"]
+pub(crate) mod relatos_problemas;
 #[path = "vinculos_sociais.rs"]
 pub(crate) mod vinculos_sociais;
 use crate::launcher::LauncherState;

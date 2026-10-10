@@ -13,7 +13,8 @@ export function ModalSocial({ children, onFechar }: { children: ReactNode; onFec
             if (evento.key === 'Escape') { evento.preventDefault(); evento.stopPropagation(); fechar.current(); }
             if (evento.key !== 'Tab') return;
             const controles = Array.from(conteudo.current?.querySelectorAll<HTMLElement>(
-                'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+                'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), ' +
+                'summary, a[href], [tabindex="0"], [contenteditable="true"]',
             ) ?? []).filter((elemento) => elemento.getClientRects().length > 0);
             const primeiro = controles[0];
             const ultimo = controles[controles.length - 1];
