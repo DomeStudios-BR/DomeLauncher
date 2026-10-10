@@ -55,7 +55,8 @@ export function NovidadesVersaoModal({ novidades, onClose }: NovidadesVersaoModa
                         initial={{ opacity: 0, y: 22, scale: 0.98 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 14, scale: 0.99 }}
-                        className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden border border-emerald-300/35 bg-[#111] shadow-2xl"
+                        className="flex h-[82vh] max-h-[720px] w-full max-w-2xl flex-col overflow-hidden
+                            border border-emerald-300/35 bg-[#111] shadow-2xl"
                     >
                         <header className="relative shrink-0 border-b border-white/10 bg-[linear-gradient(120deg,#14251d_0%,#151515_58%)] px-7 py-6 pr-16">
                             <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-emerald-300">

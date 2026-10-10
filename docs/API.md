@@ -1,5 +1,49 @@
 # Comunicação do DomeLauncher com a API
 
+## Relatos de problemas
+
+O botão Reportar problema abre um modal com título, descrição e prévia dos dados públicos do perfil Dome,
+nickname principal do Minecraft, versão do launcher, sistema operacional e arquitetura.
+O jogador pode conferir e desmarcar os logs antes de enviar. A coleta mantém somente os últimos 200 registros
+da interface na sessão atual, limitados a 24000 caracteres, em memória. Ela inclui console e erros JavaScript.
+Não lê credenciais locais, arquivos pessoais, stdout do backend Rust ou logs das instâncias Minecraft.
+Os filtros ocultam valores de credenciais, emails e o nome pessoal em pastas de usuário.
+Preservam mensagens, URLs sem segredos, endereços de rede, arquivos e posições nas stack traces.
+Objetos de erro são serializados com limite, mantendo detalhes úteis e ocultando campos de credenciais.
+
+`preparar_relato_problema` retorna apenas dados públicos da sessão protegida e do sistema.
+`enviar_relato_problema` valida o relato e a identidade conferida no modal, renova o acesso se necessário e envia
+`POST /api/launcher/relatos` pela API autorizada. O corpo contém `envioId`, `titulo`, `descricao`, `ambiente`, `logs`
+e `anexos`, com identificador e tipo de mídia. URLs de anexos são geradas pela API, não aceitas do cliente.
+Logs desmarcados são enviados como `null`. A API resolve a identidade pelo perfil autenticado e reaplica os filtros.
+O retorno confirmado é `{ numero, url }`, apontando para `https://github.com/DomeStudios-BR/DomeLauncher/issues/`.
+A confirmação no modal mostra apenas o sucesso e o botão Fechar, sem link da issue.
+O corpo publicado usa texto normal para a descrição, uma tabela de diagnóstico e logs recolhidos em detalhes.
+A referência técnica do envio permanece em um comentário HTML para apoiar a deduplicação sem poluir a leitura.
+
+O modal permite até quatro anexos. Imagens PNG, JPG, WebP e GIF podem ter até 16 MiB; vídeos MP4 e WebM, até 64 MiB.
+O editor visual insere imagens e vídeos na posição do cursor dentro da descrição, com remoção e desfazer.
+A descrição serializa a posição como `{{anexo:UUID}}`; a API substitui apenas referências aos anexos confirmados
+do envio por mídias no corpo da issue. URLs recebidas do cliente não são usadas nessa substituição.
+O seletor nativo fornece o arquivo para `enviar_anexo_relato`; o Rust valida tamanho e extensão e faz o upload
+autenticado para `POST /api/launcher/relatos/anexos/:envioId/:anexoId`. A API confere a assinatura do arquivo e
+usa o armazenamento S3 já configurado. A seleção mostra prévias dentro do texto. Mídias removidas continuam
+disponíveis para desfazer até enviar ou cancelar; nesse momento o modal tenta excluir os uploads não usados.
+Depois de iniciar a criação da issue, os anexos usados são mantidos para evitar quebrar referências
+quando o resultado do GitHub ainda não estiver confirmado. Fechar o aplicativo ou perder a conexão pode deixar
+um upload sem relato, pois a limpeza não é persistida em uma fila.
+Imagens são incorporadas no Markdown da issue e vídeos recebem um link público com suporte a HTTP Range.
+O conteúdo permanece no armazenamento da DomeAPI. Não é um upload para o armazenamento de anexos do GitHub.
+
+A DomeAPI precisa de `DOME_GITHUB_RELATOS_TOKEN`, disponível somente no servidor, com permissão Issues de escrita
+no repositório DomeStudios-BR/DomeLauncher. Sem essa variável, retorna HTTP 503. Cada perfil pode fazer até três
+tentativas por hora. Envios com a mesma referência compartilham o resultado por 24 horas no processo da API.
+A deduplicação e o limite são locais ao processo, não persistem após reinício e não coordenam múltiplas réplicas.
+Não há repetição automática da criação no GitHub. Em falhas sem confirmação, o jogador deve conferir as issues
+antes de abrir um novo relato. As tentativas de confirmação no mesmo modal conservam referência e conteúdo.
+
+O código local não configura a credencial de produção e não comprova a implantação da rota.
+
 ## Identidade Dome e onboarding
 
 O login Microsoft é a entrada principal do launcher. Após validar a conta Minecraft, o comando nativo troca o token
@@ -100,6 +144,9 @@ as instâncias existentes. A mesma configuração é aplicada após criar uma in
 também cobre instâncias importadas ou instaladas por outros fluxos. A instância de origem nunca é sobrescrita.
 
 ## Novidades
+
+O modal de novidades usa a área de rolagem personalizada do launcher dentro de uma altura limitada.
+Cabeçalho e rodapé permanecem fixos; notas extensas podem ser percorridas por mouse, teclado e arraste.
 
 A Home combina duas fontes e ordena tudo pela data de publicação:
 

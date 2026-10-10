@@ -2,6 +2,7 @@ import { obterUrlCabecaMinecraft } from "./lib/avatarMinecraft";
 import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  AlertCircle,
   ArrowRight,
   Avatar,
   Heart,
@@ -53,6 +54,7 @@ const LibraryPage = lazy(() => import("./components/LibraryPage"));
 const SettingsPage = lazy(() => import("./components/Settings"));
 const InstanceManager = lazy(() => import("./components/InstanceManager"));
 const SocialSidebar = lazy(() => import("./components/SocialSidebar"));
+const RelatarProblemaModal = lazy(() => import("./components/RelatarProblemaModal"));
 const PublicadorModpacksGlobal = lazy(() => import("./components/modpacks/PublicadorModpacks")
   .then((modulo) => ({ default: modulo.PublicadorModpacksGlobal })));
 const PaginaMeusModpacks = lazy(() => import("./components/modpacks/PublicadorModpacks")
@@ -226,6 +228,7 @@ export default function App() {
   const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [relatoAberto, setRelatoAberto] = useState(false);
   const [managedInstanceId, setManagedInstanceId] = useState<string>("");
   const [user, setUser] = useState<MinecraftAccount | null>(null);
   const [mapaExecucao, setMapaExecucao] = useState<Record<string, boolean>>({});
@@ -1192,6 +1195,12 @@ export default function App() {
         </nav>
 
         <div className="flex flex-col items-center gap-2 border-t border-white/10 px-2 pb-[12px] pt-[13px]">
+          <button type="button" onClick={() => setRelatoAberto(true)}
+            aria-label="Reportar problema" title="Reportar problema"
+            className="flex h-11 w-11 items-center justify-center border border-white/10 bg-[#171717]
+              text-white/65 transition-colors hover:border-white/25 hover:text-white">
+            <AlertCircle size={19} />
+          </button>
           <button
             onClick={() => navegarParaAba("settings")}
             className={cn(
@@ -1944,6 +1953,9 @@ export default function App() {
       )}
       <CreatingInstancesOverlay />
       <NovidadesVersaoModal novidades={novidadesVersao} onClose={fecharNovidadesVersao} />
+      {relatoAberto && <Suspense fallback={null}>
+        <RelatarProblemaModal onFechar={() => setRelatoAberto(false)} />
+      </Suspense>}
       </div>
   );
 }

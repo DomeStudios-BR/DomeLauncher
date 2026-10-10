@@ -17,6 +17,10 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            crate::comandos::social_launcher::relatos_problemas::preparar_relato_problema,
+            crate::comandos::social_launcher::relatos_problemas::enviar_relato_problema,
+            crate::comandos::social_launcher::anexos_relatos::enviar_anexo_relato,
+            crate::comandos::social_launcher::anexos_relatos::excluir_anexo_relato,
             super::instancias_basicas::get_instances,
             super::instancias_basicas::concluir_migracoes_iniciais,
             super::importacao_exportacao::listar_instancias_importaveis,
