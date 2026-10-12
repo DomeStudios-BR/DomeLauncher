@@ -1608,6 +1608,7 @@ export default function App() {
                 exit={{ opacity: 0, x: -10 }}
               >
                 <Favorites
+                  instancias={instances}
                   instalacoesEmAndamento={instalacoesDiretas.map((item) => `${item.source}:${item.id}`)}
                   onAbrirProjeto={(projeto, instalarAgora) => {
                     if (!instalarAgora) { abrirProjeto("favorites", projeto); return; }

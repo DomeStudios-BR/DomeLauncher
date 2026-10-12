@@ -2,6 +2,12 @@
 import Favorites from '../../src/components/Favorites';
 import '../../src/index.css';
 
+Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {
+    invoke: async (comando: string) => comando === 'get_modpack_info'
+        ? { projectId: 'pack', source: 'dome' } : null,
+} });
+const instancias = [{ id: 'pack', name: 'Meu Modpack', version: '1.21.1', mc_type: 'fabric', path: '/pack' }];
+
 const itens = [
     { id: 'sodium', title: 'Sodium', type: 'mod', source: 'modrinth', author: 'CaffeineMC' },
     { id: 'iris', title: 'Iris Shaders', type: 'shader', source: 'modrinth', author: 'Iris' },
@@ -15,7 +21,7 @@ localStorage.setItem('dome_grupos_favoritos', JSON.stringify([
     { id: 'vazio', nome: 'Para testar', recolhido: false, favoritos: [] },
 ]));
 createRoot(document.getElementById('root')!).render(<main className="p-6 text-white">
-    <Favorites onAbrirProjeto={(projeto, instalarAgora) => {
+    <Favorites instancias={instancias} onAbrirProjeto={(projeto, instalarAgora) => {
         document.documentElement.dataset.acao = `${projeto.id}:${instalarAgora ? 'instalar' : 'detalhes'}`;
     }} />
 </main>);

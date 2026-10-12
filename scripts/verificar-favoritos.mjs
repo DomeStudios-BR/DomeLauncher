@@ -39,6 +39,14 @@ try {
         name: 'Modpacks', exact: true,
     }).click();
     await pagina.locator('[data-favorito-id="dome:pack"]').waitFor();
+    const instalado = pagina.locator('[data-favorito-id="dome:pack"]')
+        .getByRole('button', { name: 'Instalado', exact: true });
+    await instalado.waitFor();
+    if (!await instalado.isDisabled()) throw new Error('Modpack instalado permite nova instalação.');
+    const botoes = await pagina.locator('[data-favorito-id="dome:pack"] button').all();
+    if (await botoes[0].getAttribute('aria-label') !== 'Remover Meu Modpack dos favoritos') {
+        throw new Error('Lixeira não está antes do botão de instalação.');
+    }
     if (await pagina.locator('[data-favorito-id]').count() !== 1) throw new Error('Filtro por tipo falhou.');
     await pagina.getByRole('group', { name: 'Tipo de conteúdo' }).getByRole('button', {
         name: 'Todos', exact: true,
@@ -85,8 +93,13 @@ try {
     await pagina.getByRole('button', { name: 'Excluir grupo Coleção nova', exact: true }).click();
     await pagina.getByRole('alertdialog').getByRole('button', { name: 'Excluir grupo', exact: true }).click();
     await pagina.screenshot({ path: resolve('../output/favoritos-verificados.png'), fullPage: true });
+    await pagina.getByRole('button', { name: 'Remover Meu Modpack dos favoritos', exact: true }).click();
+    await pagina.locator('[data-favorito-id="dome:pack"]').waitFor({ state: 'detached' });
+    if (await pagina.locator('html').getAttribute('data-acao') !== 'sodium:instalar') {
+        throw new Error('Remover favorito abriu o projeto.');
+    }
     if (erros.length) throw new Error(erros.join('; '));
-    console.log('Interface validada em 960 por 640: grupos sem fundo, criação, arraste, menu, recolhimento e Instalar.');
+    console.log('Interface validada em 960 por 640: grupos, arraste, menu, Instalar, Instalado e remoção pela lixeira.');
 } finally {
     await navegador?.close();
     if (servidor) await new Promise((resolver) => servidor.close(resolver));
