@@ -4,6 +4,8 @@ import type { ProjetoConteudo } from './ProjetoDetalheModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import CabecalhoGrupo from './CabecalhoGrupo';
 import CardFavorito from './CardFavorito';
+import { useModpacksInstalados } from '../hooks/useModpacksInstalados';
+import type { Instance } from '../hooks/useLauncher';
 import { cn } from '../lib/utils';
 import { EVENTO_FAVORITOS_ATUALIZADOS } from '../services/favoritosProjetos';
 import {
@@ -32,6 +34,7 @@ export interface FavoriteItem {
 interface FavoritesProps {
     onAbrirProjeto: (projeto: ProjetoConteudo, instalarAgora?: boolean) => void;
     instalacoesEmAndamento?: string[];
+    instancias?: Instance[];
 }
 const ABAS_TIPO = [
     { valor: 'todos', nome: 'Todos', Icone: Heart },
@@ -41,8 +44,12 @@ const ABAS_TIPO = [
     { valor: 'shader', nome: 'Shaders', Icone: Sparkles },
 ];
 const SEM_GRUPO = 'sem_grupo';
+const INSTANCIAS_VAZIAS: Instance[] = [];
 
-export default function Favorites({ onAbrirProjeto, instalacoesEmAndamento = [] }: FavoritesProps) {
+export default function Favorites({
+    onAbrirProjeto, instalacoesEmAndamento = [], instancias = INSTANCIAS_VAZIAS,
+}: FavoritesProps) {
+    const modpacksInstalados = useModpacksInstalados(instancias);
     const [favoritos, setFavoritos] = useState(loadFavorites);
     const [grupos, setGrupos] = useState(carregarGruposFavoritos);
     const [busca, setBusca] = useState('');
@@ -252,6 +259,8 @@ export default function Favorites({ onAbrirProjeto, instalacoesEmAndamento = [] 
                     : <div className="grid grid-cols-1 gap-4 px-1 pb-2 md:grid-cols-2 xl:grid-cols-3">
                         {itens.map((item) => <CardFavorito key={chaveFavorito(item)} item={item} grupoId={grupo.id}
                             instalando={instalacoesEmAndamento.includes(chaveFavorito(item))}
+                            instalado={item.type === 'modpack' && modpacksInstalados.projetos.has(chaveFavorito(item))}
+                            verificandoInstalacao={item.type === 'modpack' && modpacksInstalados.carregando}
                             arrastando={favoritoArrastado === chaveFavorito(item)} onAbrir={abrir}
                             onRemover={(item) => removeFavorite(item.id, item.source)}
                             onMenu={(evento, item) => {
