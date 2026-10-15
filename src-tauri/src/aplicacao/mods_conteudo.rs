@@ -1200,6 +1200,102 @@ pub(crate) async fn planejar_instalacao_conteudo(
 #[cfg(test)]
 mod testes_plano_instalacao_conteudo {
     use super::*;
+    use std::io::Write;
+
+    fn criar_jar_teste(caminho: &std::path::Path, id: &str, versao: &str, aliases: &[&str]) {
+        let arquivo = std::fs::File::create(caminho).unwrap();
+        let mut compactado = zip::ZipWriter::new(arquivo);
+        compactado
+            .start_file("fabric.mod.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        let metadados = serde_json::json!({ "id": id, "version": versao, "provides": aliases });
+        compactado
+            .write_all(metadados.to_string().as_bytes())
+            .unwrap();
+        compactado.finish().unwrap();
+    }
+
+    #[test]
+    fn instalacao_substitui_versoes_do_sodium_sem_remover_complementos() {
+        let pasta =
+            std::env::temp_dir().join(format!("dome-sodium-teste-{}", uuid::Uuid::new_v4()));
+        let temporaria = pasta.join("temporaria");
+        std::fs::create_dir_all(&temporaria).unwrap();
+        let anterior = pasta.join("sodium-0.9.2.jar");
+        let desativado = pasta.join("sodium-antigo.jar.disabled");
+        let complemento = pasta.join("sodium-extra.jar");
+        let sem_metadados = pasta.join("sodium-outro.jar");
+        let novo = temporaria.join("sodium-0.9.3.jar");
+        let destino = pasta.join("sodium-0.9.3.jar");
+        criar_jar_teste(&anterior, "sodium", "0.9.2", &["alias-antigo"]);
+        criar_jar_teste(&desativado, "sodium", "0.9.1", &[]);
+        criar_jar_teste(&complemento, "sodium-extra", "0.9.4", &["sodium"]);
+        std::fs::write(&sem_metadados, b"sem identidade comprovada").unwrap();
+        criar_jar_teste(&novo, "sodium", "0.9.3", &[]);
+
+        publicar_arquivos_mod(vec![(novo, destino.clone())], &temporaria).unwrap();
+
+        assert!(destino.exists());
+        assert!(!anterior.exists());
+        assert!(!desativado.exists());
+        assert!(complemento.exists());
+        assert!(sem_metadados.exists());
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[test]
+    fn falha_na_publicacao_restaura_todas_as_versoes_anteriores() {
+        let pasta =
+            std::env::temp_dir().join(format!("dome-rollback-teste-{}", uuid::Uuid::new_v4()));
+        let temporaria = pasta.join("temporaria");
+        std::fs::create_dir_all(&temporaria).unwrap();
+        let anterior = pasta.join("sodium-antigo.jar");
+        let desativado = pasta.join("sodium-desativado.jar.disabled");
+        let novo = temporaria.join("sodium-novo.jar");
+        let destino = pasta.join("sodium-novo.jar");
+        criar_jar_teste(&anterior, "sodium", "0.9.2", &[]);
+        criar_jar_teste(&desativado, "sodium", "0.9.1", &[]);
+        criar_jar_teste(&novo, "sodium", "0.9.3", &[]);
+        let bytes_anteriores = std::fs::read(&anterior).unwrap();
+        let resultado = publicar_arquivos_mod(
+            vec![
+                (novo, destino.clone()),
+                (temporaria.join("ausente.jar"), pasta.join("outro.jar")),
+            ],
+            &temporaria,
+        );
+
+        assert!(resultado.is_err());
+        assert!(!destino.exists());
+        assert_eq!(std::fs::read(&anterior).unwrap(), bytes_anteriores);
+        assert!(desativado.exists());
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[test]
+    fn plano_com_duas_versoes_do_mesmo_mod_falha_antes_de_alterar_instalacao() {
+        let pasta = std::env::temp_dir().join(format!("dome-plano-teste-{}", uuid::Uuid::new_v4()));
+        let temporaria = pasta.join("temporaria");
+        std::fs::create_dir_all(&temporaria).unwrap();
+        let anterior = pasta.join("sodium-antigo.jar");
+        let novo = temporaria.join("sodium-novo.jar");
+        let duplicado = temporaria.join("sodium-duplicado.jar");
+        criar_jar_teste(&anterior, "sodium", "0.9.1", &[]);
+        criar_jar_teste(&novo, "sodium", "0.9.2", &[]);
+        criar_jar_teste(&duplicado, "sodium", "0.9.3", &[]);
+        let resultado = publicar_arquivos_mod(
+            vec![
+                (novo, pasta.join("sodium-novo.jar")),
+                (duplicado, pasta.join("sodium-duplicado.jar")),
+            ],
+            &temporaria,
+        );
+
+        assert!(resultado.is_err());
+        assert!(anterior.exists());
+        assert!(!pasta.join("sodium-novo.jar").exists());
+        std::fs::remove_dir_all(pasta).unwrap();
+    }
 
     fn arquivo_teste(chave: &str, nome: &str) -> ArquivoModResolvido {
         ArquivoModResolvido {
@@ -1346,45 +1442,102 @@ async fn baixar_e_instalar_arquivos_mod(
         temporarios.push((caminho_temporario, mods_dir.join(nome)));
     }
 
-    publicar_arquivos_mod(temporarios, &pasta_temporaria)?;
+    publicar_arquivos_mod_em_segundo_plano(temporarios, pasta_temporaria.clone()).await?;
     let _ = std::fs::remove_dir_all(pasta_temporaria);
     Ok(())
+}
+
+async fn publicar_arquivos_mod_em_segundo_plano(
+    temporarios: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    pasta_temporaria: std::path::PathBuf,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        publicar_arquivos_mod(temporarios, &pasta_temporaria)
+    })
+    .await
+    .map_err(|erro| format!("Falha ao publicar mods: {}", erro))?
+}
+
+fn arquivos_mod_anteriores(
+    temporarios: &[(std::path::PathBuf, std::path::PathBuf)],
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut anteriores = std::collections::HashSet::new();
+    let mut identidades = std::collections::HashSet::new();
+    for (temporario, destino) in temporarios {
+        let pasta = destino
+            .parent()
+            .ok_or("Arquivo de mod sem pasta de destino.")?;
+        if destino.exists() {
+            validar_caminho_dentro_raiz(pasta, destino)?;
+            anteriores.insert(destino.clone());
+        }
+        let nome = destino
+            .file_name()
+            .and_then(|nome| nome.to_str())
+            .unwrap_or_default();
+        if !nome.to_lowercase().ends_with(".jar") {
+            continue;
+        }
+        let identificadores = super::conteudo_instalado::identificadores_mod_declarados(temporario);
+        if identificadores.is_empty() {
+            continue;
+        }
+        if !identidades.insert(identificadores.clone()) {
+            return Err("O plano contém mais de uma versão do mesmo mod.".to_string());
+        }
+        for entrada in std::fs::read_dir(pasta).map_err(|erro| erro.to_string())? {
+            let entrada = entrada.map_err(|erro| erro.to_string())?;
+            let nome = entrada.file_name().to_string_lossy().to_lowercase();
+            if !(nome.ends_with(".jar") || nome.ends_with(".jar.disabled")) {
+                continue;
+            }
+            let caminho = entrada.path();
+            validar_caminho_dentro_raiz(pasta, &caminho)?;
+            if super::conteudo_instalado::identificadores_mod_declarados(&caminho)
+                == identificadores
+            {
+                anteriores.insert(caminho);
+            }
+        }
+    }
+    Ok(anteriores.into_iter().collect())
 }
 
 fn publicar_arquivos_mod(
     temporarios: Vec<(std::path::PathBuf, std::path::PathBuf)>,
     pasta_temporaria: &std::path::Path,
 ) -> Result<(), String> {
-    let mut publicados: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)> = Vec::new();
-    for (indice, (temporario, destino)) in temporarios.into_iter().enumerate() {
-        let backup = if destino.exists() {
-            let caminho = pasta_temporaria.join(format!("backup-{}", indice));
-            if let Err(erro) = std::fs::rename(&destino, &caminho) {
-                reverter_publicacao_mods(&publicados);
-                return Err(format!("Erro ao preservar mod anterior: {}", erro));
-            }
-            Some(caminho)
-        } else {
-            None
-        };
+    let anteriores = arquivos_mod_anteriores(&temporarios)?;
+    let mut backups = Vec::new();
+    for (indice, anterior) in anteriores.into_iter().enumerate() {
+        let backup = pasta_temporaria.join(format!("backup-{}", indice));
+        if let Err(erro) = std::fs::rename(&anterior, &backup) {
+            reverter_publicacao_mods(&[], &backups);
+            return Err(format!("Erro ao preservar mod anterior: {}", erro));
+        }
+        backups.push((anterior, backup));
+    }
+
+    let mut publicados = Vec::new();
+    for (temporario, destino) in temporarios {
         if let Err(erro) = std::fs::rename(&temporario, &destino) {
-            if let Some(caminho) = &backup {
-                let _ = std::fs::rename(caminho, &destino);
-            }
-            reverter_publicacao_mods(&publicados);
+            reverter_publicacao_mods(&publicados, &backups);
             return Err(format!("Erro ao concluir instalação de mods: {}", erro));
         }
-        publicados.push((destino, backup));
+        publicados.push(destino);
     }
     Ok(())
 }
 
-fn reverter_publicacao_mods(publicados: &[(std::path::PathBuf, Option<std::path::PathBuf>)]) {
-    for (destino, backup) in publicados.iter().rev() {
+fn reverter_publicacao_mods(
+    publicados: &[std::path::PathBuf],
+    backups: &[(std::path::PathBuf, std::path::PathBuf)],
+) {
+    for destino in publicados.iter().rev() {
         let _ = std::fs::remove_file(destino);
-        if let Some(caminho) = backup {
-            let _ = std::fs::rename(caminho, destino);
-        }
+    }
+    for (destino, backup) in backups.iter().rev() {
+        let _ = std::fs::rename(backup, destino);
     }
 }
 
@@ -1648,10 +1801,11 @@ async fn baixar_arquivo_para_pasta(
         let _ = std::fs::remove_dir_all(&pasta_temporaria);
         return Err(erro.to_string());
     }
-    publicar_arquivos_mod(
+    publicar_arquivos_mod_em_segundo_plano(
         vec![(temporario, pasta_destino.join(&nome_arquivo_final))],
-        &pasta_temporaria,
-    )?;
+        pasta_temporaria.clone(),
+    )
+    .await?;
     let _ = std::fs::remove_dir_all(&pasta_temporaria);
 
     Ok(nome_arquivo_final)

@@ -31,8 +31,8 @@ jobs:
       - name: Validar projeto
         run: bun run verificar
 
-      - name: Validar manifesto de atualização
-        run: bun test scripts/tests/manifesto-atualizacao.test.ts
+      - name: Validar testes do frontend e manifesto de atualização
+        run: bun test scripts/tests scripts/testes
 
       - name: Guardar frontend aprovado
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -70,5 +70,5 @@ jobs:
       - name: Validar projeto
         run: bun run verificar
 
-      - name: Validar manifesto de atualização
-        run: bun test scripts/tests/manifesto-atualizacao.test.ts
+      - name: Validar testes do frontend e manifesto de atualização
+        run: bun test scripts/tests scripts/testes

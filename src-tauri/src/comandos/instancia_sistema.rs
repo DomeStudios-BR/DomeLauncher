@@ -331,6 +331,7 @@ pub struct ServerInfo {
     pub port: u16,
     pub icon: Option<String>,
     pub motd: Option<String>,
+    pub motd_componentes: Option<serde_json::Value>,
     pub player_count: Option<String>,
     pub ping: Option<u32>,
 }
@@ -617,6 +618,7 @@ pub fn get_servers(
             port: s.port,
             icon: s.icon,
             motd: None,
+            motd_componentes: None,
             player_count: None,
             ping: None,
         })
@@ -727,7 +729,13 @@ fn extrair_texto_descricao_mc(valor: &serde_json::Value) -> Option<String> {
     }
 }
 
-type ResultadoStatusServidor = (u32, Option<String>, Option<String>, Option<String>);
+struct ResultadoStatusServidor {
+    ping: u32,
+    motd: Option<String>,
+    motd_componentes: Option<serde_json::Value>,
+    player_count: Option<String>,
+    icon: Option<String>,
+}
 
 fn consultar_status_servidor_minecraft(
     socket_addr: std::net::SocketAddr,
@@ -807,7 +815,13 @@ fn consultar_status_servidor_minecraft(
         .as_ref()
         .map(|p| format!("{}/{}", p.online, p.max));
 
-    Ok((ping, motd, player_count, status.favicon))
+    Ok(ResultadoStatusServidor {
+        ping,
+        motd,
+        motd_componentes: status.description,
+        player_count,
+        icon: status.favicon,
+    })
 }
 
 async fn resolver_srv_minecraft(host: &str) -> Option<(String, u16)> {
@@ -884,15 +898,16 @@ pub async fn ping_server(address: String) -> Result<ServerInfo, String> {
 
         for socket_addr in enderecos {
             match consultar_status_servidor_minecraft(socket_addr, &host, porta_destino, timeout) {
-                Ok((ping, motd, player_count, icon)) => {
+                Ok(status) => {
                     return Ok(ServerInfo {
                         name: host.clone(),
                         address: host_destino.clone(),
                         port: porta_destino,
-                        icon,
-                        motd,
-                        player_count,
-                        ping: Some(ping),
+                        icon: status.icon,
+                        motd: status.motd,
+                        motd_componentes: status.motd_componentes,
+                        player_count: status.player_count,
+                        ping: Some(status.ping),
                     });
                 }
                 Err(status_error) => {
@@ -907,6 +922,7 @@ pub async fn ping_server(address: String) -> Result<ServerInfo, String> {
                                 port: porta_destino,
                                 icon: None,
                                 motd: None,
+                                motd_componentes: None,
                                 player_count: None,
                                 ping: Some(ping),
                             });
@@ -1056,6 +1072,57 @@ pub fn abrir_pasta_mundo(
 #[cfg(test)]
 mod testes {
     use super::{extrair_texto_descricao_mc, identificador_instancia_valido};
+
+    #[test]
+    fn preserva_componentes_do_motd_na_resposta_de_status() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let descricao = serde_json::json!({
+            "text": "Servidor",
+            "color": "gold",
+            "extra": [{ "text": "\nSegunda linha", "color": "#12abcd", "bold": true }]
+        });
+        let resposta = serde_json::json!({
+            "description": descricao,
+            "players": { "online": 12, "max": 100 }
+        })
+        .to_string();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endereco = listener.local_addr().unwrap();
+        let servidor = std::thread::spawn(move || {
+            let (mut conexao, _) = listener.accept().unwrap();
+            conexao
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let tamanho = super::ler_varint_mc(&mut conexao).unwrap();
+            let mut handshake = vec![0; tamanho as usize];
+            conexao.read_exact(&mut handshake).unwrap();
+            let mut consulta = [0; 2];
+            conexao.read_exact(&mut consulta).unwrap();
+            assert_eq!(consulta, [1, 0]);
+            let mut conteudo = vec![0];
+            super::escrever_string_mc(&resposta, &mut conteudo);
+            let mut pacote = Vec::new();
+            super::escrever_varint_mc(conteudo.len() as i32, &mut pacote);
+            pacote.extend(conteudo);
+            conexao.write_all(&pacote).unwrap();
+        });
+
+        let status = super::consultar_status_servidor_minecraft(
+            endereco,
+            "localhost",
+            endereco.port(),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        servidor.join().unwrap();
+
+        assert_eq!(status.motd_componentes, Some(descricao));
+        assert_eq!(status.motd.as_deref(), Some("Servidor\nSegunda linha"));
+        assert_eq!(status.player_count.as_deref(), Some("12/100"));
+    }
 
     #[test]
     fn preserva_espacos_em_motd_com_componentes() {

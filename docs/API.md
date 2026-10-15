@@ -80,6 +80,15 @@ mostrar ícone, MOTD, jogadores online/máximo e latência no card "Volte a joga
 Se o servidor aceitar a conexão TCP mas não responder ao protocolo de status, ele pode aparecer online sem MOTD ou
 contagem de jogadores.
 
+A resposta mantém `motd` como texto simples e fornece `motdComponentes` com o componente JSON original da descrição.
+A interface interpreta cores Minecraft e RGB, negrito, itálico, sublinhado, tachado e códigos legados com `§`.
+Os trechos são renderizados como texto React, sem interpretar HTML ou executar eventos enviados pelo servidor.
+"Volte a jogar" exibe cartões em duas colunas no desktop, com alturas iguais por linha e botões nomeados "Jogar".
+Todos os cartões têm rodapé: mundos mostram a instância de origem e a versão; instâncias mostram loader e versão.
+O corpo mantém a última atividade e fica centralizado verticalmente no espaço acima do rodapé.
+O MOTD ocupa até duas linhas; jogadores e latência ficam em um rodapé separado por uma linha nos servidores online.
+O endereço e a instância ficam disponíveis ao passar o mouse sobre o conteúdo do servidor.
+
 ## Texturas de skins e capas
 
 As prévias 3D e miniaturas usam `baixar_textura_minecraft` para obter texturas de

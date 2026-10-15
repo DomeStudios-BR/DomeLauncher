@@ -130,7 +130,7 @@ fn inspecionar_arquivo_compactado(
     };
 
     let metadados = if tipo == "mods" {
-        ler_metadados_mod(&mut compactado)
+        ler_metadados_mod(&mut compactado, true)
     } else {
         MetadadosConteudo::default()
     };
@@ -148,21 +148,40 @@ fn inspecionar_arquivo_compactado(
     (metadados, icone)
 }
 
-fn ler_metadados_mod<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> MetadadosConteudo {
-    ler_fabric(compactado)
-        .or_else(|| ler_quilt(compactado))
+/// Use na substituição de versões para comparar os mods declarados, sem os aliases de compatibilidade.
+pub(super) fn identificadores_mod_declarados(caminho: &std::path::Path) -> Vec<String> {
+    let Ok(arquivo) = std::fs::File::open(caminho) else {
+        return Vec::new();
+    };
+    let Ok(mut compactado) = zip::ZipArchive::new(arquivo) else {
+        return Vec::new();
+    };
+    ler_metadados_mod(&mut compactado, false).identificadores
+}
+
+fn ler_metadados_mod<R: Read + Seek>(
+    compactado: &mut zip::ZipArchive<R>,
+    incluir_aliases: bool,
+) -> MetadadosConteudo {
+    ler_fabric(compactado, incluir_aliases)
+        .or_else(|| ler_quilt(compactado, incluir_aliases))
         .or_else(|| ler_toml_mod(compactado, "META-INF/neoforge.mods.toml"))
         .or_else(|| ler_toml_mod(compactado, "META-INF/mods.toml"))
         .or_else(|| ler_forge_legado(compactado))
         .unwrap_or_else(|| ler_manifesto(compactado))
 }
 
-fn ler_fabric<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<MetadadosConteudo> {
+fn ler_fabric<R: Read + Seek>(
+    compactado: &mut zip::ZipArchive<R>,
+    incluir_aliases: bool,
+) -> Option<MetadadosConteudo> {
     let json = ler_json(compactado, "fabric.mod.json")?;
     let identificadores = normalizar_identificadores(
-        texto_json(&json, "id")
-            .into_iter()
-            .chain(identificadores_json(json.get("provides"))),
+        texto_json(&json, "id").into_iter().chain(
+            identificadores_json(json.get("provides"))
+                .into_iter()
+                .filter(|_| incluir_aliases),
+        ),
     );
     let dependencias = normalizar_identificadores(
         json.get("depends")
@@ -181,7 +200,10 @@ fn ler_fabric<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<Met
     })
 }
 
-fn ler_quilt<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<MetadadosConteudo> {
+fn ler_quilt<R: Read + Seek>(
+    compactado: &mut zip::ZipArchive<R>,
+    incluir_aliases: bool,
+) -> Option<MetadadosConteudo> {
     let texto = ler_texto(compactado, "quilt.mod.json")?;
     let json = json5::from_str::<serde_json::Value>(&texto).ok()?;
     let loader = json.get("quilt_loader").unwrap_or(&json);
@@ -192,9 +214,11 @@ fn ler_quilt<R: Read + Seek>(compactado: &mut zip::ZipArchive<R>) -> Option<Meta
         .map(|autores| autores.keys().cloned().collect::<Vec<_>>().join(", "))
         .filter(|valor| !valor.is_empty());
     let identificadores = normalizar_identificadores(
-        texto_json(loader, "id")
-            .into_iter()
-            .chain(identificadores_json(loader.get("provides"))),
+        texto_json(loader, "id").into_iter().chain(
+            identificadores_json(loader.get("provides"))
+                .into_iter()
+                .filter(|_| incluir_aliases),
+        ),
     );
     let dependencias = normalizar_identificadores(identificadores_json(loader.get("depends")));
 
