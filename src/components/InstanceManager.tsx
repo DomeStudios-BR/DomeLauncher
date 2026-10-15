@@ -2030,6 +2030,9 @@ export default function InstanceManager({
         versaoAtualizada,
         true
       );
+      if (tipoProjeto === "mod") {
+        await loadInstalledContent("mods", true);
+      }
     } catch (error) {
       console.error("Erro ao atualizar conteúdo:", error);
       alert(`Erro ao atualizar "${item.name}": ${error}`);
@@ -2185,6 +2188,9 @@ export default function InstanceManager({
         versao.version_number,
         false
       );
+      if (tipoProjeto === "mod") {
+        await loadInstalledContent("mods", true);
+      }
       setItemTrocaVersao(null);
     } catch (erro) {
       console.error("Erro ao trocar versão do conteúdo:", erro);

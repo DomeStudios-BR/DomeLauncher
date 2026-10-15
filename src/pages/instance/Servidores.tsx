@@ -14,6 +14,7 @@ import {
     X,
 } from "../../iconesPixelados";
 import { cn } from "../../lib/utils";
+import { MotdMinecraft } from "../../components/MotdMinecraft";
 import { AreaRolagemPersonalizada } from "../../components/scroll/AreaRolagemPersonalizada";
 
 interface ServidoresProps {
@@ -26,6 +27,7 @@ interface ServidorInfo {
     port: number;
     icon?: string | null;
     motd?: string | null;
+    motdComponentes?: unknown;
     playerCount?: string | null;
     ping?: number | null;
 }
@@ -359,8 +361,9 @@ export default function Servidores({ instanceId }: ServidoresProps) {
                                 </div>
 
                                 <div className="mt-4 min-h-10 text-xs leading-relaxed text-white/45">
-                                    {dadosStatus?.motd
-                                        || "Verifique o servidor para consultar sua mensagem e jogadores."}
+                                    {dadosStatus?.motdComponentes || dadosStatus?.motd ? (
+                                        <MotdMinecraft valor={dadosStatus.motdComponentes ?? dadosStatus.motd} />
+                                    ) : "Verifique o servidor para consultar sua mensagem e jogadores."}
                                 </div>
 
                                 <div

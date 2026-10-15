@@ -157,6 +157,11 @@ prepara as bibliotecas na criação e reaproveita o mesmo ajuste ao iniciar inst
 algumas bibliotecas ficam no Maven do Forge e outras no repositório de bibliotecas do Minecraft.
 Compare desempenho com mesma versão/conexão e cache vazio/preenchido; testes HTTP locais não comprovam velocidade real.
 
+A instalação de mods compara os identificadores declarados nos metadados dos JARs, sem aliases de compatibilidade.
+Versões anteriores do mesmo conjunto de mods, inclusive desativadas, são substituídas após o download completo.
+Falhas na publicação restauram os arquivos preservados. Arquivos sem identidade reconhecida só são substituídos
+quando o nome coincide. Essa comparação evita duplicação, mas não valida as restrições de versão de todos os mods locais.
+
 ## Validação e entrega
 
 Para alterações de código, execute:
@@ -242,6 +247,11 @@ importação/exportação/sync, login Discord, amigos, chat e encerramento de se
 com uma versão de teste. No Linux, valide o `.deb`/`.AppImage` em instalação limpa e o lançamento nativo do jogo.
 Só declare publicação após o workflow terminar e os assets remotos serem conferidos.
 Detecção da atualização, interação para instalar e disponibilidade do pacote são verificações distintas.
+No Windows, o NSIS instala para o usuário atual (`bundle.windows.nsis.installMode: currentUser`) e o updater
+aplica atualizações silenciosamente (`plugins.updater.windows.installMode: quiet`). O plugin envia `/S` e `/R`
+ao instalador: o aplicativo encerra durante a instalação e o NSIS solicita a abertura da versão nova ao concluir.
+O reinício após `downloadAndInstall` atende o Linux; no Windows, essa chamada não retorna ao frontend.
+Valide download, instalação silenciosa e reabertura com duas versões assinadas antes de confirmar o fluxo real.
 A descrição publicada no `latest.json` é guardada antes da instalação e exibida uma única vez, em um modal de
 novidades, quando a versão instalada for aberta pela primeira vez. Preserve esse vínculo com `releaseBody`.
 

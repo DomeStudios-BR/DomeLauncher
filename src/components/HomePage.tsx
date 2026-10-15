@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 import type { Instance } from "../hooks/useLauncher";
 import type { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
+import { MotdMinecraft } from "./MotdMinecraft";
 
 const NoticiasMinecraft = lazy(() =>
   import("./NoticiasMinecraft").then((modulo) => ({ default: modulo.NoticiasMinecraft }))
@@ -23,6 +24,7 @@ interface ServerInfo {
   port: number;
   icon?: string | null;
   motd?: string | null;
+  motdComponentes?: unknown;
   player_count?: string | null;
   playerCount?: string | null;
   ping?: number | null;
@@ -92,15 +94,6 @@ function tempoRelativo(data: string): string {
 
 function obterContagemJogadores(servidor: ServerInfo): string | undefined {
   return servidor.player_count ?? servidor.playerCount ?? undefined;
-}
-
-function limparMotdServidor(motd: string | null | undefined): string | undefined {
-  const texto = motd
-    ?.replace(/\u00a7[0-9A-FK-OR]/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return texto || undefined;
 }
 
 function descreverErroServidor(erro: unknown): string {
@@ -199,7 +192,6 @@ export default function HomePage({
       {instanciasRecentes.length > 0 && (
         <SecaoVolteAJogar
           instances={instanciasRecentes}
-          instanciaAtivaId={instanciaAtivaId}
           onSelectInstance={onSelectInstance}
           onLaunch={onLaunch}
           onLaunchServer={onLaunchServer}
@@ -488,7 +480,6 @@ function SecaoServidoresDome({
 
 function SecaoVolteAJogar({
   instances,
-  instanciaAtivaId,
   onSelectInstance,
   onLaunch,
   onLaunchServer,
@@ -496,7 +487,6 @@ function SecaoVolteAJogar({
   user,
 }: {
   instances: Instance[];
-  instanciaAtivaId: string | null;
   onSelectInstance: (instance: Instance) => void;
   onLaunch: (id: string) => void;
   onLaunchServer: (id: string, address: string) => void;
@@ -535,6 +525,7 @@ function SecaoVolteAJogar({
         ping?: number;
         jogadores?: string;
         motd?: string;
+        motdComponentes?: unknown;
         icon?: string | null;
       }
     >
@@ -651,7 +642,8 @@ function SecaoVolteAJogar({
                 online: true,
                 ping: ping.ping ?? undefined,
                 jogadores: obterContagemJogadores(ping),
-                motd: limparMotdServidor(ping.motd),
+                motd: ping.motd ?? undefined,
+                motdComponentes: ping.motdComponentes,
                 icon: ping.icon ?? item.servidor.icon ?? undefined,
               },
             }));
@@ -692,10 +684,9 @@ function SecaoVolteAJogar({
     >
       <CabecalhoSecao titulo="Volte a jogar" />
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-stretch gap-3 xl:grid-cols-2">
         {itensVolteAJogar.map((item, indice) => {
           const instancia = item.instancia;
-          const instanciaAtiva = instancia.id === instanciaAtivaId;
           const status =
             item.tipo === "servidor"
               ? statusServidores[chaveServidor(instancia.id, item.servidor)]
@@ -711,14 +702,12 @@ function SecaoVolteAJogar({
               transition={{ delay: 0.04 + indice * 0.03 }}
               onClick={() => onSelectInstance(instancia)}
               className={cn(
-                "cursor-pointer border p-[13px] transition-colors",
-                instanciaAtiva
-                  ? "border-emerald-400/35 bg-emerald-500/8"
-                  : "border-white/10 bg-[rgba(255,255,255,0.03)] hover:border-white/20"
+                "flex cursor-pointer flex-col border border-white/10 p-[13px] transition-colors",
+                "bg-[rgba(255,255,255,0.03)] hover:border-white/20 hover:bg-white/5"
               )}
             >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 overflow-hidden bg-black/30">
+              <div className="flex w-full flex-1 items-center gap-3">
+                <div className="h-10 w-10 shrink-0 overflow-hidden bg-black/30">
                   <img
                     src={
                       item.tipo === "servidor"
@@ -771,33 +760,27 @@ function SecaoVolteAJogar({
                       {instancia.last_played
                         ? `Jogou ${tempoRelativo(instancia.last_played)}`
                         : "Instância local"}
-                      {" • "}
-                      {instancia.loader_type || instancia.mc_type} {instancia.version}
                     </p>
                   )}
 
                   {item.tipo === "mundo" && (
                     <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[12px] text-white/65">
-                      Mundo local na instância {instancia.name}
-                      {instancia.last_played ? ` • ${tempoRelativo(instancia.last_played)}` : ""}
+                      {instancia.last_played ? tempoRelativo(instancia.last_played) : "Mundo local"}
                     </p>
                   )}
 
                   {item.tipo === "servidor" && (
-                    <div className="min-w-0">
-                      {status?.motd && (
-                        <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[12px] text-white/80">
-                          {status.motd}
-                        </p>
-                      )}
-                      <p className="truncate font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/50">
-                        {item.servidor.address}
-                        {item.servidor.port && item.servidor.port !== 25565
-                          ? `:${item.servidor.port}`
-                          : ""}
-                        {" • "}
-                        na instância {instancia.name}
-                      </p>
+                    <div
+                      className="min-w-0"
+                      title={`${item.servidor.address}:${item.servidor.port || 25565} · ${instancia.name}`}
+                    >
+                      <MotdMinecraft
+                        valor={status?.motdComponentes ?? status?.motd ?? item.servidor.motd ?? ""}
+                        className={cn(
+                          "line-clamp-2 font-['MinecraftSeven','Sora',sans-serif]",
+                          "text-[11px] leading-4 text-white/80"
+                        )}
+                      />
                     </div>
                   )}
                 </div>
@@ -821,9 +804,14 @@ function SecaoVolteAJogar({
                         : item.servidor.address;
                     onLaunchServer(instancia.id, destino);
                   }}
-                  className="border border-white/15 bg-[#2d2d2d] px-4 py-1.5 font-['MinecraftTen','Sora',sans-serif] text-[12px] tracking-[0.28px] text-white/85 transition-colors hover:bg-[#393939]"
+                  className={cn(
+                    "border border-white/15 bg-[#2d2d2d] px-4 py-1.5 text-white/85",
+                    "transition-colors hover:bg-[#393939]"
+                  )}
                 >
-                  {item.tipo === "servidor" ? "Abrir" : "Jogar"}
+                  <span className="font-['MinecraftTen','Sora',sans-serif] text-[14px] tracking-[0.28px]">
+                    Jogar
+                  </span>
                 </button>
 
                 <div className="relative">
@@ -856,18 +844,32 @@ function SecaoVolteAJogar({
                   )}
                 </div>
               </div>
-
-              {item.tipo === "servidor" && status?.online && (
-                <div className="mt-[9px] flex items-center gap-3 border-t border-white/10 pt-[9px] font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/65">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-[7px] w-[7px] rounded-full bg-emerald-400" />
-                    {status.jogadores ?? "--/--"} jogadores
-                  </span>
-                  {status.ping != null && <span className="text-white/40">{status.ping}ms</span>}
+              {(item.tipo !== "servidor" || status?.online) && (
+                <div className={cn(
+                  "mt-[9px] flex items-center gap-3 border-t border-white/10 pt-[9px]",
+                  "font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-white/65"
+                )}>
+                  {item.tipo === "servidor" ? (
+                    <>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                        {status?.jogadores ?? "--/--"} jogadores
+                      </span>
+                      {status?.ping != null && <span className="text-white/40">{status.ping}ms</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span className="min-w-0 truncate">
+                        {item.tipo === "mundo"
+                          ? `Instância ${instancia.name}`
+                          : instancia.loader_type || instancia.mc_type}
+                      </span>
+                      <span className="shrink-0 text-white/40">{instancia.version}</span>
+                    </>
+                  )}
                 </div>
               )}
-
-              {item.tipo === "servidor" && !status?.online && status?.erro && (
+              {item.tipo === "servidor" && status?.erro && (
                 <p className="mt-2 truncate font-['MinecraftSeven','Sora',sans-serif] text-[11px] text-red-300/70">
                   {status.erro}
                 </p>
