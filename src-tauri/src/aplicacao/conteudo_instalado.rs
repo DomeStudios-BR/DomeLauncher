@@ -171,6 +171,13 @@ fn ler_metadados_mod<R: Read + Seek>(
         .unwrap_or_else(|| ler_manifesto(compactado))
 }
 
+pub(super) fn ler_identidade_mod<R: Read + Seek>(
+    compactado: &mut zip::ZipArchive<R>,
+) -> (Option<String>, Vec<String>) {
+    let metadados = ler_metadados_mod(compactado, true);
+    (metadados.nome, metadados.identificadores)
+}
+
 fn ler_fabric<R: Read + Seek>(
     compactado: &mut zip::ZipArchive<R>,
     incluir_aliases: bool,

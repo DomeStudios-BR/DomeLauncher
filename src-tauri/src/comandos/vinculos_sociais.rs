@@ -198,6 +198,9 @@ fn publicar_preparada(
     vinculo: Option<VinculoSocial>,
     arquivo_vinculo: &str,
 ) -> Result<Instance, String> {
+    if existente.is_none() && arquivo_vinculo == "modpack-dome.json" {
+        return publicar_nova_copia_modpack(state, preparada, vinculo, arquivo_vinculo);
+    }
     let raiz = state.caminho_instancias()?;
     let origem = preparada.path.clone();
     let mut backup = None;
@@ -294,10 +297,114 @@ fn publicar_preparada(
     Ok(preparada)
 }
 
+fn publicar_nova_copia_modpack(
+    state: &LauncherState,
+    mut preparada: Instance,
+    vinculo: Option<VinculoSocial>,
+    arquivo_vinculo: &str,
+) -> Result<Instance, String> {
+    let (nome, id, destino) =
+        crate::aplicacao::nomes_instancias::reservar_copia_modpack(state, &preparada.name)?;
+    let origem = preparada.path.clone();
+    preparada.name = nome;
+    preparada.id = id;
+    preparada.path = destino.clone();
+    let resultado = (|| {
+        if let Some(vinculo) = vinculo {
+            std::fs::write(
+                origem.join(arquivo_vinculo),
+                serde_json::to_vec(&vinculo).map_err(|erro| erro.to_string())?,
+            )
+            .map_err(|erro| erro.to_string())?;
+        }
+        for entrada in std::fs::read_dir(&origem).map_err(|erro| erro.to_string())? {
+            let entrada = entrada.map_err(|erro| erro.to_string())?;
+            if entrada.file_name() == "instance.json" {
+                continue;
+            }
+            let tipo = entrada.file_type().map_err(|erro| erro.to_string())?;
+            if !tipo.is_file() && !tipo.is_dir() {
+                return Err("A instância preparada contém links ou arquivos especiais.".into());
+            }
+            let alvo = destino.join(entrada.file_name());
+            match std::fs::rename(entrada.path(), &alvo) {
+                Ok(()) => {}
+                Err(erro) if erro.kind() == std::io::ErrorKind::CrossesDevices => {
+                    if tipo.is_dir() {
+                        copiar_preparacao(&entrada.path(), &alvo)?;
+                    } else {
+                        std::fs::copy(entrada.path(), &alvo).map_err(|erro| erro.to_string())?;
+                    }
+                }
+                Err(erro) => return Err(erro.to_string()),
+            }
+        }
+        std::fs::write(
+            destino.join("instance.json"),
+            serde_json::to_vec_pretty(&preparada).map_err(|erro| erro.to_string())?,
+        )
+        .map_err(|erro| erro.to_string())
+    })();
+    if let Err(erro) = resultado {
+        let raiz = state.caminho_instancias()?;
+        if let Ok(destino_seguro) =
+            crate::comandos::instancia_sistema::validar_caminho_dentro_raiz(&raiz, &destino)
+        {
+            let _ = std::fs::remove_dir_all(destino_seguro);
+        }
+        return Err(erro);
+    }
+    Ok(preparada)
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn publica_copias_dome_numeradas_sem_substituir_a_original() {
+        let raiz = std::env::temp_dir().join(format!("dome-publicacao-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&raiz).unwrap();
+        let _limpeza =
+            pacotes_sociais::PastaTemporaria::nova(raiz.parent().unwrap(), &raiz).unwrap();
+        let state = LauncherState {
+            account: Default::default(),
+            accounts: Default::default(),
+            processos_instancias: Default::default(),
+            instances_path: Arc::new(Mutex::new(raiz.clone())),
+        };
+        let preparacao = raiz.join(".social-staging");
+        for numero in 0..4 {
+            let mut preparada = instancia(&preparacao, &format!("temporaria-{numero}"), &[numero]);
+            preparada.name = "LostSMP".into();
+            let vinculo = VinculoSocial {
+                compartilhamento_id: "mesmo-projeto".into(),
+                api_base_url: "https://api.test".into(),
+                versao: numero.into(),
+                arquivos: vec![],
+                substituir_alteracoes_locais: false,
+            };
+            let instalada = publicar_modpack_local(&state, preparada, None, vinculo).unwrap();
+            let nome = if numero == 0 {
+                "LostSMP".into()
+            } else {
+                format!("LostSMP ({numero})")
+            };
+            assert_eq!(instalada.name, nome);
+            assert_eq!(instalada.id, nome);
+            assert_eq!(instalada.path, raiz.join(nome));
+            assert_eq!(
+                std::fs::read(instalada.path.join("mods/exemplo.jar")).unwrap(),
+                [numero]
+            );
+        }
+        assert_eq!(state.get_instances().unwrap().len(), 4);
+        assert_eq!(
+            std::fs::read(raiz.join("LostSMP/mods/exemplo.jar")).unwrap(),
+            [0]
+        );
+    }
 
     fn instancia(raiz: &Path, id: &str, conteudo: &[u8]) -> Instance {
         let pasta = raiz.join(id);

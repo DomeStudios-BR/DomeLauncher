@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useImperativeHandle, useRef, useCallback, useMemo, type Ref } from "react";
 import {
   Play,
   Search,
@@ -44,6 +44,7 @@ import RevisaoInstalacaoConteudo, {
 } from "./instance/RevisaoInstalacaoConteudo";
 import EditorIconeModal from "./editor-icone/EditorIconeModal";
 import ModalExclusaoInstancia from "./ModalExclusaoInstancia";
+import { DiagnosticoCrash } from "./instance/DiagnosticoCrash";
 import {
   CabecalhoMenuContextual,
   ItemMenuContextual,
@@ -52,9 +53,15 @@ import {
 } from "./context-menu/MenuContextual";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
 import { loadFavorites, saveFavorites, type FavoriteItem } from "./Favorites";
+import { useImportacaoConteudoLocal } from "../hooks/useImportacaoConteudoLocal";
+import { ordenarConteudo, type CampoOrdenacaoConteudo, type OrdenacaoConteudo } from "../lib/ordenacaoConteudo";
 
 interface InstanceManagerProps {
+  ref?: Ref<ControleNavegacaoInstancia>;
   instanceId: string;
+  navegacaoAtiva?: boolean;
+  navegacaoRestaurada?: RestauracaoNavegacaoInstancia | null;
+  onRegistrarNavegacao?: () => void;
   onBack: () => void;
   onAbrirSocial?: () => void;
   onAbrirProjeto?: (projeto: ProjetoConteudo) => void;
@@ -227,6 +234,35 @@ type BrowseSource = "modrinth" | "curseforge";
 type FontesBusca = Record<BrowseSource, boolean>;
 type TipoProjetoCache = "mod" | "resourcepack" | "shader";
 type OrdenacaoBusca = "relevancia" | "popularidade" | "downloads" | "atualizados" | "recentes";
+
+export interface EstadoNavegacaoInstancia {
+    aba: ContentTab;
+    filtro: ContentFilter;
+    modo: ViewMode;
+    busca: string;
+    fontes: FontesBusca;
+    ordenacao: OrdenacaoBusca;
+    categorias: CategoriaBuscaOnline[];
+    categoriasIncluidas: string[];
+    categoriasNegadas: string[];
+    filtrosAbertos: boolean;
+    resultados: SearchResult[];
+    fila: Record<string, SearchResult>;
+    offsets: Record<BrowseSource, number>;
+    maisPorFonte: Record<BrowseSource, boolean>;
+    temMais: boolean;
+    assinaturaBusca: { query: string; filter: string; source: string; opcoes: string };
+    rolagem: number;
+}
+
+export interface ControleNavegacaoInstancia {
+    capturar: () => EstadoNavegacaoInstancia;
+}
+
+export interface RestauracaoNavegacaoInstancia {
+    instanciaId: string;
+    estado: EstadoNavegacaoInstancia;
+}
 
 const ORDENACOES_BUSCA: Array<{ id: OrdenacaoBusca; nome: string }> = [
   { id: "relevancia", nome: "Relevância" },
@@ -547,7 +583,11 @@ const formatarTempoJogadoTotal = (segundos?: number): string => {
 };
 
 export default function InstanceManager({
+  ref,
   instanceId,
+  navegacaoAtiva = true,
+  navegacaoRestaurada,
+  onRegistrarNavegacao,
   onBack,
   onAbrirSocial,
   onAbrirProjeto,
@@ -565,6 +605,9 @@ export default function InstanceManager({
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [installedResourcePacks, setInstalledResourcePacks] = useState<InstalledMod[]>([]);
   const [installedShaders, setInstalledShaders] = useState<InstalledMod[]>([]);
+  const [ordenacaoConteudo, setOrdenacaoConteudo] = useState<OrdenacaoConteudo>({
+    campo: "name", decrescente: false,
+  });
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -629,11 +672,16 @@ export default function InstanceManager({
   const lastSearch = useRef({ query: "", filter: "", source: "", opcoes: "" });
   const carregandoMaisResultadosRef = useRef(false);
   const listaConteudoRef = useRef<HTMLDivElement | null>(null);
+  const ultimaRolagemRef = useRef(0);
+  const restauracaoBuscaRef = useRef<EstadoNavegacaoInstancia | null>(null);
+  const restauracaoFiltrosRef = useRef<EstadoNavegacaoInstancia | null>(null);
+  const [rolagemRestaurada, setRolagemRestaurada] = useState<number | null>(null);
   const seletorFontesRef = useRef<HTMLDivElement | null>(null);
   const seletorCategoriasRef = useRef<HTMLDivElement | null>(null);
   const proximosOffsetsBuscaRef = useRef<Record<BrowseSource, number>>({ modrinth: 0, curseforge: 0 });
   const temMaisPorFonteBuscaRef = useRef<Record<BrowseSource, boolean>>({ modrinth: true, curseforge: true });
   const geracaoBuscaRef = useRef(0);
+  const geracoesConteudoRef = useRef<Record<ContentFilter, number>>({ mods: 0, resourcepacks: 0, shaders: 0 });
   const nomeInstanciaRef = useRef<HTMLInputElement | null>(null);
   const arrasteIndicadorRef = useRef<{
     ponteiroId: number;
@@ -645,7 +693,27 @@ export default function InstanceManager({
   const assinaturaCategorias = `${assinaturaCategoriasIncluidas}::${assinaturaCategoriasNegadas}`;
   const assinaturaFontesBusca = FONTES_BUSCA.filter((fonte) => fontesBuscaSelecionadas[fonte]).join("|");
 
+  useImperativeHandle(ref, () => ({
+    capturar: () => ({
+      aba: activeTab, filtro: activeFilter, modo: viewMode, busca: searchQuery,
+      fontes: { ...fontesBuscaSelecionadas }, ordenacao: ordenacaoBusca, categorias: categoriasBusca,
+      categoriasIncluidas: [...categoriasIncluidas].sort(), categoriasNegadas: [...categoriasNegadas].sort(),
+      filtrosAbertos: filtrosBuscaAbertos, resultados: searchResults, fila: filaInstalacao,
+      offsets: { ...proximosOffsetsBuscaRef.current }, maisPorFonte: { ...temMaisPorFonteBuscaRef.current },
+      temMais: temMaisResultados, assinaturaBusca: { ...lastSearch.current },
+      rolagem: navegacaoAtiva ? listaConteudoRef.current?.scrollTop ?? 0 : ultimaRolagemRef.current,
+    }),
+  }));
+
+  const navegarModoConteudo = (modo: ViewMode) => {
+    if (modo === viewMode) return;
+    onRegistrarNavegacao?.();
+    setViewMode(modo);
+    if (listaConteudoRef.current) listaConteudoRef.current.scrollTop = 0;
+  };
+
   useEffect(() => {
+    geracoesConteudoRef.current = { mods: 0, resourcepacks: 0, shaders: 0 };
     setActiveTab("content");
     setActiveFilter("mods");
     setViewMode("installed");
@@ -656,6 +724,41 @@ export default function InstanceManager({
     setOrdenacaoBusca("relevancia");
     loadInstanceDetails();
   }, [instanceId]);
+
+  useEffect(() => {
+    if (!navegacaoRestaurada || navegacaoRestaurada.instanciaId !== instanceId) return;
+    const estado = navegacaoRestaurada.estado;
+    geracaoBuscaRef.current++;
+    restauracaoBuscaRef.current = estado.modo === "browse" ? estado : null;
+    restauracaoFiltrosRef.current = estado;
+    lastSearch.current = { ...estado.assinaturaBusca };
+    proximosOffsetsBuscaRef.current = { ...estado.offsets };
+    temMaisPorFonteBuscaRef.current = { ...estado.maisPorFonte };
+    setActiveTab(estado.aba);
+    setActiveFilter(estado.filtro);
+    setViewMode(estado.modo);
+    setSearchQuery(estado.busca);
+    setFontesBuscaSelecionadas(estado.fontes);
+    setOrdenacaoBusca(estado.ordenacao);
+    setCategoriasBusca(estado.categorias);
+    setCategoriasIncluidas(new Set(estado.categoriasIncluidas));
+    setCategoriasNegadas(new Set(estado.categoriasNegadas));
+    setFiltrosBuscaAbertos(estado.filtrosAbertos);
+    setSearchResults(estado.resultados);
+    setFilaInstalacao(estado.fila);
+    setTemMaisResultados(estado.temMais);
+    setSearching(false);
+    setCarregandoMaisResultados(false);
+    carregandoMaisResultadosRef.current = false;
+    setRolagemRestaurada(estado.rolagem);
+  }, [instanceId, navegacaoRestaurada]);
+
+  useLayoutEffect(() => {
+    if (!navegacaoAtiva || loading || searching || rolagemRestaurada === null) return;
+    if (listaConteudoRef.current) listaConteudoRef.current.scrollTop = rolagemRestaurada;
+    ultimaRolagemRef.current = rolagemRestaurada;
+    setRolagemRestaurada(null);
+  }, [navegacaoAtiva, loading, searching, rolagemRestaurada]);
 
   useEffect(() => {
     if (activeTab === "worlds") loadWorlds();
@@ -675,17 +778,36 @@ export default function InstanceManager({
                     instanceDetails?.loaderType === "Vanilla" ||
                     instanceDetails?.loaderType === "vanilla";
 
-  // Buscar quando mudar para browse mode ou filtro
   useEffect(() => {
-    if (viewMode === "browse") {
-      searchContent(searchQuery);
+    const restauracao = restauracaoBuscaRef.current;
+    if (restauracao) {
+      if (instanceDetails?.id !== instanceId) return;
+      if (viewMode === restauracao.modo && activeFilter === restauracao.filtro &&
+          searchQuery === restauracao.busca && ordenacaoBusca === restauracao.ordenacao &&
+          assinaturaFontesBusca === restauracao.assinaturaBusca.source &&
+          assinaturaCategorias === [restauracao.categoriasIncluidas.join("|"),
+            restauracao.categoriasNegadas.join("|")].join("::")) {
+        restauracaoBuscaRef.current = null;
+        if (restauracao.assinaturaBusca.query === searchQuery) return;
+      } else {
+        return;
+      }
     }
+    if (viewMode !== "browse") return;
+    const atraso = lastSearch.current.query === searchQuery ? 0 : 400;
+    const temporizador = window.setTimeout(() => {
+      searchContent(searchQuery);
+    }, atraso);
+    return () => window.clearTimeout(temporizador);
   }, [
     viewMode,
     activeFilter,
+    searchQuery,
     assinaturaFontesBusca,
+    instanceDetails?.id,
     instanceDetails?.version,
     instanceDetails?.loaderType,
+    navegacaoRestaurada,
     ordenacaoBusca,
     assinaturaCategorias,
   ]);
@@ -715,14 +837,14 @@ export default function InstanceManager({
   useEffect(() => {
     const navegarInternamente = (evento: Event) => {
       const direcao = (evento as CustomEvent<DirecaoNavegacaoInterna>).detail;
-      if (activeTab !== "content" || direcao !== -1) return;
+      if (!navegacaoAtiva || activeTab !== "content" || direcao !== -1) return;
 
       if (revisaoInstalacaoAberta && !instalandoFila) {
         evento.preventDefault();
         setRevisaoInstalacaoAberta(false);
         return;
       }
-      if (viewMode === "browse") {
+      if (viewMode === "browse" && !onRegistrarNavegacao) {
         evento.preventDefault();
         setViewMode("installed");
       }
@@ -730,9 +852,17 @@ export default function InstanceManager({
 
     window.addEventListener(EVENTO_NAVEGACAO_INTERNA, navegarInternamente);
     return () => window.removeEventListener(EVENTO_NAVEGACAO_INTERNA, navegarInternamente);
-  }, [activeTab, instalandoFila, revisaoInstalacaoAberta, viewMode]);
+  }, [activeTab, instalandoFila, navegacaoAtiva, onRegistrarNavegacao, revisaoInstalacaoAberta, viewMode]);
 
   useEffect(() => {
+    const restauracao = restauracaoFiltrosRef.current;
+    if (restauracao) {
+      const fontes = FONTES_BUSCA.filter((fonte) => restauracao.fontes[fonte]).join("|");
+      if (activeFilter === restauracao.filtro && viewMode === restauracao.modo && assinaturaFontesBusca === fontes) {
+        restauracaoFiltrosRef.current = null;
+      }
+      return;
+    }
     setArquivosMarcados(new Set());
     setCategoriasIncluidas(new Set());
     setCategoriasNegadas(new Set());
@@ -740,7 +870,7 @@ export default function InstanceManager({
     if (viewMode !== "installed") {
       setModoSelecaoLote(false);
     }
-  }, [activeFilter, assinaturaFontesBusca, viewMode, instanceId]);
+  }, [activeFilter, assinaturaFontesBusca, viewMode, instanceId, navegacaoRestaurada]);
 
   useEffect(() => {
     if (!seletorFontesAberto) return;
@@ -768,19 +898,6 @@ export default function InstanceManager({
     return () => document.removeEventListener("mousedown", fecharAoClicarFora);
   }, [seletorCategoriasAberto]);
 
-  // Debounce na busca
-  useEffect(() => {
-    if (viewMode !== "browse") return;
-    if (lastSearch.current.query === searchQuery &&
-        lastSearch.current.filter === activeFilter &&
-        lastSearch.current.source === assinaturaFontesBusca) return;
-    
-    const timer = setTimeout(() => {
-      searchContent(searchQuery);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [assinaturaFontesBusca, searchQuery, viewMode]);
-
   const loadInstanceDetails = async () => {
     try {
       const details: InstanceDetails = await invoke("get_instance_details", { instanceId });
@@ -798,12 +915,16 @@ export default function InstanceManager({
     contentType: ContentFilter,
     silencioso = false
   ) => {
+    const geracoes = geracoesConteudoRef.current;
+    const geracao = ++geracoes[contentType];
+    const cargaAtual = () => geracoesConteudoRef.current === geracoes && geracoes[contentType] === geracao;
     if (!silencioso) setLoading(true);
     try {
       const detalhes = await invoke<ConteudoInstaladoDetalhado[]>(
         "obter_conteudo_instalado_detalhado",
         { instanceId, contentType }
       );
+      if (!cargaAtual()) return;
       const files = detalhes.map((detalhe) => detalhe.fileName);
 
       const tipoProjeto = tipoProjetoPorFiltro(contentType);
@@ -850,20 +971,28 @@ export default function InstanceManager({
       if (contentType === "mods") {
         setInstalledMods(formattedContent);
         // Enriquecer os que estão sem metadata (em background)
-        enrichModsWithModrinthData(formattedContent, "mod");
+        void enrichModsWithModrinthData(formattedContent, "mod", cargaAtual);
       } else if (contentType === "resourcepacks") {
         setInstalledResourcePacks(formattedContent);
-        enrichModsWithModrinthData(formattedContent, "resourcepack");
+        void enrichModsWithModrinthData(formattedContent, "resourcepack", cargaAtual);
       } else if (contentType === "shaders") {
         setInstalledShaders(formattedContent);
-        enrichModsWithModrinthData(formattedContent, "shader");
+        void enrichModsWithModrinthData(formattedContent, "shader", cargaAtual);
       }
     } catch (error) {
       console.error(`Erro ao carregar ${contentType}:`, error);
     } finally {
-      if (!silencioso) setLoading(false);
+      if (!silencioso && cargaAtual()) setLoading(false);
     }
   };
+
+  const importacaoLocal = useImportacaoConteudoLocal({
+    instanceId,
+    tipo: activeFilter,
+    habilitada: activeTab === "content" && viewMode === "installed"
+      && !revisaoInstalacaoAberta && !itemTrocaVersao && !modalExclusaoAberto && !editorIconeAberto,
+    aoImportar: () => loadInstalledContent(activeFilter),
+  });
 
   const normalizarChaveProjeto = (valor: string): string =>
     valor
@@ -966,7 +1095,8 @@ export default function InstanceManager({
   // Buscar informações do Modrinth para conteúdo instalado
   const enrichModsWithModrinthData = async (
     items: InstalledMod[],
-    projectType: string = "mod"
+    projectType: string = "mod",
+    cargaAtual: () => boolean = () => true
   ) => {
     const enrichedItems = [...items];
     const tipoProjeto = (projectType === "resourcepack" || projectType === "shader"
@@ -977,6 +1107,7 @@ export default function InstanceManager({
     let processadosNoCiclo = 0;
 
     for (let i = 0; i < items.length; i++) {
+      if (!cargaAtual()) return;
       const item = items[i];
       if (item.projectId) continue;
       if (processadosNoCiclo >= LIMITE_ENRIQUECIMENTO_POR_CICLO) break;
@@ -1092,6 +1223,7 @@ export default function InstanceManager({
       }
     }
 
+    if (!cargaAtual()) return;
     if (cacheAlterado) {
       salvarCacheConteudoInstalado(cacheConteudo);
     }
@@ -1105,7 +1237,7 @@ export default function InstanceManager({
       setInstalledShaders(enrichedItems);
     }
 
-    verificarAtualizacoesConteudo(enrichedItems, tipoProjeto);
+    void verificarAtualizacoesConteudo(enrichedItems, tipoProjeto, cargaAtual);
   };
 
   const atualizarListaPorTipo = (
@@ -1195,7 +1327,8 @@ export default function InstanceManager({
 
   const verificarAtualizacoesConteudo = async (
     itens: InstalledMod[],
-    tipoProjeto: TipoProjetoCache
+    tipoProjeto: TipoProjetoCache,
+    cargaAtual: () => boolean = () => true
   ) => {
     if (!instanceDetails) return;
 
@@ -1204,6 +1337,7 @@ export default function InstanceManager({
     const itensAtualizados = [...itens];
 
     for (let i = 0; i < itensAtualizados.length; i++) {
+      if (!cargaAtual()) return;
       const item = itensAtualizados[i];
       if (!item.projectId) continue;
 
@@ -1327,6 +1461,7 @@ export default function InstanceManager({
       }
     }
 
+    if (!cargaAtual()) return;
     if (cacheAlterado) {
       salvarCacheConteudoInstalado(cacheConteudo);
     }
@@ -1461,6 +1596,7 @@ export default function InstanceManager({
           return { fonte, resultados };
         })
       );
+      if (geracaoBuscaRef.current !== geracaoBusca) return;
       if (lastSearch.current.query !== assinaturaBusca.query
           || lastSearch.current.filter !== assinaturaBusca.filter
           || lastSearch.current.source !== assinaturaBusca.source
@@ -2372,9 +2508,28 @@ export default function InstanceManager({
   );
 
   // Filtrar conteúdo instalado
-  const filteredContent = currentContent.filter((item) =>
+  const filteredContent = ordenarConteudo(currentContent.filter((item) =>
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), ordenacaoConteudo);
+
+  const alternarOrdenacaoConteudo = (campo: CampoOrdenacaoConteudo) => {
+    setOrdenacaoConteudo((anterior) => {
+      if (campo === "version" && anterior.campo === campo && anterior.decrescente) {
+        return { campo, decrescente: false, atualizacoesPrimeiro: true };
+      }
+      return {
+        campo,
+        decrescente: anterior.campo === campo && !anterior.atualizacoesPrimeiro
+          ? !anterior.decrescente : false,
+      };
+    });
+  };
+
+  const indicadorOrdenacao = (campo: CampoOrdenacaoConteudo) => {
+    if (ordenacaoConteudo.campo !== campo) return "";
+    if (ordenacaoConteudo.atualizacoesPrimeiro) return "";
+    return ordenacaoConteudo.decrescente ? " ↓" : " ↑";
+  };
 
   const itensSelecionados = currentContent.filter((item) =>
     arquivosSelecionados.has(item.fileName)
@@ -2467,6 +2622,8 @@ export default function InstanceManager({
   }, []);
 
   const aoRolarListaConteudo = () => {
+    if (!navegacaoAtiva) return;
+    ultimaRolagemRef.current = listaConteudoRef.current?.scrollTop ?? 0;
     sincronizarIndicadorRolagem();
     const lista = listaConteudoRef.current;
     if (!lista || viewMode !== "browse" || searching || carregandoMaisResultados || !temMaisResultados) {
@@ -2605,9 +2762,10 @@ export default function InstanceManager({
 
   // Ajustar filtro se necessário
   useEffect(() => {
-    if (!instanceDetails) return;
-    setActiveFilter(isVanilla ? "resourcepacks" : "mods");
-  }, [instanceDetails?.id, isVanilla]);
+    if (instanceDetails && isVanilla && activeFilter !== "resourcepacks") {
+      setActiveFilter("resourcepacks");
+    }
+  }, [instanceDetails?.id, isVanilla, activeFilter]);
 
   if (!instanceDetails) {
     return (
@@ -2656,6 +2814,10 @@ export default function InstanceManager({
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(evento) => {
+                    if (evento.key === "Enter" && !saving) void saveInstanceSettings();
+                    if (evento.key === "Escape" && !saving) cancelEditingInstance();
+                  }}
                   aria-label="Nome da instância"
                   className="w-full max-w-sm rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-xl font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
@@ -2778,11 +2940,7 @@ export default function InstanceManager({
       {/* Tabs */}
       <div className="px-6 pt-4 pb-2 border-b border-white/5">
         <div className="flex gap-1">
-          {(
-            isVanilla
-              ? (["content", "worlds", "servers", "logs"] as ContentTab[])
-              : (["content", "worlds", "servers", "configuration", "logs"] as ContentTab[])
-          ).map((tab) => (
+          {(["content", "worlds", "servers", "configuration", "logs"] as ContentTab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -2808,14 +2966,37 @@ export default function InstanceManager({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-hidden flex flex-col" onClick={() => setShowMoreMenu(false)}>
+      <div ref={importacaoLocal.areaRef} className="relative flex-1 overflow-hidden flex flex-col"
+        onClick={() => setShowMoreMenu(false)}>
+        {(importacaoLocal.arrastando || importacaoLocal.importando) && (
+          <div role="status" className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center
+            border-2 border-dashed border-emerald-400 bg-[#101b16]/95 text-emerald-300">
+            <div className="flex items-center gap-3 text-sm font-bold">
+              {importacaoLocal.importando ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
+              {importacaoLocal.importando ? "Adicionando arquivos…"
+                : `Solte ${activeFilter === "mods" ? "arquivos .jar" : "arquivos .zip"} para adicionar à instância`}
+            </div>
+          </div>
+        )}
         {activeTab === "content" && (
           <>
+            {viewMode === "installed" && importacaoLocal.resultado && (
+              <div role={importacaoLocal.resultado.erros.length ? "alert" : "status"}
+                className="max-h-28 shrink-0 overflow-y-auto border-b border-white/10 px-6 py-3 text-xs">
+                {importacaoLocal.resultado.adicionados.length > 0 && (
+                  <p className="text-emerald-300">{importacaoLocal.resultado.adicionados.length} arquivo(s) adicionado(s).</p>
+                )}
+                {importacaoLocal.resultado.erros.map((erro, indice) => (
+                  <p key={indice} className="text-amber-300">{erro}</p>
+                ))}
+              </div>
+            )}
             {/* Search & Actions Bar */}
             <div className="flex flex-wrap items-center gap-3 border-b border-white/5 px-6 py-4">
               {viewMode === "browse" && (
                 <button
-                  onClick={() => setViewMode("installed")}
+                  onClick={() => navegarModoConteudo("installed")}
+                  aria-label="Voltar ao conteúdo instalado"
                   className="p-2 rounded-lg hover:bg-white/10 transition-colors text-white/60"
                 >
                   <ChevronLeft size={20} />
@@ -2864,7 +3045,7 @@ export default function InstanceManager({
                     {modoSelecaoLote ? "Cancelar seleção" : "Selecionar"}
                   </button>
                   <button
-                    onClick={() => setViewMode("browse")}
+                    onClick={() => navegarModoConteudo("browse")}
                     className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black px-4 py-2 rounded-lg font-medium text-sm transition-all whitespace-nowrap"
                   >
                     <Plus size={16} />
@@ -3256,7 +3437,7 @@ export default function InstanceManager({
                       <Package size={40} className="mx-auto mb-3 opacity-30" />
                       <p className="font-medium">Nenhum conteúdo instalado</p>
                       <button
-                        onClick={() => setViewMode("browse")}
+                        onClick={() => navegarModoConteudo("browse")}
                         className="mt-3 text-emerald-400 hover:text-emerald-300 text-sm"
                       >
                         + Adicionar conteúdo
@@ -3267,7 +3448,7 @@ export default function InstanceManager({
                   <div>
                     <div
                       className={cn(
-                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_8rem]",
+                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_2rem]",
                         "items-center gap-x-4 border-b border-white/5",
                         "bg-[#0d0d0e] px-6 py-2 text-xs text-white/40"
                       )}
@@ -3286,9 +3467,28 @@ export default function InstanceManager({
                         />
                       </div>
                       <div />
-                      <div className="min-w-0">Nome</div>
-                      <div className="text-right">Ativo</div>
-                      <div className="text-center">Versão</div>
+                      {([ ["name", "Nome"], ["enabled", "Ativo"], ["version", "Versão"] ] as const)
+                        .map(([campo, rotulo]) => (
+                          <button key={campo} type="button" onClick={() => alternarOrdenacaoConteudo(campo)}
+                            aria-label={campo === "version" && ordenacaoConteudo.atualizacoesPrimeiro
+                              ? "Ordenar por Versão: atualizações primeiro"
+                              : `Ordenar por ${rotulo}${indicadorOrdenacao(campo)}`}
+                            title={campo === "version"
+                              ? "Alternar: versão crescente, decrescente ou atualizações primeiro" : undefined}
+                            className={cn("flex cursor-pointer items-center gap-1 py-1 transition-colors hover:text-emerald-300",
+                              campo === "name" ? "justify-start" : campo === "enabled" ? "justify-end" : "justify-center",
+                              ordenacaoConteudo.campo === campo && "text-emerald-300")}
+                          >
+                            <span>{rotulo}</span>
+                            <span aria-hidden="true" className="relative flex h-3 w-3 shrink-0 items-center justify-center">
+                              {indicadorOrdenacao(campo).trim()}
+                              {campo === "version" && (
+                                <RefreshCw size={11} className={cn("absolute inset-0 m-auto",
+                                  !ordenacaoConteudo.atualizacoesPrimeiro && "invisible")} />
+                              )}
+                            </span>
+                          </button>
+                        ))}
                       <div />
                     </div>
 
@@ -3306,7 +3506,7 @@ export default function InstanceManager({
                           });
                         }}
                         className={cn(
-                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_8rem]",
+                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_2rem]",
                           "items-center gap-x-4 border-b border-white/5 px-6 py-3 hover:bg-white/2"
                         )}
                       >
@@ -3342,10 +3542,16 @@ export default function InstanceManager({
                           />
                         </div>
 
-                        <div
+                        <button
+                          type="button"
+                          disabled={!mod.projectId || !mod.source || !onAbrirProjeto}
+                          onClick={() => abrirDetalhesConteudoInstalado(mod, activeFilter)}
+                          aria-label={`Abrir página de ${mod.name}`}
+                          title={mod.projectId ? `Abrir ${mod.name}` : "Conteúdo externo sem página identificada"}
                           className={cn(
                             "flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden",
-                            "rounded-lg border border-white/10 bg-white/5"
+                            "rounded-lg border border-white/10 bg-white/5 transition-colors",
+                            "enabled:cursor-pointer enabled:hover:border-emerald-400/50"
                           )}
                         >
                           {mod.icon ? (
@@ -3353,10 +3559,16 @@ export default function InstanceManager({
                           ) : (
                             <Package size={18} className="text-white/30" />
                           )}
-                        </div>
+                        </button>
 
                         <div className="min-w-0">
-                          <p className="font-medium text-white truncate">{mod.name}</p>
+                          <button type="button" onClick={() => abrirDetalhesConteudoInstalado(mod, activeFilter)}
+                            disabled={!mod.projectId || !mod.source || !onAbrirProjeto}
+                            title={mod.projectId ? `Abrir ${mod.name}` : "Conteúdo externo sem página identificada"}
+                            className="block max-w-full truncate text-left font-medium text-white
+                              enabled:cursor-pointer enabled:hover:text-emerald-300">
+                            {mod.name}
+                          </button>
                           <p className="text-xs text-white/40">por {mod.author}</p>
                           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-white/30">
                             <span className="shrink-0 font-semibold text-white/55">{mod.version || "-"}</span>
@@ -3364,7 +3576,7 @@ export default function InstanceManager({
                             <span className="truncate">{mod.fileName}</span>
                           </div>
                           {mod.updateAvailable && (
-                            <p className="text-[10px] text-amber-300 mt-0.5 uppercase tracking-wide">
+                            <p className="text-[10px] text-[color:var(--cor-acento-300)] mt-0.5 uppercase tracking-wide">
                               Atualização disponível {mod.latestVersion ? `(${mod.latestVersion})` : ""}
                             </p>
                           )}
@@ -3392,43 +3604,30 @@ export default function InstanceManager({
                           <button
                             type="button"
                             onClick={() => abrirTrocaVersao(mod, activeFilter)}
-                            disabled={!mod.projectId || !mod.source}
-                            aria-label={`Trocar versão de ${mod.name}. Versão atual ${mod.version || "desconhecida"}`}
-                            title="Trocar versão"
+                            disabled={!mod.projectId || !mod.source || mod.updating || updatingAll}
+                            aria-label={`Trocar versão de ${mod.name}. Versão atual ${mod.version || "desconhecida"}`
+                              + (mod.updateAvailable ? ". Atualização disponível" : "")}
+                            title={mod.updating ? "Atualizando…" : mod.updateAvailable
+                              ? `Atualização disponível${mod.latestVersion ? `: ${mod.latestVersion}` : ""}. Escolher versão`
+                              : "Trocar versão"}
                             className={cn(
                               "flex w-full max-w-[7rem] items-center justify-center gap-1.5 overflow-hidden",
                               "whitespace-nowrap rounded border px-2.5 py-1.5",
-                              "border-white/10 bg-white/[0.035] text-[11px] font-bold text-white/55",
-                              "transition-colors hover:bg-white/[0.07] hover:text-white",
-                              "disabled:cursor-not-allowed disabled:opacity-30"
+                              "text-[11px] font-bold transition-colors",
+                              "disabled:cursor-not-allowed disabled:opacity-30",
+                              mod.updateAvailable || mod.updating
+                                ? "border-[color:rgba(var(--cor-acento-rgb),0.4)] text-[color:var(--cor-acento-300)] "
+                                  + "bg-[rgba(var(--cor-acento-rgb),0.2)] hover:bg-[rgba(var(--cor-acento-rgb),0.3)]"
+                                : "border-white/10 bg-white/[0.035] text-white/55 hover:bg-white/[0.07] hover:text-white"
                             )}
                           >
-                            <RefreshCw size={11} className="shrink-0" />
+                            {mod.updating ? <Loader2 size={11} className="shrink-0 animate-spin" />
+                              : <RefreshCw size={11} className="shrink-0" />}
                             <span className="truncate tabular-nums">{mod.version || "—"}</span>
                           </button>
                         </div>
 
                         <div className="flex items-center justify-end gap-1 border-l border-white/5 pl-4">
-                          {(mod.updateAvailable || mod.updating) && (
-                            <button
-                              onClick={() => atualizarItemInstalado(mod, activeFilter)}
-                              disabled={!mod.updateAvailable || mod.updating || updatingAll}
-                              className={cn(
-                                "flex items-center gap-1 whitespace-nowrap rounded px-2.5 py-1.5",
-                                "text-xs font-bold transition-all",
-                                !mod.updateAvailable || mod.updating || updatingAll
-                                  ? "cursor-not-allowed bg-white/5 text-white/30"
-                                  : "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
-                              )}
-                            >
-                              {mod.updating ? (
-                                <Loader2 size={11} className="animate-spin" />
-                              ) : (
-                                <RefreshCw size={11} />
-                              )}
-                              Atualizar
-                            </button>
-                          )}
                           <button
                             onClick={() => deleteMod(mod)}
                             aria-label={`Excluir ${mod.name}`}
@@ -3482,19 +3681,20 @@ export default function InstanceManager({
                           <div className="flex items-start justify-between gap-4">
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="font-bold text-white">
-                                  {item.title}
-                                </span>
-                                {onAbrirProjeto && (
+                                {onAbrirProjeto ? (
                                   <button
                                     type="button"
                                     onClick={() => abrirPaginaProjeto(item)}
-                                    aria-label={`Ver detalhes de ${item.title}`}
-                                    title="Ver detalhes"
-                                    className="pointer-events-auto text-white/35 transition-colors hover:text-emerald-400"
+                                    className={cn(
+                                      "pointer-events-auto cursor-pointer text-left font-bold text-white",
+                                      "transition-colors hover:text-emerald-400 focus-visible:outline-2",
+                                      "focus-visible:outline-emerald-400"
+                                    )}
                                   >
-                                    <FileText size={13} />
+                                    {item.title}
                                   </button>
+                                ) : (
+                                  <span className="font-bold text-white">{item.title}</span>
                                 )}
                                 {projetoFavorito(item) && (
                                   <Heart
@@ -3753,7 +3953,8 @@ export default function InstanceManager({
               )}
             </div>
 
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="min-w-0 flex-1 overflow-hidden flex flex-col">
+              <DiagnosticoCrash instanceId={instanceId} />
               {selectedLog ? (
                 <>
                   <div className="p-3 border-b border-white/5 flex items-center justify-between">

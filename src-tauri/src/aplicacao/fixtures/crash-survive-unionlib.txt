@@ -1,0 +1,64 @@
+java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'survive' at 'com.stereowalker.survive.Survive'!
+	at net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413)
+	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33)
+	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411)
+	at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:52)
+	at knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:456)
+	at knot//net.minecraft.client.main.Main.main(Main.java:278)
+	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:517)
+	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72)
+	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23)
+	Suppressed: net.fabricmc.loader.api.EntrypointException: Exception while loading entries for entrypoint 'main' provided by 'unionlib'
+		at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:56)
+		at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409)
+		... 6 more
+	Caused by: net.fabricmc.loader.api.LanguageAdapterException: java.lang.reflect.InvocationTargetException
+		at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:63)
+		at net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124)
+		at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53)
+		... 7 more
+	Caused by: java.lang.reflect.InvocationTargetException
+		at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:74)
+		at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499)
+		at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:483)
+		at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:61)
+		... 9 more
+	Caused by: java.lang.NoClassDefFoundError: Could not initialize class com.stereowalker.survive.world.item.SItems
+		at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized0(Native Method)
+		at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized(Unsafe.java:1169)
+		at java.base/jdk.internal.reflect.MethodHandleAccessorFactory.ensureClassInitialized(MethodHandleAccessorFactory.java:341)
+		at java.base/jdk.internal.reflect.MethodHandleAccessorFactory.newFieldAccessor(MethodHandleAccessorFactory.java:181)
+		at java.base/jdk.internal.reflect.ReflectionFactory.newFieldAccessor(ReflectionFactory.java:109)
+		at java.base/java.lang.reflect.Field.acquireFieldAccessor(Field.java:1180)
+		at java.base/java.lang.reflect.Field.getFieldAccessor(Field.java:1159)
+		at java.base/java.lang.reflect.Field.get(Field.java:438)
+		at knot//com.stereowalker.unionlib.fabric.PlatformHelper.handleRegistration(PlatformHelper.java:198)
+		at knot//com.stereowalker.unionlib.core.registries.RegisterObjects.putObjectsInGameRegistries(RegisterObjects.java:52)
+		at knot//com.stereowalker.unionlib.core.registries.UnionLibRegistry.registerObjects(UnionLibRegistry.java:34)
+		at knot//com.stereowalker.unionlib.mod.ModHandler.registerMod(ModHandler.java:161)
+		at knot//com.stereowalker.unionlib.mod.MinecraftMod.<init>(MinecraftMod.java:66)
+		at knot//com.stereowalker.unionlib.mod.MinecraftMod.<init>(MinecraftMod.java:95)
+		at knot//com.stereowalker.unionlib.UnionLib.<init>(UnionLib.java:99)
+		at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:62)
+		... 12 more
+	Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.NullPointerException [in thread "Render thread"]
+		at knot//net.minecraft.world.item.Item$Properties.humanoidArmor(Item.java:326)
+		at knot//com.stereowalker.unionlib.util.VersionHelper.createGenericArmor(VersionHelper.java:131)
+		at knot//com.stereowalker.survive.world.item.SItems.<clinit>(SItems.java:27)
+		at knot//com.stereowalker.survive.core.cauldron.SCauldronInteraction.addSurviveDefaultInteractions(SCauldronInteraction.java:42)
+		at knot//com.stereowalker.survive.core.cauldron.SCauldronInteraction.bootStrap(SCauldronInteraction.java:49)
+		at knot//com.stereowalker.survive.Survive.onModStartup(Survive.java:284)
+		at knot//com.stereowalker.unionlib.fabric.FabricMod.onInitialize(FabricMod.java:164)
+		... 7 more
+Caused by: java.lang.ExceptionInInitializerError
+	at knot//com.stereowalker.survive.core.cauldron.SCauldronInteraction.addSurviveDefaultInteractions(SCauldronInteraction.java:42)
+	at knot//com.stereowalker.survive.core.cauldron.SCauldronInteraction.bootStrap(SCauldronInteraction.java:49)
+	at knot//com.stereowalker.survive.Survive.onModStartup(Survive.java:284)
+	at knot//com.stereowalker.unionlib.fabric.FabricMod.onInitialize(FabricMod.java:164)
+	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409)
+	... 6 more
+Caused by: java.lang.NullPointerException: Cannot invoke "net.minecraft.world.item.equipment.ArmorMaterial.durability()" because "material" is null
+	at knot//net.minecraft.world.item.Item$Properties.humanoidArmor(Item.java:326)
+	at knot//com.stereowalker.unionlib.util.VersionHelper.createGenericArmor(VersionHelper.java:131)
+	at knot//com.stereowalker.survive.world.item.SItems.<clinit>(SItems.java:27)
+	... 11 more

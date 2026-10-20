@@ -232,15 +232,6 @@ function extrairMensagemErro(erro: unknown, padrao: string): string {
   return padrao;
 }
 
-function gerarNomeInstanciaDisponivel(nomeBase: string, nomesExistentes: string[]): string {
-  const base = nomeBase.trim() || "Novo Modpack";
-  const nomes = new Set(nomesExistentes.map((item) => item.toLowerCase()));
-  if (!nomes.has(base.toLowerCase())) return base;
-  let sufixo = 2;
-  while (nomes.has(`${base} ${sufixo}`.toLowerCase())) sufixo += 1;
-  return `${base} ${sufixo}`;
-}
-
 function escolherVersaoLoaderIdeal(
   loader: string,
   versoes: Array<{ version: string; stable?: boolean }>,
@@ -369,10 +360,15 @@ interface ConteudoInstaladoDetalhado {
 }
 
 interface ModpackInstalado {
+  instanciaId: string;
   projectId: string;
   versionId: string;
   source: string;
   installedVersion: string;
+}
+
+function modpackCorrespondeAVersao(info: ModpackInstalado, versao: VersaoProjeto): boolean {
+  return String(info.versionId) === String(versao.id) || info.installedVersion === versao.version_number;
 }
 
 function normalizarPesquisaInstancia(valor: string): string {
@@ -652,9 +648,10 @@ export default function ProjetoDetalheModal({
       const resultados = await Promise.all(
         instancias.map(async (instancia) => {
           try {
-            return await invoke<ModpackInstalado | null>("get_modpack_info", {
+            const info = await invoke<Omit<ModpackInstalado, "instanciaId"> | null>("get_modpack_info", {
               instanceId: instancia.id,
             });
+            return info ? { ...info, instanciaId: instancia.id } : null;
           } catch {
             return null;
           }
@@ -676,7 +673,7 @@ export default function ProjetoDetalheModal({
     return () => {
       cancelado = true;
     };
-  }, [assinaturaInstancias, projeto.id, projeto.project_type, projeto.source]);
+  }, [assinaturaInstancias, projeto.id, projeto.project_type, projeto.source, revisaoConteudoInstalado]);
 
   useEffect(() => {
     let cancelado = false;
@@ -968,11 +965,7 @@ export default function ProjetoDetalheModal({
       return new Set(
         versoesExibidas
           .filter((versao) =>
-            modpacksInstalados.some(
-              (info) =>
-                String(info.versionId) === String(versao.id) ||
-                info.installedVersion === versao.version_number
-            )
+            modpacksInstalados.some((info) => modpackCorrespondeAVersao(info, versao))
           )
           .map((versao) => versao.id)
       );
@@ -993,7 +986,10 @@ export default function ProjetoDetalheModal({
   }, [conteudosInstalados, modpacksInstalados, projeto.project_type, versoesExibidas]);
 
   const projetoJaInstalado = projeto.project_type === "modpack"
-    ? instanciaInicialId ? versoesInstaladasIds.has(versaoSelecionadaId || "") : modpacksInstalados.length > 0
+    ? modpacksInstalados.some((info) =>
+        info.instanciaId === instanciaInicialId &&
+        versaoSelecionada !== null && modpackCorrespondeAVersao(info, versaoSelecionada)
+      )
     : versoesInstaladasIds.has(versaoSelecionadaId || "");
 
   const instalarProjeto = async () => {
@@ -1007,6 +1003,7 @@ export default function ProjetoDetalheModal({
       }
 
       setErro(null);
+      setSucesso(false);
       setInstalando(true);
       let idOverlayCriacao = "";
       try {
@@ -1047,10 +1044,7 @@ export default function ProjetoDetalheModal({
         const instanciaModpackAlvo = instanciaInicialId
           ? instancias.find((item) => item.id === instanciaInicialId) ?? null
           : null;
-        const nomeInstancia = instanciaModpackAlvo?.name || gerarNomeInstanciaDisponivel(
-          nomeBaseInstancia,
-          instancias.map((item) => item.name)
-        );
+        const nomeInstancia = instanciaModpackAlvo?.name || nomeBaseInstancia;
         let idInstancia = instanciaModpackAlvo?.id || "";
         idOverlayCriacao = crypto.randomUUID();
 
@@ -1095,6 +1089,7 @@ export default function ProjetoDetalheModal({
           completeCreatingInstance(idOverlayCriacao);
           setInstalando(false);
           setSucesso(true);
+          setRevisaoConteudoInstalado((revisao) => revisao + 1);
           onInstanciaCriada?.();
           return;
         }
@@ -1131,6 +1126,7 @@ export default function ProjetoDetalheModal({
             name: nomeInstancia,
             version: versaoMinecraft,
             mcType: loaderSelecionado,
+            copiaModpack: true,
           };
           if (loaderSelecionado !== "vanilla") {
             paramsCriacao.loaderType = loaderSelecionado;
@@ -1173,6 +1169,7 @@ export default function ProjetoDetalheModal({
         completeCreatingInstance(idOverlayCriacao);
         setInstalando(false);
         setSucesso(true);
+        setRevisaoConteudoInstalado((revisao) => revisao + 1);
         onInstanciaCriada?.();
       } catch (e) {
         const mensagem = extrairMensagemErro(e, "Falha ao instalar modpack.");
@@ -1366,7 +1363,7 @@ export default function ProjetoDetalheModal({
                         <Loader2 size={13} className="animate-spin" />
                         Instalando...
                       </>
-                    ) : sucesso || projetoJaInstalado ? (
+                    ) : projetoJaInstalado || (sucesso && projeto.project_type !== "modpack") ? (
                       <>
                         <Check size={13} />
                         Instalado

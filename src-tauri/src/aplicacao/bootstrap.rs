@@ -12,6 +12,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .manage(LauncherState::new())
+        .manage(super::diagnostico_crash::EstadoDiagnosticos::default())
         .manage(crate::comandos::presenca_discord::EstadoDiscordPresence::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -65,6 +66,9 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::mods_conteudo::get_installed_resourcepacks,
             super::mods_conteudo::get_installed_shaders,
             super::conteudo_instalado::obter_conteudo_instalado_detalhado,
+            super::conteudo_local::importar_conteudo_local,
+            super::configuracoes_jogo::obter_configuracoes_jogo,
+            super::configuracoes_jogo::salvar_configuracoes_jogo,
             // Gerenciamento de instâncias
             super::instancias_basicas::get_instance_details,
             super::instancias_basicas::listar_capturas_perfil,
@@ -85,6 +89,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             crate::comandos::instancia_sistema::abrir_pasta_mundo,
             // Gerenciamento de logs
             crate::comandos::logs_instancia::get_log_files,
+            super::diagnostico_crash::obter_diagnostico_crash,
             crate::comandos::logs_instancia::get_log_content,
             crate::comandos::logs_instancia::delete_log_file,
             // Remoção de mods
