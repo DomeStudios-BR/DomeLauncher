@@ -226,6 +226,15 @@ prepara as bibliotecas na criação e reaproveita o mesmo ajuste ao iniciar inst
 algumas bibliotecas ficam no Maven do Forge e outras no repositório de bibliotecas do Minecraft.
 Compare desempenho com mesma versão/conexão e cache vazio/preenchido; testes HTTP locais não comprovam velocidade real.
 
+Na instalação de modpacks Modrinth e CurseForge, inclusive pelo painel social, leia o manifesto do arquivo
+selecionado antes de criar a instância. Use as versões exatas do Minecraft e do loader, respeitando `primary`
+no CurseForge. Não substitua a versão declarada pela mais recente. Manifestos inválidos ou loaders não suportados
+interrompem a instalação. Antes de substituir conteúdo, o Rust confere novamente os requisitos do arquivo baixado
+contra a instância. Se forem diferentes, preserve o conteúdo e oriente instalar uma nova cópia.
+O arquivo do modpack é consultado para os requisitos e baixado novamente na instalação; não há cache entre essas etapas.
+Os testes de requisitos e `bun run verificar:copias-modpacks` cobrem o Forge 47.4.10 em dados controlados,
+sem comprovar a execução nativa do Gravitas² 0.9.4.
+
 A instalação de mods compara os identificadores declarados nos metadados dos JARs, sem aliases de compatibilidade.
 Versões anteriores do mesmo conjunto de mods, inclusive desativadas, são substituídas após o download completo.
 Falhas na publicação restauram os arquivos preservados. Arquivos sem identidade reconhecida só são substituídos

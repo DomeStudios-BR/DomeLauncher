@@ -5,6 +5,77 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
+pub mod requisitos;
+
+fn cliente_modpack() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(180))
+        .user_agent("DomeLauncher/1.0 (+https://domestudios.com.br)")
+        .build()
+        .map_err(|e| format!("Erro ao criar cliente HTTP: {}", e))
+}
+
+async fn baixar_modpack(cliente: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let mut ultima_falha = String::new();
+    for tentativa in 1..=3 {
+        let resultado = async {
+            cliente
+                .get(url)
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await
+        }
+        .await;
+        match resultado {
+            Ok(bytes) => return Ok(bytes.to_vec()),
+            Err(erro) => ultima_falha = erro.to_string(),
+        }
+        if tentativa < 3 {
+            tokio::time::sleep(std::time::Duration::from_secs(tentativa * 2)).await;
+        }
+    }
+    Err(format!(
+        "Erro ao baixar modpack após 3 tentativas: {}",
+        ultima_falha
+    ))
+}
+
+fn validar_requisitos_instancia(
+    instancia: &crate::launcher::Instance,
+    requisitos: &requisitos::RequisitosModpack,
+) -> Result<(), String> {
+    let loader = instancia
+        .loader_type
+        .as_deref()
+        .unwrap_or("vanilla")
+        .to_lowercase();
+    let versao = instancia.loader_version.as_deref().map(|versao| {
+        versao
+            .strip_prefix(&format!("{}-", instancia.version))
+            .unwrap_or(versao)
+    });
+    let versao_exigida = requisitos.versao_loader.as_deref().map(|versao| {
+        versao
+            .strip_prefix(&format!("{}-", requisitos.versao_minecraft))
+            .unwrap_or(versao)
+    });
+    if instancia.version != requisitos.versao_minecraft
+        || loader != requisitos.loader
+        || versao != versao_exigida
+    {
+        return Err(format!(
+            "Este modpack exige Minecraft {} com {} {}. Instale uma nova cópia para usar essas versões.",
+            requisitos.versao_minecraft,
+            requisitos.loader,
+            requisitos.versao_loader.as_deref().unwrap_or("")
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModpackInfo {
@@ -168,48 +239,8 @@ pub async fn install_modpack_files(
 
     println!("[install_modpack_files] Baixando: {}", download_url);
 
-    // Baixar o arquivo .mrpack
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .timeout(std::time::Duration::from_secs(180))
-        .user_agent("DomeLauncher/1.0 (+https://domestudios.com.br)")
-        .build()
-        .map_err(|e| format!("Erro ao criar cliente HTTP: {}", e))?;
-    let mut bytes_modpack = None;
-    let mut ultima_falha_modpack = String::new();
-    for tentativa in 1..=3 {
-        match client.get(&download_url).send().await {
-            Ok(resposta) => {
-                if !resposta.status().is_success() {
-                    ultima_falha_modpack = format!("HTTP {}", resposta.status());
-                } else {
-                    match resposta.bytes().await {
-                        Ok(bytes) => {
-                            bytes_modpack = Some(bytes);
-                            break;
-                        }
-                        Err(e) => {
-                            ultima_falha_modpack = format!("falha ao ler bytes ({})", e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                ultima_falha_modpack = e.to_string();
-            }
-        }
-
-        if tentativa < 3 {
-            tokio::time::sleep(std::time::Duration::from_secs(tentativa as u64 * 2)).await;
-        }
-    }
-
-    let bytes = bytes_modpack.ok_or_else(|| {
-        format!(
-            "Erro ao baixar modpack após 3 tentativas: {}",
-            ultima_falha_modpack
-        )
-    })?;
+    let client = cliente_modpack()?;
+    let bytes = baixar_modpack(&client, &download_url).await?;
 
     std::fs::write(&mrpack_path, &bytes).map_err(|e| format!("Erro ao salvar arquivo: {}", e))?;
 
@@ -220,6 +251,11 @@ pub async fn install_modpack_files(
         std::fs::File::open(&mrpack_path).map_err(|e| format!("Erro ao abrir mrpack: {}", e))?;
 
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Erro ao ler ZIP: {}", e))?;
+
+    let requisitos = requisitos::ler_requisitos(&mut archive)?;
+    let instancia =
+        crate::comandos::instancia_sistema::obter_instancia_por_id(&state, &instance_id)?;
+    validar_requisitos_instancia(&instancia, &requisitos)?;
 
     // Pode ser Modrinth (modrinth.index.json) ou CurseForge (manifest.json)
     let mut arquivos_para_baixar: Vec<(String, String, String)> = Vec::new();
@@ -617,7 +653,33 @@ pub async fn check_modpack_updates(
 
 #[cfg(test)]
 mod testes {
-    use super::montar_url_cdn_curseforge;
+    use super::{
+        montar_url_cdn_curseforge, requisitos::RequisitosModpack, validar_requisitos_instancia,
+    };
+
+    #[test]
+    fn exige_versao_exata_antes_de_substituir_conteudo() {
+        let mut instancia: crate::launcher::Instance = serde_json::from_value(serde_json::json!({
+            "id": "gravitas", "name": "Gravitas²", "version": "1.20.1", "mcType": "Forge",
+            "loaderType": "Forge", "loaderVersion": "1.20.1-47.4.10", "path": "gravitas", "created": ""
+        })).unwrap();
+        let requisitos = RequisitosModpack {
+            versao_minecraft: "1.20.1".into(),
+            loader: "forge".into(),
+            versao_loader: Some("47.4.10".into()),
+        };
+        assert!(validar_requisitos_instancia(&instancia, &requisitos).is_ok());
+        instancia.loader_version = Some("47.4.10".into());
+        assert!(validar_requisitos_instancia(&instancia, &requisitos).is_ok());
+        instancia.loader_version = Some("47.4.18".into());
+        assert!(validar_requisitos_instancia(&instancia, &requisitos).is_err());
+        instancia.loader_version = Some("47.4.10".into());
+        instancia.loader_type = Some("Fabric".into());
+        assert!(validar_requisitos_instancia(&instancia, &requisitos).is_err());
+        instancia.loader_type = Some("Forge".into());
+        instancia.version = "1.20.2".into();
+        assert!(validar_requisitos_instancia(&instancia, &requisitos).is_err());
+    }
 
     #[test]
     fn monta_url_cdn_para_arquivo_sem_download_publico() {

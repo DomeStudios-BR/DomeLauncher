@@ -1,3 +1,4 @@
+import { obterRequisitosModpack } from "../services/requisitosModpack";
 import { ativarContaFavoritos, sincronizarColecaoFavoritos } from '../services/colecaoFavoritos';
 import { obterPerfilFavoritos } from '../services/favoritosProjetos';
 import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
@@ -245,10 +246,6 @@ interface VersaoModrinth {
   }>;
 }
 
-interface LoaderVersionsResponse {
-  versions: Array<{ version: string; stable?: boolean }>;
-}
-
 interface InstanciaResumo {
   id: string;
   name: string;
@@ -414,30 +411,6 @@ function statusEfetivo(status: StatusPresenca | undefined, online: boolean): Sta
     return status;
   }
   return online ? 'online' : 'offline';
-}
-
-function escolherVersaoMinecraftIdeal(gameVersions: string[]): string | null {
-  if (gameVersions.length === 0) return null;
-  const releases = gameVersions.filter((item) => /^[0-9]+\.[0-9]+(\.[0-9]+)?$/.test(item));
-  if (releases.length === 0) return gameVersions[0] || null;
-  releases.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  return releases[0] || null;
-}
-
-function escolherVersaoLoaderIdeal(
-  loader: string,
-  versoes: Array<{ version: string; stable?: boolean }>,
-  versaoMinecraft: string
-): string | null {
-  if (versoes.length === 0) return null;
-  if (loader === 'forge' || loader === 'neoforge') {
-    const compativel = versoes.find(
-      (item) =>
-        item.version.startsWith(`${versaoMinecraft}-`) || item.version.includes(versaoMinecraft)
-    );
-    return compativel?.version || versoes[0].version;
-  }
-  return versoes.find((item) => item.stable !== false)?.version || versoes[0].version;
 }
 
 function gerarNomeInstanciaDisponivel(nomeBase: string, nomesExistentes: string[]): string {
@@ -1881,36 +1854,16 @@ export default function SocialSidebar({
         throw new Error('Arquivo da versao exata nao encontrado.');
       }
 
-      const versaoMinecraft = atividade.versaoMinecraft || escolherVersaoMinecraftIdeal(versao.game_versions || []);
-      if (!versaoMinecraft) {
-        throw new Error('Nao foi possivel determinar versao Minecraft exata.');
-      }
-
-      const loaderCandidato = (atividade.loader || versao.loaders?.[0] || 'vanilla').toLowerCase();
-      const loaderNormalizado =
-        loaderCandidato === 'fabric' || loaderCandidato === 'forge' || loaderCandidato === 'neoforge'
-          ? loaderCandidato
-          : 'vanilla';
-
+      const requisitos = await obterRequisitosModpack(arquivo.url);
+      const versaoMinecraft = requisitos.versaoMinecraft;
+      const loaderNormalizado = requisitos.loader;
+      const loaderVersion = requisitos.versaoLoader ?? undefined;
       const instancias = await invoke<InstanciaResumo[]>('get_instances');
       const nomeBase = atividade.modpackNome || atividade.instanciaNome || 'Instancia social';
       const nomeInstancia = gerarNomeInstanciaDisponivel(
         `${nomeBase} (social)`,
         (instancias ?? []).map((item) => item.name)
       );
-
-      let loaderVersion: string | undefined;
-      if (loaderNormalizado !== 'vanilla') {
-        const respostaLoader = await invoke<LoaderVersionsResponse>('get_loader_versions', {
-          loaderType: loaderNormalizado,
-          minecraftVersion: versaoMinecraft,
-        });
-        loaderVersion =
-          escolherVersaoLoaderIdeal(loaderNormalizado, respostaLoader.versions || [], versaoMinecraft) || undefined;
-        if (!loaderVersion) {
-          throw new Error(`Nenhuma versao valida do loader ${loaderNormalizado} encontrada.`);
-        }
-      }
 
       const paramsCriacao: Record<string, unknown> = {
         name: nomeInstancia,

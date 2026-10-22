@@ -1,3 +1,4 @@
+import { obterRequisitosModpack } from "../services/requisitosModpack";
 import { DescricaoProjetoMarkdown } from './modpacks/DescricaoProjetoMarkdown';
 import { consultarModpacksDome } from "../services/modpacksDome";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -90,10 +91,6 @@ interface CompatibilidadeInstancia {
   versaoIdeal: VersaoProjeto | null;
   arquivoIdeal: ArquivoProjeto | null;
   motivoIncompatibilidade: string | null;
-}
-
-interface LoaderVersionsResponse {
-  versions: Array<{ version: string; stable?: boolean }>;
 }
 
 interface ImagemGaleriaProjetoCurseforgeApi {
@@ -230,22 +227,6 @@ function extrairMensagemErro(erro: unknown, padrao: string): string {
     }
   }
   return padrao;
-}
-
-function escolherVersaoLoaderIdeal(
-  loader: string,
-  versoes: Array<{ version: string; stable?: boolean }>,
-  versaoMinecraft: string
-): string | null {
-  if (versoes.length === 0) return null;
-  if (loader === "forge" || loader === "neoforge") {
-    const compativel = versoes.find(
-      (item) =>
-        item.version.startsWith(`${versaoMinecraft}-`) || item.version.includes(versaoMinecraft)
-    );
-    return compativel?.version || versoes[0].version;
-  }
-  return versoes.find((item) => item.stable !== false)?.version || versoes[0].version;
 }
 
 function normalizarTipoProjeto(valor: string): TipoProjetoConteudo {
@@ -1094,27 +1075,18 @@ export default function ProjetoDetalheModal({
           return;
         }
 
-        let loaderVersion: string | undefined;
-        if (!instanciaModpackAlvo && loaderSelecionado !== "vanilla") {
-          updateCreatingInstance(idOverlayCriacao, {
+        updateCreatingInstance(idOverlayCriacao, {
             progress: 8,
-            message: "Buscando versão ideal do loader...",
-          });
-          const respostaLoader = await invoke<LoaderVersionsResponse>("get_loader_versions", {
-            loaderType: loaderSelecionado,
-            minecraftVersion: versaoMinecraft,
-          });
-          loaderVersion =
-            escolherVersaoLoaderIdeal(
-              loaderSelecionado,
-              respostaLoader.versions || [],
-              versaoMinecraft
-            ) || undefined;
-          if (!loaderVersion) {
-            throw new Error(`Nenhuma versão válida do ${loaderSelecionado} foi encontrada.`);
-          }
-        }
-
+            message: "Lendo requisitos do modpack...",
+        });
+        const requisitos = await obterRequisitosModpack(arquivoModpackUrl);
+        versaoMinecraft = requisitos.versaoMinecraft;
+        loaderSelecionado = requisitos.loader;
+        const loaderVersion = requisitos.versaoLoader ?? undefined;
+        updateCreatingInstance(idOverlayCriacao, {
+            version: versaoMinecraft,
+            type: loaderSelecionado,
+        });
         updateCreatingInstance(idOverlayCriacao, {
           progress: 20,
           progressoIndeterminado: true,
@@ -1676,7 +1648,7 @@ export default function ProjetoDetalheModal({
                 </div>
               ))}
 
-            {abaConteudo === "versoes" && projeto.project_type === "modpack" && erro && (
+            {projeto.project_type === "modpack" && erro && (
               <p className="text-xs text-red-300">{erro}</p>
             )}
 

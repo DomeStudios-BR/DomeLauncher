@@ -56,6 +56,12 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
         if (comando === "update_instance_name") { instancia.name = String(argumentos.newName); return; }
         if (comando === "get_modpack_info") return informacoesInstaladas.get(String(argumentos.instanceId)) ?? null;
         if (comando === "get_loader_versions") return { versions: [{ version: "0.16.0", stable: true }] };
+        if (comando === "obter_requisitos_modpack") {
+            if (new URLSearchParams(location.search).has("manifestoInvalido")) {
+                throw new Error("O manifesto do modpack não informa a versão do loader.");
+            }
+            return { versaoMinecraft: "1.20.1", loader: "forge", versaoLoader: "47.4.10" };
+        }
         if (comando === "create_instance") return criarCopia();
         if (comando === "save_modpack_info") {
             informacoesInstaladas.set(String(argumentos.instanceId), argumentos.modpackInfo as typeof infoOriginal);
