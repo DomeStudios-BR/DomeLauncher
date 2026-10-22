@@ -593,17 +593,6 @@ pub async fn instalar_modpack_dome(
     )?;
     if let Some(nome) = projeto["title"].as_str() {
         preparada.name = nome.to_string();
-        if existente.is_none() {
-            let instancias = state.get_instances().map_err(|e| e.to_string())?;
-            let mut numero = 2;
-            while instancias
-                .iter()
-                .any(|instancia| instancia.name == preparada.name)
-            {
-                preparada.name = format!("{nome} ({numero})");
-                numero += 1;
-            }
-        }
     }
     pacotes_sociais::restaurar_referencias(
         &caminho,

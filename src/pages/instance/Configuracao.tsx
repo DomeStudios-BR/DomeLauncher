@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ChevronDown, ChevronUp, HardDrive, Monitor, Terminal } from "../../iconesPixelados";
 import { cn } from "../../lib/utils";
+import OpcoesJogo from "./OpcoesJogo";
+import SecaoConfiguracao from "./SecaoConfiguracao";
 
 interface ConfiguracaoProps {
     instanceId: string;
@@ -212,22 +214,10 @@ export default function Configuracao({
     };
 
     return (
-        <div className="flex-1 overflow-y-auto p-6">
-            <section className="mr-auto max-w-3xl overflow-hidden border border-white/10 bg-[#171717]">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-5 py-4">
-                    <div className="flex min-w-0 items-center gap-3">
-                        <div className="grid h-9 w-9 shrink-0 place-items-center border border-white/10 bg-white/[0.025]">
-                            <HardDrive size={15} className="text-emerald-300/75" />
-                        </div>
-                        <div className="min-w-0">
-                            <h2 className="text-sm font-bold text-white/90">Desempenho</h2>
-                            <p className="truncate text-[10px] text-white/30">
-                                Memória do modpack e configurações da JVM
-                            </p>
-                        </div>
-                    </div>
-
-                    <label className="flex cursor-pointer items-center gap-2.5">
+        <div className="flex-1 space-y-5 overflow-y-auto p-6">
+            <SecaoConfiguracao titulo="Desempenho" icone={<HardDrive size={15} />}>
+                <div className="space-y-4 px-5 py-5">
+                    <label className="flex w-fit cursor-pointer items-center gap-2.5">
                         <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/45">
                             Alocação própria
                         </span>
@@ -253,9 +243,6 @@ export default function Configuracao({
                             />
                         </span>
                     </label>
-                </div>
-
-                <div className="space-y-4 px-5 py-5">
                     <div className="flex flex-wrap items-end justify-between gap-3">
                         <div>
                             <p className="flex items-center gap-2 text-sm font-bold text-white/85">
@@ -420,7 +407,8 @@ export default function Configuracao({
 
                     {erro && <p className="text-[10px] text-red-300/75">{erro}</p>}
                 </div>
-            </section>
+            </SecaoConfiguracao>
+            <OpcoesJogo key={instanceId} instanceId={instanceId} />
         </div>
     );
 }

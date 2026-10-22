@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useModpacksInstalados } from "../hooks/useModpacksInstalados";
 import { useFavoritosProjetos } from "../hooks/useFavoritosProjetos";
 import type { Instance } from "../hooks/useLauncher";
 import { obterTotalFavoritos } from "../services/favoritosProjetos";
@@ -239,7 +238,6 @@ interface ExploreProps {
 }
 
 export default function Explore({
-  instancias,
   instalacoesEmAndamento,
   onAtualizarPresencaExplore,
   onAbrirProjeto,
@@ -268,7 +266,6 @@ export default function Explore({
   const [erroCategorias, setErroCategorias] = useState(false);
   const [ordenacao, setOrdenacao] = useState<OrdenacaoBusca>("relevancia");
 
-  const modpacksInstalados = useModpacksInstalados(instancias);
   const { contagens: contagensFavoritos, revisao: revisaoFavoritos } = useFavoritosProjetos(
     results.flatMap((item) => item.fontes.map((source) => ({
       source, projectId: item.variantes[source]?.id || item.id,
@@ -1277,8 +1274,6 @@ export default function Explore({
             className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3"
           >
           {results.map((item, index) => {
-            const instalado = item.project_type === "modpack" && item.fontes.some((source) =>
-              modpacksInstalados.projetos.has(`${source}:${item.variantes[source]?.id || item.id}`));
             const instalando = item.fontes.some((source) =>
               instalacoesEmAndamento.includes(`${source}:${item.variantes[source]?.id || item.id}`));
             const totalFavoritosDome = item.fontes.reduce((total, source) => {
@@ -1388,17 +1383,16 @@ export default function Explore({
                     <Heart size={16} fill={favorites.has(item.id) ? "currentColor" : "none"} />
                   </button>
                   <button
-                    disabled={instalado || instalando
-                      || (item.project_type === "modpack" && modpacksInstalados.carregando)}
+                    disabled={instalando}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (instalado || instalando) return;
+                      if (instalando) return;
                       abrirDetalheProjeto(item, true);
                     }}
                     className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-50 disabled:cursor-default disabled:active:scale-100"
                   >
-                    {instalado ? <Check size={14} /> : <Download size={14} />}
-                    {instalado ? "Instalado" : instalando ? "Instalando..." : "Instalar"}
+                    <Download size={14} />
+                    {instalando ? "Instalando..." : "Instalar"}
                   </button>
                 </div>
               </div>

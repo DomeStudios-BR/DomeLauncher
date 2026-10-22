@@ -241,7 +241,11 @@ pub async fn get_running_instances(
 }
 
 #[tauri::command]
-pub fn kill_instance(instance_id: String, state: State<LauncherState>) -> Result<(), String> {
+pub fn kill_instance(
+    instance_id: String,
+    state: State<LauncherState>,
+    diagnosticos: State<crate::aplicacao::diagnostico_crash::EstadoDiagnosticos>,
+) -> Result<(), String> {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 
     let instance_path = caminho_instancia_por_id(&state, &instance_id)?;
@@ -265,7 +269,7 @@ pub fn kill_instance(instance_id: String, state: State<LauncherState>) -> Result
     if let Some(pid) = state.obter_pid_instancia(&instance_id) {
         let pid_sistema = sysinfo::Pid::from_u32(pid);
         if let Some(processo) = system.process(pid_sistema) {
-            if processo.kill() {
+            if diagnosticos.encerrar_pelo_usuario(&instance_id, pid, || processo.kill()) {
                 finalizados += 1;
             }
         }
@@ -287,7 +291,11 @@ pub fn kill_instance(instance_id: String, state: State<LauncherState>) -> Result
                 .to_lowercase()
                 .replace('\\', "/");
 
-            if cmdline.contains(&instance_path_normalizado) && processo.kill() {
+            if cmdline.contains(&instance_path_normalizado)
+                && diagnosticos.encerrar_pelo_usuario(&instance_id, processo.pid().as_u32(), || {
+                    processo.kill()
+                })
+            {
                 finalizados += 1;
             }
         }

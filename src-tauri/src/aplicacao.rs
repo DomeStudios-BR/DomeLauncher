@@ -8,13 +8,20 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 mod bootstrap;
+mod configuracoes_jogo;
 mod conteudo_instalado;
+mod conteudo_local;
+pub(crate) mod diagnostico_crash;
 mod downloads_instancias;
 pub(crate) mod importacao_exportacao;
+mod indice_mods_crash;
 mod instancias_basicas;
 mod instancias_criacao;
 mod lancamento_jogo;
 mod mods_conteudo;
+pub(crate) mod nomes_instancias;
+mod origem_crash;
+mod relacoes_crash;
 mod sincronizacao_instancias;
 
 // Constantes das APIs

@@ -740,6 +740,7 @@ fn reservar_pasta_nova_instancia(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_instance(
     state: State<'_, LauncherState>,
     name: String,
@@ -748,6 +749,7 @@ pub(crate) async fn create_instance(
     loader_type: Option<String>,
     loader_version: Option<String>,
     icon: Option<String>,
+    copia_modpack: Option<bool>,
 ) -> Result<String, String> {
     println!("=== INICIANDO CRIAÇÃO DE INSTÂNCIA ===");
     println!("Nome: {}, Versão: {}, Tipo: {}", name, version, mc_type);
@@ -788,7 +790,12 @@ pub(crate) async fn create_instance(
         .map_err(|e| e.to_string())?;
 
     // 3. Preparar diretório
-    let (id, instance_path) = reservar_pasta_nova_instancia(&state.caminho_instancias()?, &name)?;
+    let (name, id, instance_path) = if copia_modpack.unwrap_or(false) {
+        super::nomes_instancias::reservar_copia_modpack(&state, &name)?
+    } else {
+        let (id, pasta) = reservar_pasta_nova_instancia(&state.caminho_instancias()?, &name)?;
+        (name, id, pasta)
+    };
 
     // 4. Baixar arquivos essenciais do Minecraft primeiro
     download_instance_files(&instance_path, &details).await?;

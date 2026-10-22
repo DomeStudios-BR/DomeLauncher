@@ -1,3 +1,4 @@
+import { obterRequisitosModpack } from "../services/requisitosModpack";
 import { ativarContaFavoritos, sincronizarColecaoFavoritos } from '../services/colecaoFavoritos';
 import { obterPerfilFavoritos } from '../services/favoritosProjetos';
 import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
@@ -15,7 +16,7 @@ import {
   publicarProgressoTransferenciaSocial,
 } from '../lib/eventosTransferenciaSocial';
 import { cn } from '../lib/utils';
-import { ChevronLeft, ChevronRight, User } from '../iconesPixelados';
+import { ChevronLeft, User } from '../iconesPixelados';
 import { EsqueletoSocial } from './EsqueletoCarregamento';
 import { EVENTO_SESSAO_SOCIAL_ATUALIZADA } from '../lib/autenticacaoMicrosoft';
 import { ListaAmigosAgrupada } from './social/ListaAmigosAgrupada';
@@ -245,10 +246,6 @@ interface VersaoModrinth {
   }>;
 }
 
-interface LoaderVersionsResponse {
-  versions: Array<{ version: string; stable?: boolean }>;
-}
-
 interface InstanciaResumo {
   id: string;
   name: string;
@@ -414,30 +411,6 @@ function statusEfetivo(status: StatusPresenca | undefined, online: boolean): Sta
     return status;
   }
   return online ? 'online' : 'offline';
-}
-
-function escolherVersaoMinecraftIdeal(gameVersions: string[]): string | null {
-  if (gameVersions.length === 0) return null;
-  const releases = gameVersions.filter((item) => /^[0-9]+\.[0-9]+(\.[0-9]+)?$/.test(item));
-  if (releases.length === 0) return gameVersions[0] || null;
-  releases.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  return releases[0] || null;
-}
-
-function escolherVersaoLoaderIdeal(
-  loader: string,
-  versoes: Array<{ version: string; stable?: boolean }>,
-  versaoMinecraft: string
-): string | null {
-  if (versoes.length === 0) return null;
-  if (loader === 'forge' || loader === 'neoforge') {
-    const compativel = versoes.find(
-      (item) =>
-        item.version.startsWith(`${versaoMinecraft}-`) || item.version.includes(versaoMinecraft)
-    );
-    return compativel?.version || versoes[0].version;
-  }
-  return versoes.find((item) => item.stable !== false)?.version || versoes[0].version;
 }
 
 function gerarNomeInstanciaDisponivel(nomeBase: string, nomesExistentes: string[]): string {
@@ -1881,36 +1854,16 @@ export default function SocialSidebar({
         throw new Error('Arquivo da versao exata nao encontrado.');
       }
 
-      const versaoMinecraft = atividade.versaoMinecraft || escolherVersaoMinecraftIdeal(versao.game_versions || []);
-      if (!versaoMinecraft) {
-        throw new Error('Nao foi possivel determinar versao Minecraft exata.');
-      }
-
-      const loaderCandidato = (atividade.loader || versao.loaders?.[0] || 'vanilla').toLowerCase();
-      const loaderNormalizado =
-        loaderCandidato === 'fabric' || loaderCandidato === 'forge' || loaderCandidato === 'neoforge'
-          ? loaderCandidato
-          : 'vanilla';
-
+      const requisitos = await obterRequisitosModpack(arquivo.url);
+      const versaoMinecraft = requisitos.versaoMinecraft;
+      const loaderNormalizado = requisitos.loader;
+      const loaderVersion = requisitos.versaoLoader ?? undefined;
       const instancias = await invoke<InstanciaResumo[]>('get_instances');
       const nomeBase = atividade.modpackNome || atividade.instanciaNome || 'Instancia social';
       const nomeInstancia = gerarNomeInstanciaDisponivel(
         `${nomeBase} (social)`,
         (instancias ?? []).map((item) => item.name)
       );
-
-      let loaderVersion: string | undefined;
-      if (loaderNormalizado !== 'vanilla') {
-        const respostaLoader = await invoke<LoaderVersionsResponse>('get_loader_versions', {
-          loaderType: loaderNormalizado,
-          minecraftVersion: versaoMinecraft,
-        });
-        loaderVersion =
-          escolherVersaoLoaderIdeal(loaderNormalizado, respostaLoader.versions || [], versaoMinecraft) || undefined;
-        if (!loaderVersion) {
-          throw new Error(`Nenhuma versao valida do loader ${loaderNormalizado} encontrada.`);
-        }
-      }
 
       const paramsCriacao: Record<string, unknown> = {
         name: nomeInstancia,
@@ -2012,136 +1965,83 @@ export default function SocialSidebar({
     );
   }
 
-  if (recuado) {
-    const statusPerfil: StatusPresenca = aparecerOffline ? 'offline' : statusManual;
-    const urlAvatarPerfil = perfil?.avatarPerfilUrl
-      || (uuidAvatarMinecraft
-      ? obterUrlCabecaMinecraft(uuidAvatarMinecraft)
-      : perfil?.discordAvatar
-        ? `https://cdn.discordapp.com/avatars/${perfil.discordId}/${perfil.discordAvatar}.png?size=64`
-        : null);
+  const statusPerfil: StatusPresenca = aparecerOffline ? 'offline' : statusManual;
+  const urlAvatarPerfil = perfil?.avatarPerfilUrl
+    || (uuidAvatarMinecraft
+    ? obterUrlCabecaMinecraft(uuidAvatarMinecraft)
+    : perfil?.discordAvatar
+      ? `https://cdn.discordapp.com/avatars/${perfil.discordId}/${perfil.discordAvatar}.png?size=64`
+      : null);
 
-    const renderizarAvatarAmigo = (amigo: AmigoSocial) => (
-      <button
-        key={amigo.friendProfileId}
-        type="button"
-        onClick={() => abrirChatComAmigo(amigo.friendProfileId)}
-        title={`${amigo.nome} · ${rotuloStatus(statusEfetivo(amigo.status, amigo.online))}`}
-        aria-label={`Abrir conversa com ${amigo.nome}`}
-        aria-expanded={chatAberto && amigoSelecionadoPerfilId === amigo.friendProfileId}
-        className="relative grid h-10 w-10 place-items-center border border-white/[0.07] bg-white/[0.02] transition-colors hover:border-white/20 hover:bg-white/[0.05]"
-      >
-        {amigo.avatarUrl ? (
-          <img src={amigo.avatarUrl} alt="" className="h-8 w-8 object-contain" />
-        ) : (
-          <span className="text-[8px] font-black text-white/50">
-            {amigo.nome.trim().slice(0, 2).toUpperCase()}
-          </span>
-        )}
-        <span className="absolute -bottom-1 -right-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-[#101010]">
-          <IndicadorStatusSocial
-            status={statusEfetivo(amigo.status, amigo.online)}
-            className="h-2.5 w-2.5"
-          />
+  const renderizarAvatarAmigo = (amigo: AmigoSocial) => (
+    <button
+      key={amigo.friendProfileId}
+      type="button"
+      onClick={() => abrirChatComAmigo(amigo.friendProfileId)}
+      title={`${amigo.nome} · ${rotuloStatus(statusEfetivo(amigo.status, amigo.online))}`}
+      aria-label={`Abrir conversa com ${amigo.nome}`}
+      aria-expanded={chatAberto && amigoSelecionadoPerfilId === amigo.friendProfileId}
+      className="relative grid h-10 w-10 place-items-center border border-white/[0.07] bg-white/[0.02] transition-colors hover:border-white/20 hover:bg-white/[0.05]"
+    >
+      {amigo.avatarUrl ? (
+        <img src={amigo.avatarUrl} alt="" className="h-8 w-8 object-contain" />
+      ) : (
+        <span className="text-[8px] font-black text-white/50">
+          {amigo.nome.trim().slice(0, 2).toUpperCase()}
         </span>
-      </button>
-    );
-
-    return (
-      <>
-      <aside className={cn('launcher-social flex shrink-0 flex-col overflow-hidden', className)}>
-        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-x-hidden overflow-y-auto">
-          <div
-            title={sessao ? nomeExibicaoAtual : 'Entrar no social'}
-            className="relative grid h-10 w-10 place-items-center border border-white/10 bg-[#151515]"
-          >
-            {urlAvatarPerfil ? (
-              <img src={urlAvatarPerfil} alt="" className="h-8 w-8 object-cover" />
-            ) : (
-              <User size={17} className="text-white/45" />
-            )}
-            {sessao && (
-              <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-[#101010]">
-                <IndicadorStatusSocial status={statusPerfil} className="h-3 w-3" />
-              </span>
-            )}
-          </div>
-
-          {sessao && amigosOnline.length > 0 && (
-            <div className="flex w-full flex-col items-center gap-2 border-t border-white/[0.07] pt-3">
-              <IndicadorStatusSocial status="online" className="h-3 w-3" titulo="Online" />
-              {amigosOnline.slice(0, 4).map(renderizarAvatarAmigo)}
-              {amigosOnline.length > 4 && (
-                <span className="text-[8px] font-black text-white/30">+{amigosOnline.length - 4}</span>
-              )}
-            </div>
-          )}
-
-          {sessao && amigosOffline.length > 0 && (
-            <div className="flex w-full flex-col items-center gap-2 border-t border-white/[0.07] pt-3">
-              <IndicadorStatusSocial status="offline" className="h-3 w-3" />
-              {amigosOffline.slice(0, 4).map(renderizarAvatarAmigo)}
-              {amigosOffline.length > 4 && (
-                <span className="text-[8px] font-black text-white/30">+{amigosOffline.length - 4}</span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex shrink-0 justify-center border-t border-white/[0.07] pt-3">
-          <button
-            type="button"
-            onClick={onAlternarRecuo}
-            title="Abrir painel social"
-            aria-label="Abrir painel social"
-            className="grid h-10 w-10 place-items-center border border-white/10 bg-white/[0.025] text-white/45 transition-colors hover:border-white/20 hover:text-white"
-          >
-            <ChevronLeft size={13} />
-          </button>
-        </div>
-      </aside>
-      <PainelChatSocial
-        aberto={chatAberto}
-        recuado
-        amigoSelecionado={amigoSelecionado}
-        perfilIdAtual={perfil?.perfilId}
-        mensagens={mensagensChat}
-        carregandoChat={carregandoChat}
-        enviandoChat={enviandoChat}
-        erroChat={erroChat}
-        textoChat={textoChat}
-        processandoAtividade={processandoAtividade}
-        mensagemSync={mensagemSync}
-        onFechar={() => setChatAberto(false)}
-        onAlterarTexto={setTextoChat}
-        onEnviarMensagem={enviarMensagemChat}
-        onPressionarEnter={aoPressionarEnterMensagem}
-        onRemoverAmigo={(friendProfileId) => void removerAmigo(friendProfileId)}
-        onInstalarAtividade={async (friendProfileId, atividade) => {
-          setProcessandoAtividade(true);
-          try {
-            await instalarMesmaInstanciaPorAtividade(friendProfileId, atividade ?? null);
-          } finally {
-            setProcessandoAtividade(false);
-          }
-        }}
-        onSolicitarSync={async (friendProfileId, atividade) => {
-          setProcessandoAtividade(true);
-          try {
-            await solicitarSyncInstancia(friendProfileId, atividade ?? null);
-          } finally {
-            setProcessandoAtividade(false);
-          }
-        }}
-        formatarTempoRelativo={tempoRelativo}
-        rotuloStatus={rotuloStatus}
-      />
-      </>
-    );
-  }
+      )}
+      <span className="absolute -bottom-1 -right-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-[#101010]">
+        <IndicadorStatusSocial
+          status={statusEfetivo(amigo.status, amigo.online)}
+          className="h-2.5 w-2.5"
+        />
+      </span>
+    </button>
+  );
 
   return (
     <aside className={cn('launcher-social relative flex w-[311px] shrink-0 flex-col overflow-hidden', className)}>
-      <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
+      <div className={cn(
+        'min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-x-hidden overflow-y-auto',
+        recuado ? 'flex' : 'hidden'
+      )}>
+        <div
+          title={sessao ? nomeExibicaoAtual : 'Entrar no social'}
+          className="relative grid h-10 w-10 place-items-center border border-white/10 bg-[#151515]"
+        >
+          {urlAvatarPerfil ? (
+            <img src={urlAvatarPerfil} alt="" className="h-8 w-8 object-cover" />
+          ) : (
+            <User size={17} className="text-white/45" />
+          )}
+          {sessao && (
+            <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-[#101010]">
+              <IndicadorStatusSocial status={statusPerfil} className="h-3 w-3" />
+            </span>
+          )}
+        </div>
+
+        {sessao && amigosOnline.length > 0 && (
+          <div className="flex w-full flex-col items-center gap-2 border-t border-white/[0.07] pt-3">
+            <IndicadorStatusSocial status="online" className="h-3 w-3" titulo="Online" />
+            {amigosOnline.slice(0, 4).map(renderizarAvatarAmigo)}
+            {amigosOnline.length > 4 && (
+              <span className="text-[8px] font-black text-white/30">+{amigosOnline.length - 4}</span>
+            )}
+          </div>
+        )}
+
+        {sessao && amigosOffline.length > 0 && (
+          <div className="flex w-full flex-col items-center gap-2 border-t border-white/[0.07] pt-3">
+            <IndicadorStatusSocial status="offline" className="h-3 w-3" />
+            {amigosOffline.slice(0, 4).map(renderizarAvatarAmigo)}
+            {amigosOffline.length > 4 && (
+              <span className="text-[8px] font-black text-white/30">+{amigosOffline.length - 4}</span>
+            )}
+          </div>
+        )}
+      </div>
+      <div className={cn('min-h-0 w-full flex-1 flex-col gap-3', recuado ? 'hidden' : 'flex')}>
         <div className="shrink-0">
           <PerfilSocialPainel
           sessaoAtiva={Boolean(sessao)}
@@ -2220,11 +2120,12 @@ export default function SocialSidebar({
           <button
             type="button"
             onClick={onAlternarRecuo}
-            aria-label="Recolher painel social"
-            title="Recolher painel social"
+            aria-label={recuado ? 'Abrir painel social' : 'Recolher painel social'}
+            aria-expanded={!recuado}
+            title={recuado ? 'Abrir painel social' : 'Recolher painel social'}
             className="grid h-10 w-10 place-items-center border border-white/10 bg-white/[0.025] text-white/45 transition-colors hover:border-white/20 hover:text-white"
           >
-            <ChevronRight size={13} />
+            <ChevronLeft size={13} className={recuado ? undefined : 'rotate-180'} />
           </button>
         </div>
       )}
@@ -2247,6 +2148,7 @@ export default function SocialSidebar({
       <PainelChatSocial
         aberto={chatAberto}
         compacto={Boolean(onFecharDrawer)}
+        recuado={recuado}
         amigoSelecionado={amigoSelecionado}
         perfilIdAtual={perfil?.perfilId}
         mensagens={mensagensChat}
