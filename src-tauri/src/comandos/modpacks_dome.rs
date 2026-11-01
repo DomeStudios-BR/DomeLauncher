@@ -462,6 +462,15 @@ pub async fn instalar_modpack_dome(
     } else {
         None
     };
+    let _reserva = existente
+        .as_ref()
+        .map(|(instancia, _)| {
+            crate::aplicacao::reserva_instancia::ReservaInstancia::nova(
+                &state.caminho_instancias()?,
+                &instancia.path,
+            )
+        })
+        .transpose()?;
     let resposta = criar_cliente_http_launcher()?
         .get(format!(
             "{base}/api/launcher/modpacks/{projeto_id}/versoes/{versao_id}/arquivo"

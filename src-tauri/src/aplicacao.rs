@@ -7,6 +7,7 @@ use crate::launcher::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+pub(crate) mod backups_instancias;
 mod bootstrap;
 mod configuracoes_jogo;
 mod conteudo_instalado;
@@ -20,9 +21,11 @@ mod instancias_criacao;
 mod lancamento_jogo;
 mod migracao_instancias;
 mod mods_conteudo;
+mod mods_migracao_estado;
 pub(crate) mod nomes_instancias;
 mod origem_crash;
 mod relacoes_crash;
+pub(crate) mod reserva_instancia;
 mod sincronizacao_instancias;
 
 // Constantes das APIs

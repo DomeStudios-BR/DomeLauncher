@@ -194,8 +194,10 @@ atualizando o servidor. Reabrir a instância descarta esses dados; trocar o modp
 
 Na lista de conteúdo instalado, o evento nativo de arraste copia arquivos `.jar` para `mods` ou `.zip` para
 `resourcepacks`/`shaderpacks`, conforme a categoria aberta. A importação preserva a origem, recusa arquivos inválidos
-e nomes já existentes (inclusive a variante desativada) e informa resultados parciais. A lista recarrega após a cópia;
-respostas antigas de identificação e atualização não devem substituir uma carga mais recente. Nome, Ativo e Versão
+e nomes já existentes (inclusive a variante desativada) e informa resultados parciais. Use criação exclusiva e remova
+o arquivo parcial em caso de erro, sem depender de links físicos do sistema de arquivos.
+A lista recarrega após a cópia; respostas antigas de identificação e atualização não devem substituir uma carga
+mais recente. Nome, Ativo e Versão
 alternam a direção da ordenação. Ícone e nome abrem a página interna quando há projeto e fonte identificados.
 Em Versão, o terceiro estado coloca atualizações disponíveis primeiro, mantendo o texto Versão e usando o ícone
 de recarregar no lugar da seta de ordenação. O ícone e a numeração da versão têm molduras separadas.
@@ -256,8 +258,11 @@ O aviso é curto, informa a prioridade de canais e a desativação de mods, sem 
 A aplicação prepara backup e atualiza os mods reconhecidos com prioridade
 Estável → Beta → Alpha, escolhendo o mais recente dentro do canal compatível com Minecraft e loader.
 Mods sem identificação ou versão compatível ficam na instância como `.jar.disabled`; os que já estavam
-desativados conservam esse estado. Falhas de rede não são incompatibilidade: interrompem a preparação
-e preservam a instância anterior. A publicação só ocorre com o jogo fechado.
+desativados conservam esse estado, reconciliado por identidade depois de instalar todas as dependências.
+Cada mod tem até três tentativas de preparação; falhas persistentes preservam a instância anterior.
+A publicação só ocorre com o jogo fechado. Migração e troca de modpack compartilham a reserva da instância.
+O backup fica na mesma unidade, em `.dome-backups-instancias` dentro da raiz de instâncias. Após ativação
+bem sucedida, mantenha somente o backup mais recente da mesma instância. Não apague backups legados automaticamente.
 `aplicacao/migracao_instancias.rs` concentra preparação, identificação, desativação e publicação;
 `aplicacao/mods_migracao.rs` concentra a preferência por estabilidade, sem alterar a seleção de instalações comuns.
 `bun run verificar:alteracao-ambiente` exercita os três campos nas quatro origens, preservação das escolhas ao

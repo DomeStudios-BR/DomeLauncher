@@ -5,6 +5,7 @@ mod fila;
 #[path = "mods_migracao.rs"]
 mod migracao;
 pub(super) use migracao::instalar_mod_migracao;
+pub(super) use migracao::repetir_preparacao_mod;
 use migracao::{buscar_arquivo_curseforge_migracao, selecionar_versao_modrinth_migracao};
 #[cfg(test)]
 #[path = "testes_consulta_curseforge.rs"]
@@ -1331,6 +1332,39 @@ mod testes_plano_instalacao_conteudo {
         assert!(complemento.exists());
         assert!(sem_metadados.exists());
         std::fs::remove_dir_all(pasta).unwrap();
+    }
+
+    #[test]
+    fn migracao_preserva_principal_e_dependencia_desativados_nas_duas_ordens() {
+        for biblioteca_primeiro in [true, false] {
+            let pasta = std::env::temp_dir().join(format!("dome-estado-{}", uuid::Uuid::new_v4()));
+            let mut desativados = super::super::mods_migracao_estado::ModsDesativados::default();
+            for biblioteca in [biblioteca_primeiro, !biblioteca_primeiro] {
+                let temporaria = pasta.join(uuid::Uuid::new_v4().to_string());
+                std::fs::create_dir_all(&temporaria).unwrap();
+                let dependencia = temporaria.join("biblioteca.jar");
+                criar_jar_teste(&dependencia, "biblioteca", "2", &[]);
+                let mut arquivos = vec![(dependencia, pasta.join("biblioteca.jar"))];
+                let principal = if biblioteca {
+                    "biblioteca.jar"
+                } else {
+                    "principal.jar"
+                };
+                if !biblioteca {
+                    let caminho = temporaria.join(principal);
+                    criar_jar_teste(&caminho, "principal", "2", &[]);
+                    arquivos.push((caminho, pasta.join(principal)));
+                }
+                publicar_arquivos_mod(arquivos, &temporaria).unwrap();
+                desativados.registrar(&pasta.join(principal));
+            }
+            desativados.aplicar(&pasta).unwrap();
+            for nome in ["biblioteca", "principal"] {
+                assert!(!pasta.join(format!("{nome}.jar")).exists());
+                assert!(pasta.join(format!("{nome}.jar.disabled")).exists());
+            }
+            std::fs::remove_dir_all(pasta).unwrap();
+        }
     }
 
     #[test]

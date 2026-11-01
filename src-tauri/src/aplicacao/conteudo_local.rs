@@ -1,6 +1,9 @@
 use super::*;
 use std::io::{Seek, Write};
 use std::path::Path;
+use std::sync::Mutex;
+
+static IMPORTACAO_CONTEUDO: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize, Default)]
 pub(crate) struct ResultadoImportacaoConteudo {
@@ -55,6 +58,9 @@ fn importar_arquivos(
 }
 
 fn copiar_conteudo(origem: &Path, destino: &Path, extensao: &str) -> Result<(), String> {
+    let _reserva = IMPORTACAO_CONTEUDO
+        .lock()
+        .map_err(|erro| erro.to_string())?;
     let nome = origem
         .file_name()
         .and_then(|nome| nome.to_str())
@@ -81,32 +87,61 @@ fn copiar_conteudo(origem: &Path, destino: &Path, extensao: &str) -> Result<(), 
     if destino.join(ativo).exists() || destino.join(format!("{ativo}.disabled")).exists() {
         return Err("Já existe um arquivo com esse nome na instância.".to_string());
     }
-    let temporario = destino.join(format!(".dome-importacao-{}", uuid::Uuid::new_v4()));
+    gravar_sem_substituir(&mut entrada, &destino.join(nome))
+}
+
+fn gravar_sem_substituir(entrada: &mut impl std::io::Read, destino: &Path) -> Result<(), String> {
+    let mut saida = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destino)
+        .map_err(|erro| {
+            format!("Não foi possível criar o arquivo sem substituir conteúdo: {erro}")
+        })?;
     let resultado = (|| {
-        let mut saida = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporario)
-            .map_err(|erro| format!("Falha ao preparar cópia: {erro}"))?;
-        std::io::copy(&mut entrada, &mut saida)
-            .map_err(|erro| format!("Falha ao copiar: {erro}"))?;
+        std::io::copy(entrada, &mut saida).map_err(|erro| format!("Falha ao copiar: {erro}"))?;
         saida
             .flush()
             .map_err(|erro| format!("Falha ao concluir cópia: {erro}"))?;
         saida
             .sync_all()
             .map_err(|erro| format!("Falha ao gravar cópia: {erro}"))?;
-        drop(saida);
-        std::fs::hard_link(&temporario, destino.join(nome))
-            .map_err(|erro| format!("Não foi possível adicionar sem substituir arquivos: {erro}"))
+        Ok(())
     })();
-    let _ = std::fs::remove_file(temporario);
+    drop(saida);
+    if resultado.is_err() {
+        let _ = std::fs::remove_file(destino);
+    }
     resultado
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn copia_exclusiva_recusa_colisao_e_remove_arquivo_parcial() {
+        struct LeituraInterrompida(bool);
+        impl std::io::Read for LeituraInterrompida {
+            fn read(&mut self, destino: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    return Err(std::io::Error::other("Leitura interrompida"));
+                }
+                self.0 = true;
+                destino[0] = 1;
+                Ok(1)
+            }
+        }
+        let raiz = std::env::temp_dir().join(format!("dome-copia-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&raiz).unwrap();
+        let destino = raiz.join("mod.jar");
+        assert!(gravar_sem_substituir(&mut LeituraInterrompida(false), &destino).is_err());
+        assert!(!destino.exists());
+        gravar_sem_substituir(&mut &b"original"[..], &destino).unwrap();
+        assert!(gravar_sem_substituir(&mut &b"substituto"[..], &destino).is_err());
+        assert_eq!(std::fs::read(&destino).unwrap(), b"original");
+        std::fs::remove_dir_all(raiz).unwrap();
+    }
 
     #[test]
     fn importa_categorias_preserva_origem_e_recusa_colisoes() {

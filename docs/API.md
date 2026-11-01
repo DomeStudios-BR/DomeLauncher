@@ -147,14 +147,21 @@ A seleção usa as datas de publicação e os canais documentados pelo
 [Modrinth](https://docs.modrinth.com/api/operations/getprojectversions/) e
 [CurseForge](https://docs.curseforge.com/rest-api/). CurseForge percorre as páginas e, se o filtro de loader não
 retornar candidato, tenta sem esse filtro e valida Minecraft e loader localmente. Dependências obrigatórias
-com versão fixa conservam essa restrição. Falhas de rede ou respostas inválidas interrompem a preparação;
-somente incompatibilidades confirmadas permitem continuar sem substituir o mod.
+com versão fixa conservam essa restrição. Cada mod tem até três tentativas de preparação, com espera curta
+entre elas. Se as tentativas falharem, a instância original permanece intacta. Somente incompatibilidades
+confirmadas permitem continuar sem substituir o mod.
 
 Mods sem identificação ou versão compatível permanecem na pasta `mods` como `.jar.disabled`. Os mods já
 desativados mantêm esse estado após atualizar. Mundos, opções, configurações, texturas, shaders e vínculo com
 o projeto são preservados. O retorno acrescenta `modsDesativados` à estrutura com `modsMigrados`,
 `versaoAnterior`, `versaoNova`, `modsPreservadosBackup` e `caminhoBackup`.
-O backup completo permanece em `backups/instances`, inclusive com a pasta de instâncias em outra unidade.
+O backup completo fica em `.dome-backups-instancias`, dentro da raiz das instâncias, na mesma unidade.
+Após a ativação, somente o backup mais recente de cada instância é mantido. A remoção de um backup anterior
+ocorre apenas após sucesso; falhas de limpeza são registradas e a próxima troca tenta a retenção novamente.
+Backups legados em `backups/instances` não são apagados automaticamente.
+Migração e troca de modpack nas três fontes compartilham uma reserva pelo caminho normalizado da instância.
+Os mods desativados são reconciliados por identidade após instalar todas as dependências, evitando reativação
+conforme a ordem das instalações.
 A ativação restaura a pasta anterior se a publicação falhar. A seção desativa os campos durante a aplicação;
 a operação continua no indicador global com percentual, sem bloquear a navegação. O modal da biblioteca
 reutiliza o mesmo formulário e fecha ao iniciar.
@@ -435,7 +442,8 @@ e assets do Minecraft são preparados pelo fluxo cacheado no primeiro lançament
 preparando esses arquivos durante a importação porque seus instaladores dependem deles. Recibos locais evitam
 reimportar o mesmo pedido se a confirmação remota falhar. Os recibos ficam em `social/receipts` e o cache
 `cache/social` reutiliza conteúdo referenciado por hash com cópias independentes. Backups de migração de versão
-ficam em `backups/instances`. Pastas auxiliares legadas dentro da raiz de instâncias são migradas na inicialização.
+ficam em `.dome-backups-instancias` na raiz das instâncias, com retenção da última cópia por instância.
+Pastas auxiliares legadas dentro da raiz de instâncias são migradas na inicialização.
 
 ### Publicações, participantes e atualizações
 

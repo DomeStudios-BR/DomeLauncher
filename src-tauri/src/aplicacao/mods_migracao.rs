@@ -1,5 +1,26 @@
 use super::*;
 
+pub(in crate::aplicacao) async fn repetir_preparacao_mod<T, F, Fut>(
+    mut preparar: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    for tentativa in 1..=3 {
+        match preparar().await {
+            Ok(resultado) => return Ok(resultado),
+            Err(erro) if tentativa == 3 => {
+                return Err(format!(
+                    "Falha após {tentativa} tentativas. A instância foi mantida. {erro}"
+                ));
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250 * tentativa)).await,
+        }
+    }
+    unreachable!()
+}
+
 pub(super) fn selecionar_versao_modrinth_migracao<'a>(
     versoes: &'a [serde_json::Value],
     minecraft: &str,
@@ -205,6 +226,37 @@ mod testes {
     use super::*;
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn repete_preparacao_apos_http_transitorio_e_limita_falha_persistente() {
+        let (base, tarefa) = servidor(vec![(503, json!({})), (200, json!({"ok": true}))]).await;
+        let cliente = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resultado = repetir_preparacao_mod(|| async {
+            cliente
+                .get(&base)
+                .send()
+                .await
+                .map_err(|erro| erro.to_string())?
+                .error_for_status()
+                .map_err(|erro| erro.to_string())?
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|erro| erro.to_string())
+        })
+        .await
+        .unwrap();
+        assert_eq!(resultado["ok"], true);
+        assert_eq!(tarefa.await.unwrap().len(), 2);
+        let tentativas = std::sync::atomic::AtomicUsize::new(0);
+        let erro = repetir_preparacao_mod(|| async {
+            tentativas.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err::<(), _>("Conexão indisponível".into())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(tentativas.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert!(erro.contains("A instância foi mantida"));
+    }
 
     #[test]
     fn modrinth_seleciona_estavel_compativel_e_recua_para_beta_ou_alpha() {

@@ -1,32 +1,10 @@
 use super::instancias_criacao::{
     install_fabric_loader, install_forge_loader, install_neoforge_loader,
 };
+use super::mods_migracao_estado::ModsDesativados;
+use super::reserva_instancia::ReservaInstancia;
 use super::*;
 use sha2::{Digest, Sha512};
-use std::sync::{LazyLock, Mutex};
-
-static MIGRACOES: LazyLock<Mutex<std::collections::HashSet<std::path::PathBuf>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
-
-struct ReservaMigracao(std::path::PathBuf);
-
-impl ReservaMigracao {
-    fn nova(caminho: std::path::PathBuf) -> Result<Self, String> {
-        let mut migracoes = MIGRACOES.lock().map_err(|erro| erro.to_string())?;
-        if !migracoes.insert(caminho.clone()) {
-            return Err("Esta instância já está sendo alterada.".into());
-        }
-        Ok(Self(caminho))
-    }
-}
-
-impl Drop for ReservaMigracao {
-    fn drop(&mut self) {
-        if let Ok(mut migracoes) = MIGRACOES.lock() {
-            migracoes.remove(&self.0);
-        }
-    }
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -351,8 +329,7 @@ pub(crate) async fn migrar_versao_instancia(
         return Err("Feche o jogo antes de alterar Minecraft ou loader.".into());
     }
     let raiz = state.caminho_instancias()?;
-    let caminho = validar_caminho_dentro_raiz(&raiz, &instancia.path)?;
-    let _reserva = ReservaMigracao::nova(caminho)?;
+    let _reserva = ReservaInstancia::nova(&raiz, &instancia.path)?;
     let loader = loader_type.trim().to_lowercase();
     if !matches!(loader.as_str(), "vanilla" | "fabric" | "forge" | "neoforge") {
         return Err("Loader não suportado para migração.".to_string());
@@ -487,6 +464,11 @@ pub(crate) async fn migrar_versao_instancia(
     let loader_normalizado = (loader != "vanilla").then(|| loader.clone());
     let mut migrados = 0usize;
     let mut nomes_migrados = std::collections::HashSet::new();
+    let pasta_mods = mods_atuais.clone();
+    let mut mods_desativados =
+        tauri::async_runtime::spawn_blocking(move || ModsDesativados::carregar(&pasta_mods))
+            .await
+            .map_err(|erro| erro.to_string())??;
     let candidatos = mods_identificados
         .into_iter()
         .map(|item| (item, false))
@@ -501,20 +483,20 @@ pub(crate) async fn migrar_versao_instancia(
         if loader == "vanilla" {
             continue;
         }
-        if let Some(arquivo) = super::mods_conteudo::instalar_mod_migracao(
-            &client,
-            &mods_novos,
-            projeto,
-            curseforge,
-            &version,
-            &loader_normalizado,
-        )
+        if let Some(arquivo) = super::mods_conteudo::repetir_preparacao_mod(|| {
+            super::mods_conteudo::instalar_mod_migracao(
+                &client,
+                &mods_novos,
+                projeto.clone(),
+                curseforge,
+                &version,
+                &loader_normalizado,
+            )
+        })
         .await?
         {
             if desabilitado {
-                let origem = mods_novos.join(&arquivo);
-                std::fs::rename(&origem, mods_novos.join(format!("{arquivo}.disabled")))
-                    .map_err(|erro| format!("Erro ao preservar mod desativado: {erro}"))?;
+                mods_desativados.registrar(&mods_novos.join(&arquivo));
             }
             migrados += 1;
             nomes_migrados.insert(nome);
@@ -523,6 +505,7 @@ pub(crate) async fn migrar_versao_instancia(
     let origem = mods_atuais.clone();
     let destino = mods_novos.clone();
     let desativados = tauri::async_runtime::spawn_blocking(move || {
+        mods_desativados.aplicar(&destino)?;
         preservar_mods_desativados(&origem, &destino, &nomes_migrados)
     })
     .await
@@ -537,9 +520,7 @@ pub(crate) async fn migrar_versao_instancia(
             }
         })
         .collect();
-    let pasta_backups = crate::launcher::pasta_backups_instancias();
-    std::fs::create_dir_all(&pasta_backups).map_err(|erro| erro.to_string())?;
-    let backup = pasta_backups.join(format!("{}-{}", instancia.id, uuid::Uuid::new_v4()));
+    let backup = super::backups_instancias::novo_destino(&raiz)?;
 
     let versao_anterior = instancia.version.clone();
     instancia.version = version.clone();
@@ -575,6 +556,7 @@ pub(crate) async fn migrar_versao_instancia(
     let atual = instancia.path.clone();
     let backup_publicacao = backup.clone();
     let processos = state.processos_instancias.clone();
+    let id_backup = instancia.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         publicar_migracao(&preparada, &atual, &backup_publicacao, || {
             if processos
@@ -585,7 +567,13 @@ pub(crate) async fn migrar_versao_instancia(
                 return Err("Feche o jogo antes de concluir a alteração.".into());
             }
             Ok(())
-        })
+        })?;
+        if let Err(erro) =
+            super::backups_instancias::reter_atual(&raiz, &backup_publicacao, &id_backup)
+        {
+            eprintln!("[Backups] {erro}");
+        }
+        Ok::<(), String>(())
     })
     .await
     .map_err(|erro| erro.to_string())??;
@@ -604,15 +592,6 @@ pub(crate) async fn migrar_versao_instancia(
 #[cfg(test)]
 mod testes {
     use super::*;
-
-    #[test]
-    fn impede_duas_migracoes_simultaneas_e_libera_apos_erro() {
-        let caminho = std::path::PathBuf::from(uuid::Uuid::new_v4().to_string());
-        let reserva = ReservaMigracao::nova(caminho.clone()).unwrap();
-        assert!(ReservaMigracao::nova(caminho.clone()).is_err());
-        drop(reserva);
-        assert!(ReservaMigracao::nova(caminho).is_ok());
-    }
 
     #[test]
     #[ignore = "requer duas unidades; DOME_TESTE_UNIDADE_DESTINO indica a pasta de teste na segunda"]

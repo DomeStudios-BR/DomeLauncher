@@ -86,6 +86,10 @@ pub(crate) async fn trocar_versao_modpack_publico(
         return Err("Fonte inválida.".into());
     }
     let antiga = super::instancia_sistema::obter_instancia_por_id(&state, &instance_id)?;
+    let _reserva = crate::aplicacao::reserva_instancia::ReservaInstancia::nova(
+        &state.caminho_instancias()?,
+        &antiga.path,
+    )?;
     if state.obter_pid_instancia(&instance_id).is_some() {
         return Err("Feche o jogo antes de trocar a versão.".into());
     }
