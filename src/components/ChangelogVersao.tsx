@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2 } from "../iconesPixelados";
+import { DataLancamento } from "./DataLancamento";
 import type { FonteProjetoConteudo } from "./ProjetoDetalheModal";
 
 const DescricaoProjetoMarkdown = lazy(() => import("./modpacks/DescricaoProjetoMarkdown").then((modulo) => ({
@@ -12,7 +13,7 @@ export interface VersaoChangelog {
     version_number: string;
     game_versions: string[];
     loaders: string[];
-    date_published?: string;
+    date_published?: string | null;
     files: Array<{ filename: string }>;
     changelog?: string | null;
 }
@@ -73,9 +74,7 @@ export function ChangelogVersao({ fonte, projetoId, versao }: ChangelogVersaoPro
             <header className="space-y-2">
                 <h2 className="break-words text-lg font-black text-white">{versao.version_number}</h2>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
-                    {versao.date_published && <time dateTime={versao.date_published}>
-                        {new Date(versao.date_published).toLocaleDateString("pt-BR")}
-                    </time>}
+                    <DataLancamento data={versao.date_published} className="flex items-center gap-1" />
                     {versao.game_versions.length > 0 && <span>Minecraft {versao.game_versions.join(", ")}</span>}
                     {versao.loaders.length > 0 && <span>{versao.loaders.join(", ")}</span>}
                 </div>

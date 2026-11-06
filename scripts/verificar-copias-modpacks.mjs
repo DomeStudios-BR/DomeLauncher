@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 const servidor = await createServer({
     optimizeDeps: { entries: ['scripts/fixtures/modpacks-verificacao.tsx'] },
-    server: { port: 0, open: false }, plugins: [{
+    server: { port: 0, strictPort: false, open: false }, plugins: [{
     name: 'verificacao-copias-modpacks',
     configureServer(vite) {
         vite.middlewares.use('/verificacao-modpacks', (_req, res) => {
@@ -21,7 +21,7 @@ let navegador;
 try {
     await servidor.listen();
     navegador = await chromium.launch({ channel: 'msedge', headless: true, timeout: 15000 });
-    const pagina = await navegador.newPage({ viewport: { width: 1280, height: 800 } });
+    const pagina = await navegador.newPage({ viewport: { width: 1280, height: 800 }, timezoneId: 'America/Sao_Paulo' });
     pagina.on('dialog', (dialogo) => dialogo.accept());
     pagina.setDefaultTimeout(15000);
     pagina.setDefaultNavigationTimeout(60000);
@@ -35,8 +35,20 @@ try {
     }));
     const base = servidor.resolvedUrls.local[0] + 'verificacao-modpacks';
     const cartaoVersao = (numero) => pagina.getByRole('group', { name: `Versão ${numero}`, exact: true });
+    const conferirDataProjeto = async (dia) => {
+        const data = pagina.locator(`time[datetime="2026-10-${dia + 1}T00:00:00Z"]`);
+        await data.waitFor();
+        assert.equal(await data.textContent(), `${dia}/10/2026`);
+    };
     for (const fonte of ['modrinth', 'curseforge', 'dome']) {
         await pagina.goto(`${base}?fonte=${fonte}`);
+        await conferirDataProjeto(15);
+        if (fonte !== 'dome') {
+            for (const [categoria, dia] of [['Mods', 16], ['Textures', 17], ['Shaders', 18], ['Modpacks', 15]]) {
+                await pagina.getByRole('button', { name: categoria, exact: true }).click();
+                await conferirDataProjeto(dia);
+            }
+        }
         await pagina.getByRole('heading', { name: 'LostSMP', exact: true }).click();
         await pagina.getByRole('button', { name: 'Versões', exact: true }).click();
         await cartaoVersao('2.0').getByText('INSTALADA', { exact: true }).waitFor();

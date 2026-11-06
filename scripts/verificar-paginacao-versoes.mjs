@@ -23,7 +23,7 @@ let navegador;
 try {
     await servidor.listen();
     navegador = await chromium.launch({ channel: 'msedge', headless: true });
-    const pagina = await navegador.newPage({ viewport: { width: 1280, height: 1000 } });
+    const pagina = await navegador.newPage({ viewport: { width: 1280, height: 1000 }, timezoneId: 'America/Sao_Paulo' });
     pagina.setDefaultTimeout(15000);
     pagina.setDefaultNavigationTimeout(45000);
     const erros = [];
@@ -93,12 +93,17 @@ try {
             await pagina.goto(`${base}verificacao-projeto?fonte=${fonte}&tipo=${tipo}&paginacao`, { waitUntil: 'domcontentloaded' });
             await pagina.getByRole('button', { name: 'Versões', exact: true }).click();
             await conferirGrade(projetos, 2, 8);
+            const primeiraData = pagina.locator(projetos).first().locator('time');
+            assert.equal(await primeiraData.getAttribute('datetime'), '2026-10-25T00:00:00.000Z');
+            assert.equal(await primeiraData.textContent(), 'Lançou: 24/10/2026');
+            assert.equal(await primeiraData.locator('svg').count(), 0);
             const consultas = await contarConsultas();
             await pagina.getByRole('button', { name: 'Próxima página', exact: true }).click();
             await conferirGrade(projetos, 2, 8);
             const proxima = pagina.getByRole('button', { name: 'Próxima página', exact: true });
             while (await proxima.isEnabled()) await proxima.click();
             await conferirGrade(projetos, 2, 5);
+            assert.equal(await pagina.locator(projetos).last().locator('time').textContent(), 'Lançou: 18/09/2026');
             assert.equal(await pagina.getByRole('button', { name: 'Próxima página', exact: true }).isDisabled(), true);
             await pagina.getByRole('button', { name: 'Changelog', exact: true }).click();
             await pagina.getByRole('region', { name: 'Changelog da versão 37.0', exact: true }).waitFor();

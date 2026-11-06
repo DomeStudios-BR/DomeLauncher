@@ -137,6 +137,54 @@ Falhas ao recarregar análises preservam a lista exibida; navegar para outro per
 Análises só existem para instâncias com `modpack.json` do Modrinth/CurseForge; instâncias personalizadas
 não oferecem publicação, e a API rejeita qualquer `source` diferente desses dois.
 
+`identificar_mods_instalados(instanceId)` reconhece os JARs de `mods`, inclusive `.jar.disabled`,
+por SHA-512 no [Modrinth](https://docs.modrinth.com/api/operations/versionsfromhashes/) e, para os restantes,
+por correspondência exata de fingerprint no [CurseForge](https://docs.curseforge.com/rest-api/).
+A leitura roda fora da janela e valida caminhos. A identificação consulta lotes de até 100 arquivos,
+com até quatro requisições simultâneas no processo. Calcula o fingerprint CurseForge somente para os
+arquivos que o Modrinth não reconheceu; uma resposta parcial não entra como identificação exata.
+O comando retorna `{ itens, falhas }`; cada item informa `fileName`, `projectId`, `source`, `version`
+e `versionId` (campos remotos podem ser nulos). Sem correspondência nas duas fontes, os identificadores
+ficam nulos; falhas de consulta preservam o vínculo em cache dos arquivos inconclusivos e aparecem com nova tentativa.
+A identificação não procura pelo nome e não baixa nem altera mods. O cache nativo por instância fica em
+`pasta_dados_launcher()/cache/mods-identificados-v1`. Tamanho e datas de modificação/criação permitem
+reutilizar o SHA-512 dos arquivos sem mudanças; conteúdo novo consulta apenas as assinaturas pendentes.
+Identificações confirmadas permanecem associadas ao SHA-512 enquanto o arquivo não muda; não expiram
+por tempo nem são perdidas quando a rede fica indisponível. Ausência confirmada nas duas fontes dura 24 horas.
+Falhas de consulta não são salvas como ausência. Renomear um arquivo reaproveita a identificação pelo hash; ativar ou
+desativar também reaproveita a assinatura se a variante anterior não existe mais. Leituras simultâneas da
+mesma instância aguardam a gravação atômica do cache anterior, evitando repetir consultas. Arquivos removidos
+saem do índice quando ele muda. Cache inválido é reconstruído. Esse índice de tamanho/datas não é uma auditoria
+de integridade contra alterações que conservem todos os metadados.
+`obter_conteudo_instalado_detalhado` inclui o campo opcional `identificacao` para mods cujo tamanho/datas
+correspondem ao registro nativo. Assim, projeto, fonte e versão instalada são restaurados na leitura local,
+antes da consulta de identificação, inclusive sem o cache do WebView. A interface preserva nome/autor/ícone
+já salvos quando correspondem ao mesmo vínculo. Substituir o JAR invalida a restauração daquele arquivo.
+A interface reaproveita a lista ao alternar abas; importações e novas leituras conferem os metadados locais.
+O ID exato seleciona a versão instalada mesmo
+quando o JAR foi renomeado. Reconhecer um arquivo CurseForge sem download não libera sua distribuição:
+a troca mantém o filtro de Minecraft/loader e informa quando a plataforma não disponibiliza download.
+`cargo test --manifest-path src-tauri/Cargo.toml identificacao_mods` usa arquivos e HTTP locais;
+`bun run verificar:conteudo-instancia` usa IPC simulado. Essas verificações não substituem consultas reais
+às plataformas e a troca de versão na janela nativa.
+O teste opcional `consulta_remota_mods_externos` lê a pasta indicada por `DOME_TESTE_INSTANCIA`, sem alterar
+arquivos. Em 05/11/2026, reconheceu 100 JARs reais: 73 pelo Modrinth e 27 pelo CurseForge.
+Essa consulta valida identificação remota; não executa downloads nem troca versões dos mods.
+O teste opcional `consulta_remota_desempenho_cache_mods` usa um cache temporário e mede a primeira leitura
+e a reabertura dos mesmos arquivos, com as URLs remotas indisponíveis na segunda passagem. Em 05/11/2026,
+no perfil de testes local, 148 JARs levaram 47,03 s na primeira identificação e 31,95 ms com o cache salvo.
+Essa medição inclui assinaturas e identificação, sem a leitura de ícones/metadados da lista nem consultas de atualização.
+No NorthStar 2 - Beta (459 JARs, cerca de 1,15 GiB), a mesma medição em 05/11/2026 levou 110,13 s na primeira
+passagem e 101,36 ms com cache, ainda no perfil de testes. Esses tempos não representam a abertura completa da tela.
+O teste opcional `consulta_remota_persistencia_instancia` usa o registro nativo real da instância indicada por
+`DOME_TESTE_INSTANCIA`, confere cada projeto/fonte/versão restaurados e lista arquivos sem correspondência.
+No NorthStar, confirmou 454 vínculos persistidos (368 Modrinth, 86 CurseForge), restaurados em 137,70 ms
+sem rede. Cinco arquivos ficaram sem correspondência exata: DynamicTreesAlexsMobs/port.1,
+DynamicTreesEcologics/port.1, kaledelights_compat 1.3.9, northstar-ajustes 1.0.3 e northstar-otimizacao 1.0.0.
+Não modifica JARs, configurações ou mundos.
+Os testes locais cobrem invalidação por data/tamanho, arquivo ativo/desativado com conteúdo diferente,
+renomeação, expiração, erro de rede, sobreposição de consultas e paralelismo dos lotes.
+
 `migrar_versao_instancia(instanceId, version, loaderType, loaderVersion?, progresso?)` atende instâncias
 personalizadas e modpacks instalados. A seção Versão e Loader reúne Minecraft, família e versão do loader
 em um formulário com um único botão Alterar. O fluxo prepara uma cópia completa e bloqueia a publicação
@@ -607,6 +655,12 @@ a conferência visual usa IPC simulado e os testes Rust cobrem normalização, o
 Isso não comprova login, upload S3 ou instalação de um pacote publicado entre contas reais em produção.
 
 ## Outros serviços e validação
+
+O Explorar usa `date_created` da busca do Modrinth e `dateReleased` da busca do CurseForge, normalizados
+como `dataLancamento` no comando `search_mods_online`. Para projetos Dome, o launcher lê `date_published`
+ou `date_created` do resultado da busca. Cartões mesclados usam a data da fonte principal do resultado.
+A aba Versões usa `date_published` de cada versão do Modrinth e da Dome. O Rust mapeia
+`fileDate` do CurseForge para o mesmo campo. A interface exibe datas válidas no formato brasileiro.
 
 Changelogs são consultados por versão: o Modrinth fornece Markdown no campo `changelog` da listagem ou
 em `GET /v2/version/{id}`; a fonte Dome usa o `changelog` da versão publicada. Para CurseForge, o comando

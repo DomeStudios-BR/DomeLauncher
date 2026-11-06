@@ -23,6 +23,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { PublicadorModpacks } from "./modpacks/PublicadorModpacks";
 import { consultarModpacksDome } from "../services/modpacksDome";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
+import { DataLancamento } from "./DataLancamento";
 
 type ContentType = "modpack" | "mod" | "resourcepack" | "shader";
 type Source = "modrinth" | "curseforge" | "dome";
@@ -58,6 +59,7 @@ interface SearchResult {
   description: string;
   icon_url?: string;
   author: string;
+  dataLancamento?: string | null;
   downloads?: number;
   follows?: number;
   project_type: TipoProjetoConteudo;
@@ -73,6 +75,7 @@ interface VarianteResultadoBusca {
   description: string;
   icon_url?: string;
   author: string;
+  dataLancamento?: string | null;
   downloads?: number;
   follows?: number;
   project_type: TipoProjetoConteudo;
@@ -88,6 +91,9 @@ interface ResultadoBuscaApi {
   iconUrl?: string;
   icon_url?: string;
   author?: string;
+  dataLancamento?: string | null;
+  date_created?: string | null;
+  date_published?: string | null;
   downloadCount?: number;
   download_count?: number;
   downloads?: number;
@@ -160,6 +166,7 @@ const mapearResultadoBusca = (
     description: String(item.description || ""),
     icon_url: item.iconUrl || item.icon_url || undefined,
     author: String(item.author || "Desconhecido"),
+    dataLancamento: item.dataLancamento ?? item.date_published ?? item.date_created,
     downloads:
       typeof item.downloadCount === "number"
         ? item.downloadCount
@@ -1366,6 +1373,9 @@ export default function Explore({
                     </div>
                   )}
                 </div>
+
+                <DataLancamento data={item.dataLancamento}
+                    className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] font-bold text-white/60" />
 
                 <div className="ml-auto flex shrink-0 gap-2">
                   <button

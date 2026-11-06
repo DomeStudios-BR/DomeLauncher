@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChangelogVersao } from "./ChangelogVersao";
 import { ConteudosRelacionadosProjeto } from "./ConteudosRelacionadosProjeto";
 import { ControlesPaginacaoVersoes } from "./ControlesPaginacaoVersoes";
+import { DataLancamento } from "./DataLancamento";
 import { usePaginacaoVersoes } from "../hooks/usePaginacaoVersoes";
 import { useProgressoOperacao } from "../hooks/useProgressoOperacao";
 import {
@@ -86,7 +87,7 @@ interface VersaoProjeto {
   version_number: string;
   game_versions: string[];
   loaders: string[];
-  date_published?: string;
+  date_published?: string | null;
   files: ArquivoProjeto[];
   changelog?: string;
   version_type?: string;
@@ -1765,6 +1766,9 @@ export default function ProjetoDetalheModal({
                             <p className="min-w-0 break-words rounded border border-white/10 bg-black/20 px-2 py-1 text-white/60">
                               Loader: {(versao.loaders || []).join(", ") || "não informado"}
                             </p>
+                            <DataLancamento data={versao.date_published} mostrarRotulo
+                                className="whitespace-nowrap rounded border border-white/10 bg-black/20
+                                    px-2 py-1 text-white/60" />
                           </div>
                           {projeto.source === "dome" && versao.version_type && (
                             <p className="mt-1 text-sky-300">{versao.version_type}</p>

@@ -28,11 +28,17 @@ const listas = {
     resourcepacks: [criarItem("Textura", "2.0", true, "zip")],
     shaders: [criarItem("Shader", "3.0", true, "zip")],
 };
+if (new URLSearchParams(location.search).has("externos")) {
+    listas.mods = Array.from({ length: 12 }, (_, indice) => ({
+        ...criarItem(`Externo ${indice}`, "1.0", indice % 2 === 0, "jar"),
+        fileName: `renomeado-${indice}.jar${indice % 2 ? ".disabled" : ""}`,
+    }));
+}
 const cache = {};
 for (const [filtro, itens] of Object.entries(listas)) {
     const tipo = filtro === "mods" ? "mod" : filtro === "shaders" ? "shader" : "resourcepack";
-    for (const item of itens) cache[`teste::${tipo}::${item.fileName.toLowerCase()}`] = {
-        name: item.name, author: item.author, projectId: item.name,
+    for (const item of itens.filter(() => filtro !== "mods" || !new URLSearchParams(location.search).has("externos"))) cache[`teste::${tipo}::${item.fileName.toLowerCase()}`] = {
+        name: item.name, author: item.author, projectId: item.name, versionId: filtro === "mods" ? item.name : undefined,
         source: new URLSearchParams(location.search).get("fonte")
             || (filtro === "shaders" ? "curseforge" : "modrinth"), projectType: tipo,
         atualizadoEm: Date.now(), atualizacaoVerificadaEm: Date.now(),
@@ -117,7 +123,35 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
             if (document.documentElement.dataset.pausarConteudo === tipo) {
                 await new Promise<void>((resolver) => cargasPausadas.set(tipo, resolver));
             }
-            return [...listas[tipo]];
+            const salvas = JSON.parse(sessionStorage.getItem("identificacoes-mods") || "{}");
+            return listas[tipo].map((item) => ({ ...item,
+                identificacao: tipo === "mods" ? salvas[item.fileName] : undefined,
+            }));
+        }
+        if (comando === "identificar_mods_instalados") {
+            if (new URLSearchParams(location.search).has("restaurar")) {
+                throw new Error("Identificação remota indisponível");
+            }
+            const itens = listas.mods.map((item) => ({ fileName: item.fileName,
+                projectId: new URLSearchParams(location.search).has("externos") ? `projeto-${item.name.split(" ").at(-1)}` : item.name,
+                source: new URLSearchParams(location.search).has("externos") && Number(item.name.split(" ").at(-1)) >= 6
+                    ? "curseforge" : new URLSearchParams(location.search).get("fonte") || "modrinth",
+                versionId: new URLSearchParams(location.search).has("externos")
+                    ? `instalada-${item.name.split(" ").at(-1)}`
+                    : new URLSearchParams(location.search).has("paginacao") && item.name === "Beta"
+                        ? "pagina-25" : item.version === "4.0" ? "ultima" : item.name,
+                version: null }));
+            if (document.documentElement.dataset.pausarIdentificacao === "sim") {
+                await new Promise<void>((resolver) => Object.assign(window, { liberarIdentificacao: resolver }));
+            }
+            if (document.documentElement.dataset.falharIdentificacao === "sim") {
+                return { itens: [], falhas: ["Falha ao identificar mods no CurseForge."] };
+            }
+            if (new URLSearchParams(location.search).has("externos")) {
+                sessionStorage.setItem("identificacoes-mods", JSON.stringify(
+                    Object.fromEntries(itens.map((item) => [item.fileName, item]))));
+            }
+            return { itens, falhas: [] };
         }
         if (comando === "planejar_instalacao_conteudo") {
             const itens = argumentos.itens as Array<{ id: string; nome: string; plataforma: string }>;
@@ -166,6 +200,13 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
                 game_versions: ["1.21.1"], loaders: ["fabric"],
                 files: [{ url: "https://example.com/mod.jar", filename: indice === 25 ? "Beta.jar" : `mod-${indice}.jar` }],
             }));
+        }
+        if (comando === "listar_versoes_projeto_curseforge" && new URLSearchParams(location.search).has("externos")) {
+            return [{ id: `instalada-${String(argumentos.projectId).split("-").at(-1)}`,
+                version_number: "Rotulo remoto", game_versions: ["1.21.1"], loaders: ["fabric"],
+                files: argumentos.projectId === "projeto-10" ? [] : [
+                    { url: "https://example.com/original.jar", filename: "original.jar" },
+                ] }];
         }
         if (comando === "listar_versoes_projeto_curseforge") return [{
             id: "ultima", version_number: "4.0", game_versions: ["1.21.1"], loaders: [],

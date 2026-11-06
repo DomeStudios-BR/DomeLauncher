@@ -582,6 +582,63 @@ try {
         'Quando só resta um projeto sem download, não existe instalação para iniciar.');
     assert.deepEqual(await instaladosNaFila(), ['a.jar', 'b.jar', 'c.jar', 'b.jar']);
     console.log('Fila validada: restrição na preparação, falha no download, continuação dos demais e nova tentativa apenas dos pendentes.');
+    await pagina.goto(urlBase + '?externos', { waitUntil: 'domcontentloaded' });
+    await pagina.getByRole('button', { name: 'Externo 11', exact: true }).waitFor();
+    await pagina.getByText('Identificando mods…', { exact: true }).waitFor({ state: 'hidden' });
+    for (let indice = 0; indice < 12; indice++) {
+        assert.equal(await pagina.getByRole('button', {
+            name: new RegExp(`^Trocar versão de Externo ${indice}([.]|$)`),
+        }).isEnabled(), true, 'Todos os mods externos devem permitir consultar versões, inclusive os desativados.');
+    }
+    assert.equal(await pagina.evaluate(() => window.chamadas.filter((item) =>
+        item.comando === 'search_mods_online').length), 0, 'Mods devem ser identificados pelo arquivo, sem busca pelo nome.');
+    await pagina.getByRole('button', { name: 'Externo 11', exact: true }).click();
+    assert.equal(await pagina.locator('html').getAttribute('data-fonte'), 'curseforge');
+    assert.equal(await pagina.locator('html').getAttribute('data-projeto'), 'projeto-11');
+    await pagina.getByRole('button', { name: /^Trocar versão de Externo 11([.]|$)/ }).click();
+    await pagina.locator('input[name="versao-conteudo"][value="instalada-11"]:checked').waitFor();
+    await pagina.getByText('Atual', { exact: true }).waitFor();
+    await pagina.getByRole('button', { name: 'Fechar', exact: true }).click();
+    await pagina.getByRole('button', { name: /^Trocar versão de Externo 10([.]|$)/ }).click();
+    await pagina.getByText(/O CurseForge não disponibiliza download para terceiros/).waitFor();
+    assert.equal(await pagina.getByRole('button', { name: 'Trocar versão', exact: true }).isEnabled(), false);
+    await pagina.getByRole('button', { name: 'Fechar', exact: true }).click();
+    const importarModExterno = () => pagina.evaluate(() => {
+        const area = document.querySelector('#lista-conteudo-instancia').getBoundingClientRect();
+        window.emitirArraste('drag-drop', { paths: ['D:/Downloads/externo.jar'], position: {
+            x: (area.left + 80) * devicePixelRatio, y: (area.top + 50) * devicePixelRatio,
+        } });
+    });
+    await pagina.evaluate(() => { document.documentElement.dataset.falharIdentificacao = 'sim'; });
+    await importarModExterno();
+    await pagina.getByText('Falha ao identificar mods no CurseForge.', { exact: true }).waitFor();
+    assert.equal(await pagina.getByRole('button', { name: /^Trocar versão de Externo 11([.]|$)/ }).isEnabled(), true,
+        'Falha de rede deve preservar as correspondências anteriores.');
+    await pagina.evaluate(() => { delete document.documentElement.dataset.falharIdentificacao; });
+    await pagina.getByRole('button', { name: 'Tentar novamente', exact: true }).click();
+    await pagina.getByText('Falha ao identificar mods no CurseForge.', { exact: true }).waitFor({ state: 'hidden' });
+    await pagina.getByText('Identificando mods…', { exact: true }).waitFor({ state: 'hidden' });
+    await pagina.evaluate(() => { document.documentElement.dataset.pausarIdentificacao = 'sim'; });
+    await importarModExterno();
+    await pagina.getByText('Identificando mods…', { exact: true }).waitFor();
+    await pagina.waitForFunction(() => typeof window.liberarIdentificacao === 'function');
+    await pagina.evaluate(() => { delete document.documentElement.dataset.pausarIdentificacao; });
+    await importarModExterno();
+    await pagina.getByText('Identificando mods…', { exact: true }).waitFor({ state: 'hidden' });
+    const antesDaRespostaAntiga = await nomes();
+    await pagina.evaluate(() => window.liberarIdentificacao());
+    assert.deepEqual(await nomes(), antesDaRespostaAntiga, 'Identificação antiga não pode substituir uma importação nova.');
+    console.log('Mods externos: 12 arquivos sem cache, desativados/renomeados, fonte correta, versão exata, bloqueio de download, nova tentativa e resposta antiga.');
+    await pagina.goto(urlBase + '?externos&restaurar', { waitUntil: 'domcontentloaded' });
+    await pagina.getByText(/Identificação remota indisponível/).waitFor();
+    assert.equal(await pagina.getByRole('button', { name: /^Trocar versão de Externo 11([.]|$)/ }).isEnabled(), true,
+        'Reabrir restaura o vínculo nativo mesmo sem cache da interface e sem rede.');
+    await pagina.getByRole('button', { name: 'Externo 11', exact: true }).click();
+    assert.equal(await pagina.locator('html').getAttribute('data-fonte'), 'curseforge');
+    assert.equal(await pagina.locator('html').getAttribute('data-projeto'), 'projeto-11');
+    await pagina.getByRole('button', { name: /^Trocar versão de Externo 11([.]|$)/ }).click();
+    await pagina.locator('input[name="versao-conteudo"][value="instalada-11"]:checked').waitFor();
+    console.log('Identificação restaurada na reabertura: projeto, fonte e versão independem do cache da interface.');
     assert.deepEqual(erros, []);
     console.log('Interface validada em 960×640 e escala 150%: reutilização das três categorias, carga pendente sem duplicação, atualização após importação, ordenação, versão, catálogo, seleção, opções, Vanilla e histórico entre projetos, telas e instâncias. IPC simulado.');
 } finally {

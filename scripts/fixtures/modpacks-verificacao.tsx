@@ -7,6 +7,12 @@ import type { Instance } from "../../src/hooks/useLauncher";
 import "../../src/index.css";
 
 const fonte = new URLSearchParams(location.search).get("fonte") || "modrinth";
+const datasLancamento: Record<string, string> = {
+    modpack: "2026-10-16T00:00:00Z",
+    mod: "2026-10-17T00:00:00Z",
+    resourcepack: "2026-10-18T00:00:00Z",
+    shader: "2026-10-19T00:00:00Z",
+};
 const projeto: ProjetoConteudo = {
     id: "pack", title: "LostSMP", author: "Dome", slug: "lostsmp", description: "Modpack de teste",
     icon_url: "", source: fonte as ProjetoConteudo["source"], project_type: "modpack",
@@ -77,10 +83,12 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
         }
         if (comando === "get_minecraft_versions") return { versions: [{ id: "1.21.1", type: "release" }] };
         if (comando === "search_mods_online") return argumentos.platform === fonte ? [{
-            ...projeto, source: fonte, downloads: 100,
+            ...projeto, platform: fonte, project_type: argumentos.contentType, downloads: 100,
+            dataLancamento: datasLancamento[String(argumentos.contentType)],
         }] : [];
         if (comando === "gerenciar_modpacks_dome") {
-            if (argumentos.acao === "buscar") return fonte === "dome" ? [projeto] : [];
+            if (argumentos.acao === "buscar") return fonte === "dome"
+                ? [{ ...projeto, platform: fonte, date_created: datasLancamento.modpack }] : [];
             if (argumentos.acao === "versoes") return versoes;
             return projeto;
         }

@@ -192,6 +192,15 @@ a instância. Cada versão consultada em Mods conserva sua lista e a consulta pe
 Os servidores preservam lista, status Online/Offline, MOTD, jogadores e ping; verificar manualmente continua
 atualizando o servidor. Reabrir a instância descarta esses dados; trocar o modpack renova as consultas da origem.
 
+A identificação de mods externos usa `aplicacao/identificacao_mods.rs`: SHA-512 no Modrinth e fingerprint exato
+no CurseForge, incluindo desativados e arquivos renomeados. Preserve a verificação de todos os lotes, a distinção
+entre arquivo desconhecido e falha de rede e o bloqueio de download para terceiros. O módulo
+`cache_identificacao_mods.rs` persiste assinaturas e identificações por instância, invalidando por tamanho/datas.
+Não recalcule hashes nem consulte a rede para arquivos sem mudanças e resultados ainda válidos. Respeite o
+limite global de quatro consultas, a expiração dos resultados negativos e a gravação atômica do cache.
+Vínculos confirmados não expiram por tempo. A leitura local do conteúdo restaura projeto/fonte/versão pelo
+registro nativo, independentemente do cache da interface; substituir o JAR invalida a restauração.
+
 Na lista de conteúdo instalado, o evento nativo de arraste copia arquivos `.jar` para `mods` ou `.zip` para
 `resourcepacks`/`shaderpacks`, conforme a categoria aberta. A importação preserva a origem, recusa arquivos inválidos
 e nomes já existentes (inclusive a variante desativada) e informa resultados parciais. Use criação exclusiva e remova

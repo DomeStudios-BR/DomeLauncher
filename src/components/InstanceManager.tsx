@@ -102,6 +102,7 @@ interface InstanceDetails {
 }
 
 interface InstalledMod {
+  versionId?: string;
   name: string;
   fileName: string;
   version: string;
@@ -118,6 +119,17 @@ interface InstalledMod {
   updating?: boolean;
   identificadores: string[];
   dependencias: string[];
+}
+
+interface ResultadoIdentificacaoMods {
+    itens: Array<{
+        fileName: string;
+        projectId: string | null;
+        source: BrowseSource | null;
+        version: string | null;
+        versionId: string | null;
+    }>;
+    falhas: string[];
 }
 
 interface ArquivoVersaoConteudo {
@@ -158,6 +170,7 @@ function obterEstabilidadeVersao(versao: VersaoConteudo): EstabilidadeVersao {
 }
 
 interface ConteudoInstaladoDetalhado {
+  identificacao?: ResultadoIdentificacaoMods["itens"][number];
   fileName: string;
   name: string;
   version: string;
@@ -401,6 +414,7 @@ const extrairVariantesResultadoBusca = (item: SearchResult): VarianteResultadoBu
 const chaveSelecaoDownload = (item: SearchResult) => `${item.source}:project:${item.id}`;
 
 interface RegistroCacheConteudo {
+  versionId?: string;
   name: string;
   author: string;
   icon?: string;
@@ -652,6 +666,8 @@ export default function InstanceManager({
     mods: true, resourcepacks: true, shaders: true,
   });
   const loading = carregandoConteudos[activeFilter];
+  const [identificandoMods, setIdentificandoMods] = useState(false);
+  const [erroIdentificacaoMods, setErroIdentificacaoMods] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [carregandoMaisResultados, setCarregandoMaisResultados] = useState(false);
   const [temMaisResultados, setTemMaisResultados] = useState(true);
@@ -1015,7 +1031,9 @@ export default function InstanceManager({
       const formattedContent: InstalledMod[] = detalhes.map((detalhe) => {
         const fileName = detalhe.fileName;
         const registro = obterRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, fileName);
-        const cacheIdentificado = Boolean(registro?.projectId);
+        const identificacao = detalhe.identificacao;
+        const cacheIdentificado = Boolean(registro?.projectId) && (contentType !== "mods"
+          || identificacao?.projectId === registro?.projectId && identificacao?.source === registro?.source);
         const atualizacaoCacheValida = Boolean(
           registro?.atualizacaoVerificadaEm &&
             Date.now() - registro.atualizacaoVerificadaEm <= TTL_CACHE_ATUALIZACAO_MS
@@ -1030,11 +1048,12 @@ export default function InstanceManager({
               .replace(".disabled", "")
               .replace(/[-_]/g, " "),
           fileName,
-          version: detalhe.version || extractVersion(fileName),
+          version: identificacao?.version || detalhe.version || extractVersion(fileName),
           author: (cacheIdentificado ? registro?.author : detalhe.author) || "Unknown",
           icon: (cacheIdentificado ? registro?.icon : detalhe.icon) || registro?.icon,
-          projectId: registro?.projectId,
-          source: registro?.source,
+          versionId: identificacao?.versionId || registro?.versionId,
+          projectId: identificacao?.projectId || registro?.projectId,
+          source: identificacao?.source || registro?.source,
           projectType: registro?.projectType || tipoProjeto,
           latestVersion: registro?.latestVersion,
           updateAvailable: atualizacaoCacheValida ? registro?.updateAvailable : false,
@@ -1051,7 +1070,7 @@ export default function InstanceManager({
       if (contentType === "mods") {
         setInstalledMods(formattedContent);
         // Enriquecer os que estão sem metadata (em background)
-        void enrichModsWithModrinthData(formattedContent, "mod", cargaAtual);
+        void identificarModsInstalados(formattedContent, cargaAtual);
       } else if (contentType === "resourcepacks") {
         setInstalledResourcePacks(formattedContent);
         void enrichModsWithModrinthData(formattedContent, "resourcepack", cargaAtual);
@@ -1076,6 +1095,51 @@ export default function InstanceManager({
       && !revisaoInstalacaoAberta && !itemTrocaVersao && !modalExclusaoAberto && !editorIconeAberto,
     aoImportar: () => loadInstalledContent(activeFilter),
   });
+
+  const identificarModsInstalados = async (itens: InstalledMod[], cargaAtual: () => boolean) => {
+    setIdentificandoMods(true);
+    setErroIdentificacaoMods(null);
+    try {
+      const resultado = await invoke<ResultadoIdentificacaoMods>("identificar_mods_instalados", { instanceId });
+      if (!cargaAtual()) return;
+      const correspondencias = new Map(resultado.itens.map((item) => [item.fileName, item]));
+      const cache = lerCacheConteudoInstalado();
+      const identificados = itens.map((item): InstalledMod => {
+        const correspondencia = correspondencias.get(item.fileName);
+        if (!correspondencia) return item;
+        const mesmaVersao = item.projectId === correspondencia.projectId && item.source === correspondencia.source
+          && item.versionId === correspondencia.versionId;
+        const atualizado: InstalledMod = {
+          ...item,
+          projectId: correspondencia.projectId ?? undefined,
+          source: correspondencia.source ?? undefined,
+          version: correspondencia.version || item.version,
+          versionId: correspondencia.versionId ?? undefined,
+          latestVersion: mesmaVersao ? item.latestVersion : undefined,
+          updateAvailable: mesmaVersao ? item.updateAvailable : false,
+          updateFileName: mesmaVersao ? item.updateFileName : undefined,
+          updateDownloadUrl: mesmaVersao ? item.updateDownloadUrl : undefined,
+        };
+        definirRegistroCacheConteudo(cache, instanceId, "mod", item.fileName, {
+          ...atualizado,
+          projectType: "mod",
+          atualizacaoVerificadaEm: mesmaVersao
+            ? obterRegistroCacheConteudo(cache, instanceId, "mod", item.fileName)?.atualizacaoVerificadaEm
+            : undefined,
+        });
+        return atualizado;
+      });
+      salvarCacheConteudoInstalado(cache);
+      const porArquivo = new Map(identificados.map((item) => [item.fileName, item]));
+      setInstalledMods((atuais) => atuais.map((item) => porArquivo.get(item.fileName) ?? item));
+      setErroIdentificacaoMods(resultado.falhas.length > 0 ? resultado.falhas.join(" ") : null);
+      void verificarAtualizacoesConteudo(identificados, "mod", cargaAtual);
+    } catch (erro) {
+      if (cargaAtual()) setErroIdentificacaoMods(String(erro));
+    } finally {
+      if (cargaAtual()) setIdentificandoMods(false);
+    }
+  };
 
   const normalizarChaveProjeto = (valor: string): string =>
     valor
@@ -1373,6 +1437,7 @@ export default function InstanceManager({
       ...itemAnterior,
       fileName: nomeArquivo,
       version: versao,
+      versionId: undefined,
       enabled: true,
       latestVersion: atualizacaoConcluida ? versao : itemAnterior.latestVersion,
       updateAvailable: atualizacaoDisponivel,
@@ -1452,6 +1517,7 @@ export default function InstanceManager({
           name: item.name,
           author: item.author,
           icon: item.icon,
+          versionId: item.versionId,
           projectId: item.projectId,
           source: "curseforge",
           projectType: tipoProjeto,
@@ -1493,6 +1559,7 @@ export default function InstanceManager({
             name: item.name,
             author: item.author,
             icon: item.icon,
+            versionId: item.versionId,
             projectId: item.projectId,
             source: "modrinth",
             projectType: tipoProjeto,
@@ -1529,6 +1596,7 @@ export default function InstanceManager({
           name: itensAtualizados[i].name,
           author: itensAtualizados[i].author,
           icon: itensAtualizados[i].icon,
+          versionId: itensAtualizados[i].versionId,
           projectId: itensAtualizados[i].projectId,
           source: "modrinth",
           projectType: tipoProjeto,
@@ -1549,13 +1617,11 @@ export default function InstanceManager({
       salvarCacheConteudoInstalado(cacheConteudo);
     }
 
-    if (tipoProjeto === "mod") {
-      setInstalledMods(itensAtualizados);
-    } else if (tipoProjeto === "resourcepack") {
-      setInstalledResourcePacks(itensAtualizados);
-    } else {
-      setInstalledShaders(itensAtualizados);
-    }
+    const porArquivo = new Map(itensAtualizados.map((item) => [item.fileName, item]));
+    atualizarListaPorTipo(tipoProjeto, (atuais) => atuais.map((item) => {
+      const atualizado = porArquivo.get(item.fileName);
+      return atualizado ? { ...atualizado, enabled: item.enabled, updating: item.updating } : item;
+    }));
   };
 
   const loadWorlds = async () => {
@@ -2368,16 +2434,22 @@ export default function InstanceManager({
 
       if (consulta !== consultaVersoesConteudo.current) return;
       const loaderAtual = instanceDetails.loaderType || instanceDetails.mcType || "";
-      const compativeis = versoes.filter((versao) => versao.files?.length > 0
-        && versaoCompativelComInstancia(versao, instanceDetails.version, loaderAtual, filtro === "mods"));
+      const versoesCompativeis = versoes.filter((versao) =>
+        versaoCompativelComInstancia(versao, instanceDetails.version, loaderAtual, filtro === "mods"));
+      const compativeis = versoesCompativeis.filter((versao) => versao.files?.some((arquivo) => arquivo.url));
+      if (compativeis.length === 0 && versoesCompativeis.length > 0 && item.source === "curseforge") {
+        throw new Error("O CurseForge não disponibiliza download para terceiros. "
+          + "Baixe o mod no próprio CurseForge e importe para a instância.");
+      }
       if (compativeis.length === 0) {
         throw new Error("Nenhuma versão compatível foi encontrada para esta instância.");
       }
       setVersoesConteudo(compativeis);
       const nomeArquivoAtual = item.fileName.replace(/\.disabled$/i, "");
-      const atual = compativeis.find((versao) =>
-        versao.files.some((arquivo) => arquivo.filename === nomeArquivoAtual)
-      ) || compativeis.find((versao) => versao.version_number === item.version);
+      const atual = item.versionId
+        ? compativeis.find((versao) => versao.id === item.versionId)
+        : compativeis.find((versao) => versao.files.some((arquivo) => arquivo.filename === nomeArquivoAtual))
+          || compativeis.find((versao) => versao.version_number === item.version);
       const selecionada = atual || compativeis[0];
       setVersaoConteudoSelecionadaId(selecionada.id);
       setChangelogConteudo(mostrarChangelog ? atual || null : selecionada);
@@ -3207,6 +3279,20 @@ export default function InstanceManager({
                 )}
               </div>
 
+              {viewMode === "installed" && activeFilter === "mods" && (identificandoMods || erroIdentificacaoMods) && (
+                <div className={cn("flex min-w-0 items-center gap-3 py-2 text-xs text-white/60",
+                  erroIdentificacaoMods && !identificandoMods && "order-last basis-full")} role="status">
+                  {identificandoMods ? (
+                    <><Loader2 size={14} className="shrink-0 animate-spin" />Identificando mods…</>
+                  ) : (
+                    <>
+                      <span className="min-w-0 break-words text-amber-300">{erroIdentificacaoMods}</span>
+                      <button className="shrink-0 text-emerald-400 hover:text-emerald-300"
+                        onClick={() => void loadInstalledContent("mods", true)}>Tentar novamente</button>
+                    </>
+                  )}
+                </div>
+              )}
               {viewMode === "installed" ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -4362,7 +4448,9 @@ export default function InstanceManager({
                   {paginacaoVersoesConteudo.itensPagina.map((versao, indice) => {
                     const arquivo = versao.files.find((item) => item.primary) || versao.files[0];
                     const nomeAtual = itemTrocaVersao.fileName.replace(/\.disabled$/i, "");
-                    const atual = versao.version_number === itemTrocaVersao.version || arquivo?.filename === nomeAtual;
+                    const atual = itemTrocaVersao.versionId
+                      ? versao.id === itemTrocaVersao.versionId
+                      : versao.version_number === itemTrocaVersao.version || arquivo?.filename === nomeAtual;
                     const estabilidade = obterEstabilidadeVersao(versao);
                     return (
                       <label

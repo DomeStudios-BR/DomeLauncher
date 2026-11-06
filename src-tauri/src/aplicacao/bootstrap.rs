@@ -67,6 +67,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::mods_conteudo::get_installed_resourcepacks,
             super::mods_conteudo::get_installed_shaders,
             super::conteudo_instalado::obter_conteudo_instalado_detalhado,
+            super::identificacao_mods::identificar_mods_instalados,
             super::conteudo_local::importar_conteudo_local,
             super::configuracoes_jogo::obter_configuracoes_jogo,
             super::configuracoes_jogo::salvar_configuracoes_jogo,
