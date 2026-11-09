@@ -125,10 +125,17 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
             }
             const salvas = JSON.parse(sessionStorage.getItem("identificacoes-mods") || "{}");
             return listas[tipo].map((item) => ({ ...item,
-                identificacao: tipo === "mods" ? salvas[item.fileName] : undefined,
+                identificacao: tipo === "mods" && !new URLSearchParams(location.search).has("cacheInvalido")
+                    ? salvas[item.fileName] || (!new URLSearchParams(location.search).has("externos") ? {
+                        projectId: item.name, source: new URLSearchParams(location.search).get("fonte") || "modrinth",
+                        versionId: item.version === "4.0" ? "ultima" : item.name,
+                    } : undefined) : undefined,
             }));
         }
         if (comando === "identificar_mods_instalados") {
+            if (new URLSearchParams(location.search).has("cacheInvalido")) {
+                return { itens: [], falhas: ["Arquivo alterado e identificação indisponível."] };
+            }
             if (new URLSearchParams(location.search).has("restaurar")) {
                 throw new Error("Identificação remota indisponível");
             }

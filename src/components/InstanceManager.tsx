@@ -1030,10 +1030,13 @@ export default function InstanceManager({
       // Formatar lista
       const formattedContent: InstalledMod[] = detalhes.map((detalhe) => {
         const fileName = detalhe.fileName;
-        const registro = obterRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, fileName);
         const identificacao = detalhe.identificacao;
-        const cacheIdentificado = Boolean(registro?.projectId) && (contentType !== "mods"
-          || identificacao?.projectId === registro?.projectId && identificacao?.source === registro?.source);
+        const registroSalvo = obterRegistroCacheConteudo(cacheConteudo, instanceId, tipoProjeto, fileName);
+        const registro = contentType !== "mods" || (identificacao?.projectId
+          && identificacao.projectId === registroSalvo?.projectId
+          && identificacao.source === registroSalvo?.source
+          && identificacao.versionId === registroSalvo?.versionId) ? registroSalvo : null;
+        const cacheIdentificado = Boolean(registro?.projectId);
         const atualizacaoCacheValida = Boolean(
           registro?.atualizacaoVerificadaEm &&
             Date.now() - registro.atualizacaoVerificadaEm <= TTL_CACHE_ATUALIZACAO_MS

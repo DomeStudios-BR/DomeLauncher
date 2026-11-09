@@ -14,14 +14,28 @@ pub(crate) fn novo_destino(raiz: &Path) -> Result<PathBuf, String> {
 /// Após ativar a nova versão, retenha somente este backup da mesma instância.
 pub(crate) fn reter_atual(raiz: &Path, atual: &Path, instancia_id: &str) -> Result<(), String> {
     let pasta = pasta_backups(raiz)?;
-    let atual = super::validar_caminho_dentro_raiz(&pasta, atual)?;
+    reter_na_pasta(&pasta, atual, instancia_id)
+}
+
+/// Retenha o último backup após concluir uma troca de modpack ou atualização compartilhada.
+pub(crate) fn reter_atual_social(
+    raiz: &Path,
+    atual: &Path,
+    instancia_id: &str,
+) -> Result<(), String> {
+    let pasta = super::validar_caminho_dentro_raiz(raiz, &raiz.join(".social-backups"))?;
+    reter_na_pasta(&pasta, atual, instancia_id)
+}
+
+fn reter_na_pasta(pasta: &Path, atual: &Path, instancia_id: &str) -> Result<(), String> {
+    let atual = super::validar_caminho_dentro_raiz(pasta, atual)?;
     let bytes = std::fs::read(atual.join("instance.json")).map_err(|erro| erro.to_string())?;
     let instancia: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|erro| erro.to_string())?;
-    if atual.parent() != Some(pasta.as_path()) || instancia["id"].as_str() != Some(instancia_id) {
+    if atual.parent() != Some(pasta) || instancia["id"].as_str() != Some(instancia_id) {
         return Err("O backup atual não pertence à instância informada.".into());
     }
-    for entrada in std::fs::read_dir(&pasta).map_err(|erro| erro.to_string())? {
+    for entrada in std::fs::read_dir(pasta).map_err(|erro| erro.to_string())? {
         let entrada = entrada.map_err(|erro| erro.to_string())?;
         if !entrada
             .file_type()
@@ -31,7 +45,7 @@ pub(crate) fn reter_atual(raiz: &Path, atual: &Path, instancia_id: &str) -> Resu
         {
             continue;
         }
-        let caminho = super::validar_caminho_dentro_raiz(&pasta, &entrada.path())?;
+        let caminho = super::validar_caminho_dentro_raiz(pasta, &entrada.path())?;
         if caminho == atual {
             continue;
         }

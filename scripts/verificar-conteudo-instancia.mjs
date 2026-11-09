@@ -639,6 +639,14 @@ try {
     await pagina.getByRole('button', { name: /^Trocar versão de Externo 11([.]|$)/ }).click();
     await pagina.locator('input[name="versao-conteudo"][value="instalada-11"]:checked').waitFor();
     console.log('Identificação restaurada na reabertura: projeto, fonte e versão independem do cache da interface.');
+    await pagina.goto(urlBase + '?cacheInvalido', { waitUntil: 'domcontentloaded' });
+    await pagina.getByText('Arquivo alterado e identificação indisponível.', { exact: true }).waitFor();
+    for (const nome of ['Alfa', 'Beta']) {
+        assert.equal(await pagina.getByRole('button', {
+            name: new RegExp(`^Trocar versão de ${nome}([.]|$)`),
+        }).isEnabled(), false, 'Um arquivo sem vínculo nativo válido não pode herdar o projeto salvo pelo nome.');
+    }
+    console.log('Cache inválido: troca de arquivo com o mesmo nome não herda projeto nem atualização antigos.');
     assert.deepEqual(erros, []);
     console.log('Interface validada em 960×640 e escala 150%: reutilização das três categorias, carga pendente sem duplicação, atualização após importação, ordenação, versão, catálogo, seleção, opções, Vanilla e histórico entre projetos, telas e instâncias. IPC simulado.');
 } finally {

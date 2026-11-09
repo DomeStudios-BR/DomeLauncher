@@ -282,6 +282,8 @@ fn publicar_preparada(
         preparada.height = antiga.height;
         let pasta_backup = raiz.join(".social-backups");
         std::fs::create_dir_all(&pasta_backup).map_err(|e| e.to_string())?;
+        let pasta_backup =
+            crate::comandos::instancia_sistema::validar_caminho_dentro_raiz(&raiz, &pasta_backup)?;
         backup = Some(pasta_backup.join(uuid::Uuid::new_v4().to_string()));
     } else if raiz.join(&preparada.id).exists() {
         preparada.id = format!("{}-{}", preparada.id, uuid::Uuid::new_v4());
@@ -312,6 +314,13 @@ fn publicar_preparada(
             })?;
         }
         return Err(erro.to_string());
+    }
+    if let Some(backup) = &backup {
+        if let Err(erro) =
+            crate::aplicacao::backups_instancias::reter_atual_social(&raiz, backup, &preparada.id)
+        {
+            eprintln!("[Backups] {erro}");
+        }
     }
     Ok(preparada)
 }
@@ -380,6 +389,81 @@ fn publicar_nova_copia_modpack(
 mod testes {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn atualizacoes_retem_um_backup_por_instancia_somente_apos_sucesso() {
+        for arquivo in [
+            "compartilhamento.json",
+            "modpack-dome.json",
+            "modpack-publico.json",
+        ] {
+            let raiz = std::env::temp_dir().join(format!("dome-retencao-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&raiz).unwrap();
+            let _limpeza =
+                pacotes_sociais::PastaTemporaria::nova(raiz.parent().unwrap(), &raiz).unwrap();
+            let state = LauncherState {
+                account: Default::default(),
+                accounts: Default::default(),
+                processos_instancias: Default::default(),
+                instances_path: Arc::new(Mutex::new(raiz.clone())),
+            };
+            let mut antiga = instancia(&raiz, "original", b"inicial");
+            let backups = raiz.join(".social-backups");
+            let outra = instancia(&backups, &uuid::Uuid::new_v4().to_string(), b"outra");
+            let desconhecida = backups.join("manual");
+            std::fs::create_dir(&desconhecida).unwrap();
+            let mut anterior = VinculoSocial {
+                compartilhamento_id: "projeto".into(),
+                api_base_url: "fonte".into(),
+                versao: 1,
+                arquivos: pacotes_sociais::previa(&antiga).unwrap().arquivos,
+                substituir_alteracoes_locais: true,
+            };
+            for numero in 1..=3 {
+                let preparada = instancia(&raiz.join(".preparacao"), "nova", &[numero]);
+                let novo = VinculoSocial {
+                    arquivos: pacotes_sociais::previa(&preparada).unwrap().arquivos,
+                    ..anterior.clone()
+                };
+                antiga = publicar_preparada(
+                    &state,
+                    preparada,
+                    Some((antiga, anterior)),
+                    Some(novo.clone()),
+                    arquivo,
+                )
+                .unwrap();
+                anterior = novo;
+                assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 3);
+                assert_eq!(
+                    std::fs::read(antiga.path.join("mods/exemplo.jar")).unwrap(),
+                    [numero]
+                );
+                assert!(outra.path.exists());
+                assert!(desconhecida.exists());
+            }
+            let preparada = instancia(&raiz.join(".preparacao"), "falha", b"novo");
+            let novo = VinculoSocial {
+                arquivos: pacotes_sociais::previa(&preparada).unwrap().arquivos,
+                ..anterior.clone()
+            };
+            std::fs::remove_file(preparada.path.join("instance.json")).unwrap();
+            std::fs::create_dir(preparada.path.join("instance.json")).unwrap();
+            assert!(publicar_preparada(
+                &state,
+                preparada,
+                Some((antiga.clone(), anterior)),
+                Some(novo),
+                arquivo,
+            )
+            .is_err());
+            assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 3);
+            assert_eq!(
+                std::fs::read(antiga.path.join("mods/exemplo.jar")).unwrap(),
+                [3]
+            );
+        }
+    }
 
     #[test]
     fn publica_copias_dome_numeradas_sem_substituir_a_original() {

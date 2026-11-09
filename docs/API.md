@@ -160,6 +160,9 @@ de integridade contra alterações que conservem todos os metadados.
 correspondem ao registro nativo. Assim, projeto, fonte e versão instalada são restaurados na leitura local,
 antes da consulta de identificação, inclusive sem o cache do WebView. A interface preserva nome/autor/ícone
 já salvos quando correspondem ao mesmo vínculo. Substituir o JAR invalida a restauração daquele arquivo.
+A interface só reaproveita projeto, versão, ícone e atualização salvos quando projeto, fonte e versão
+correspondem à identificação nativa atual. Sem essa confirmação, uma falha de rede não restaura o vínculo
+de um arquivo anterior com o mesmo nome.
 A interface reaproveita a lista ao alternar abas; importações e novas leituras conferem os metadados locais.
 O ID exato seleciona a versão instalada mesmo
 quando o JAR foi renomeado. Reconhecer um arquivo CurseForge sem download não libera sua distribuição:
@@ -207,6 +210,10 @@ O backup completo fica em `.dome-backups-instancias`, dentro da raiz das instân
 Após a ativação, somente o backup mais recente de cada instância é mantido. A remoção de um backup anterior
 ocorre apenas após sucesso; falhas de limpeza são registradas e a próxima troca tenta a retenção novamente.
 Backups legados em `backups/instances` não são apagados automaticamente.
+Trocas de modpack e atualizações compartilhadas também retêm somente o último backup de cada instância
+em `.social-backups`, após ativar a preparação. A retenção preserva outras instâncias e pastas desconhecidas;
+uma falha anterior à ativação não remove o backup existente. Falhas de limpeza são registradas e a próxima
+atualização tenta novamente.
 Migração e troca de modpack nas três fontes compartilham uma reserva pelo caminho normalizado da instância.
 Os mods desativados são reconciliados por identidade após instalar todas as dependências, evitando reativação
 conforme a ordem das instalações.
