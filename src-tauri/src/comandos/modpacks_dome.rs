@@ -1,5 +1,6 @@
 use super::{criar_cliente_http_launcher, extrair_mensagem_erro_launcher, normalizar_api_base_url};
 use super::{pacotes_sociais, vinculos_sociais};
+use crate::comandos::progresso_operacao::{Acompanhamento, CanalProgresso};
 use crate::launcher::LauncherState;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -8,27 +9,6 @@ use tauri::State;
 use tokio::io::AsyncWriteExt;
 
 const LIMITE_PUBLICACAO: u64 = 64 * 1024 * 1024;
-
-fn versao_compativel_com_instancia(
-    versao: &Value,
-    versao_minecraft: &str,
-    loader: Option<&str>,
-) -> bool {
-    let loader = loader.unwrap_or("vanilla").trim();
-    let minecraft_compativel = versao["game_versions"].as_array().is_some_and(|versoes| {
-        versoes
-            .iter()
-            .any(|versao| versao.as_str() == Some(versao_minecraft))
-    });
-    let loader_compativel = versao["loaders"].as_array().is_some_and(|loaders| {
-        loaders.iter().any(|valor| {
-            valor
-                .as_str()
-                .is_some_and(|valor| valor.trim().eq_ignore_ascii_case(loader))
-        })
-    });
-    minecraft_compativel && loader_compativel
-}
 
 pub(super) fn normalizar_base_modpacks(valor: &str) -> Result<String, String> {
     let base = normalizar_api_base_url(valor)?;
@@ -117,50 +97,6 @@ fn normalizar_pacote(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 mod testes {
     use super::*;
     use std::io::Write;
-
-    #[test]
-    fn atualizacao_aceita_rotulos_locais_dos_loaders_publicados() {
-        for (publicado, local) in [
-            ("fabric", "Fabric"),
-            ("forge", "Forge"),
-            ("neoforge", "NeoForge"),
-            ("vanilla", "Vanilla"),
-        ] {
-            let versao = json!({ "game_versions": ["1.20.1"], "loaders": [publicado] });
-            assert!(versao_compativel_com_instancia(
-                &versao,
-                "1.20.1",
-                Some(local)
-            ));
-            assert!(!versao_compativel_com_instancia(
-                &versao,
-                "1.21.1",
-                Some(local)
-            ));
-            assert!(!versao_compativel_com_instancia(
-                &versao,
-                "1.20.1",
-                Some("quilt")
-            ));
-        }
-    }
-
-    #[test]
-    fn atualizacao_consulta_toda_a_lista_de_compatibilidade() {
-        let versao = json!({
-            "game_versions": ["1.20", "1.20.1"],
-            "loaders": ["forge", "fabric"]
-        });
-        assert!(versao_compativel_com_instancia(
-            &versao,
-            "1.20.1",
-            Some("Fabric")
-        ));
-        assert!(!versao_compativel_com_instancia(&versao, "1.20.1", None));
-        assert!(!versao_compativel_com_instancia(&json!({}), "1.20.1", None));
-        let vanilla = json!({ "game_versions": ["1.20.1"], "loaders": ["vanilla"] });
-        assert!(versao_compativel_com_instancia(&vanilla, "1.20.1", None));
-    }
 
     #[test]
     fn restringe_origem_antes_de_acessar_a_sessao_protegida() {
@@ -485,7 +421,10 @@ pub async fn instalar_modpack_dome(
     instancia_id: Option<String>,
     substituir_alteracoes_locais: bool,
     state: State<'_, LauncherState>,
+    progresso: CanalProgresso,
 ) -> Result<String, String> {
+    let acompanhamento = Acompanhamento::novo(progresso.0);
+    acompanhamento.informar("Consultando modpack Dome", 0, 1);
     validar_id(&projeto_id)?;
     validar_id(&versao_id)?;
     let base = normalizar_base_modpacks(&api_base_url)?;
@@ -507,7 +446,7 @@ pub async fn instalar_modpack_dome(
         .as_array()
         .and_then(|lista| lista.iter().find(|item| item["id"] == versao_id))
         .ok_or("Versão não encontrada.")?;
-    let existente = if let Some(id) = instancia_id {
+    let mut existente = if let Some(id) = instancia_id {
         let instancia = crate::comandos::instancia_sistema::obter_instancia_por_id(&state, &id)?;
         if state.obter_pid_instancia(&id).is_some() {
             return Err("Feche o jogo antes de atualizar.".into());
@@ -519,17 +458,19 @@ pub async fn instalar_modpack_dome(
         if vinculo.compartilhamento_id != projeto_id || vinculo.api_base_url != base {
             return Err("Esta instância não pertence ao modpack escolhido.".into());
         }
-        if !versao_compativel_com_instancia(
-            versao,
-            &instancia.version,
-            instancia.loader_type.as_deref(),
-        ) {
-            return Err("A atualização exige a mesma versão do Minecraft e o mesmo loader.".into());
-        }
         Some((instancia, vinculo))
     } else {
         None
     };
+    let _reserva = existente
+        .as_ref()
+        .map(|(instancia, _)| {
+            crate::aplicacao::reserva_instancia::ReservaInstancia::nova(
+                &state.caminho_instancias()?,
+                &instancia.path,
+            )
+        })
+        .transpose()?;
     let resposta = criar_cliente_http_launcher()?
         .get(format!(
             "{base}/api/launcher/modpacks/{projeto_id}/versoes/{versao_id}/arquivo"
@@ -549,12 +490,16 @@ pub async fn instalar_modpack_dome(
     let mut arquivo = tokio::fs::File::create(&caminho)
         .await
         .map_err(|e| e.to_string())?;
+    let total_bytes = resposta.content_length().unwrap_or(0);
     let mut stream = resposta.bytes_stream();
     let mut hash = Sha512::new();
     let mut tamanho = 0u64;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.without_url().to_string())?;
         tamanho += chunk.len() as u64;
+        acompanhamento
+            .faixa(5, 40)
+            .informar("Baixando modpack Dome", tamanho, total_bytes);
         if tamanho > LIMITE_PUBLICACAO {
             return Err("Download excede o limite do beta.".into());
         }
@@ -569,6 +514,7 @@ pub async fn instalar_modpack_dome(
         return Err("A integridade do download não confere.".into());
     }
     let raiz = state.caminho_instancias()?.join(".social-staging");
+    acompanhamento.faixa(5, 40).concluir("Pacote Dome recebido");
     std::fs::create_dir_all(&raiz).map_err(|e| e.to_string())?;
     let pasta_preparacao = raiz.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&pasta_preparacao).map_err(|e| e.to_string())?;
@@ -593,17 +539,6 @@ pub async fn instalar_modpack_dome(
     )?;
     if let Some(nome) = projeto["title"].as_str() {
         preparada.name = nome.to_string();
-        if existente.is_none() {
-            let instancias = state.get_instances().map_err(|e| e.to_string())?;
-            let mut numero = 2;
-            while instancias
-                .iter()
-                .any(|instancia| instancia.name == preparada.name)
-            {
-                preparada.name = format!("{nome} ({numero})");
-                numero += 1;
-            }
-        }
     }
     pacotes_sociais::restaurar_referencias(
         &caminho,
@@ -611,6 +546,9 @@ pub async fn instalar_modpack_dome(
         &crate::launcher::pasta_cache_social(),
     )
     .await?;
+    acompanhamento
+        .faixa(40, 80)
+        .concluir("Conteúdo Dome preparado");
     if existente.is_some() {
         for arquivo in [
             "options.txt",
@@ -652,6 +590,17 @@ pub async fn instalar_modpack_dome(
         processos_instancias: state.processos_instancias.clone(),
         instances_path: state.instances_path.clone(),
     };
+    if let Some((instancia, anterior)) = &mut existente {
+        for arquivo in pacotes_sociais::arquivos_modpack(instancia)? {
+            if !anterior
+                .arquivos
+                .iter()
+                .any(|a| a.caminho == arquivo.caminho)
+            {
+                anterior.arquivos.push(arquivo);
+            }
+        }
+    }
     let instalada = tauri::async_runtime::spawn_blocking(move || {
         vinculos_sociais::publicar_modpack_local(&estado_final, preparada, existente, vinculo)
     })
@@ -664,5 +613,6 @@ pub async fn instalar_modpack_dome(
     }))
     .map_err(|e| e.to_string())?;
     crate::comandos::modpacks::save_modpack_info(state, instalada.id.clone(), info).await?;
+    acompanhamento.concluir("Modpack Dome instalado");
     Ok(instalada.id)
 }

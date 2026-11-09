@@ -8,3 +8,4 @@ target
 .env*
 !.env.example
 testing/
+output/verificacao-projetos/

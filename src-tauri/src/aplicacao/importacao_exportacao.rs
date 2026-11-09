@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 use tauri::Emitter;
 
@@ -38,6 +38,8 @@ pub(crate) struct InstanciaImportavelExterna {
     pub icone: Option<String>,
     pub caminho_origem: String,
     pub caminho_jogo: String,
+    #[serde(default)]
+    pub modpack: Option<crate::comandos::modpacks::ModpackInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -148,6 +150,7 @@ fn listar_instancias_prism_em(
         let caminho_jogo = detectar_caminho_jogo(&caminho_origem);
         resultados.push(InstanciaImportavelExterna {
             id_externo: format!("prism:{}", caminho_origem.to_string_lossy()),
+            modpack: None,
             launcher: "prism".to_string(),
             nome,
             versao_minecraft,
@@ -221,6 +224,7 @@ fn listar_instancias_modrinth_por_profile_json(
 
         resultados.push(InstanciaImportavelExterna {
             id_externo: format!("modrinth:{}", caminho_origem.to_string_lossy()),
+            modpack: crate::comandos::modpacks::identificar_modpack_externo(&caminho_origem),
             launcher: "modrinth".to_string(),
             nome,
             versao_minecraft,
@@ -281,6 +285,7 @@ fn montar_instancia_modrinth(
 
     Some(InstanciaImportavelExterna {
         id_externo: format!("modrinth:{}", caminho_origem.to_string_lossy()),
+        modpack: None,
         launcher: "modrinth".to_string(),
         nome,
         versao_minecraft: versao_minecraft.trim().to_string(),
@@ -316,7 +321,12 @@ fn consultar_instancias_modrinth(
     Some(
         linhas
             .flatten()
-            .filter_map(|registro| montar_instancia_modrinth(pasta_base, registro))
+            .filter_map(|registro: RegistroInstanciaModrinth| {
+                let caminho_banco = registro.0.clone();
+                let mut instancia = montar_instancia_modrinth(pasta_base, registro)?;
+                instancia.modpack = consultar_vinculo_modrinth(conexao, &caminho_banco, &instancia);
+                Some(instancia)
+            })
             .collect(),
     )
 }
@@ -354,6 +364,30 @@ fn listar_instancias_modrinth_por_banco(
         FROM profiles
     ";
     consultar_instancias_modrinth(&conexao, pasta_base, CONSULTA_LEGADA).unwrap_or_default()
+}
+
+fn consultar_vinculo_modrinth(
+    conexao: &rusqlite::Connection,
+    caminho: &str,
+    instancia: &InstanciaImportavelExterna,
+) -> Option<crate::comandos::modpacks::ModpackInfo> {
+    for sql in [
+        "SELECT l.modrinth_project_id, l.modrinth_version_id FROM instances i
+            JOIN instance_links l ON l.instance_id = i.id WHERE i.path = ?1 AND l.link_kind = 'modrinth_modpack'",
+        "SELECT linked_project_id, linked_version_id FROM profiles WHERE path = ?1",
+    ] {
+        let resultado = conexao.query_row(sql, [caminho], |linha| Ok((
+            linha.get::<_, Option<String>>(0)?, linha.get::<_, Option<String>>(1)?,
+        )));
+        if let Ok((Some(projeto), Some(versao))) = resultado {
+            if projeto.is_empty() || versao.is_empty() { continue; }
+            return serde_json::from_value(serde_json::json!({
+                "projectId": projeto, "versionId": versao, "source": "modrinth", "name": instancia.nome,
+                "author": "", "slug": "", "installedVersion": "", "icon": instancia.icone,
+            })).ok();
+        }
+    }
+    None
 }
 
 fn listar_instancias_modrinth() -> Vec<InstanciaImportavelExterna> {
@@ -501,6 +535,7 @@ fn listar_instancias_curseforge_em(
 
         resultados.push(InstanciaImportavelExterna {
             id_externo: format!("curseforge:{}", caminho_origem.to_string_lossy()),
+            modpack: crate::comandos::modpacks::identificar_modpack_externo(&caminho_origem),
             launcher: "curseforge".to_string(),
             nome,
             versao_minecraft,
@@ -931,7 +966,7 @@ fn gerar_candidatos_versao_fabric(sugestao: &str, versao_minecraft: &str) -> Vec
     candidatos
 }
 
-async fn criar_instancia_base_importada(
+pub(crate) async fn criar_instancia_base_importada(
     state: &LauncherState,
     nome_instancia: &str,
     versao_minecraft: &str,
@@ -1200,11 +1235,13 @@ pub(crate) async fn importar_instancias_externas(
             Ok(instancia_criada) => {
                 let caminho_jogo = std::path::PathBuf::from(instancia.caminho_jogo.trim());
                 let caminho_destino = instancia_criada.path.clone();
+                let origem_metadados = std::path::PathBuf::from(&instancia.caminho_origem);
+                let modpack_importado = instancia.modpack.clone();
                 let id_externo = instancia.id_externo.clone();
                 let app_copia = app.clone();
                 let mensagem_copia = tauri::async_runtime::spawn_blocking(move || {
                     let mut ultima_porcentagem = None;
-                    copiar_conteudo_instancia_importada(
+                    let total = copiar_conteudo_instancia_importada(
                         &caminho_jogo,
                         &caminho_destino,
                         |arquivos_copiados, total_arquivos| {
@@ -1224,7 +1261,13 @@ pub(crate) async fn importar_instancias_externas(
                                 total_arquivos,
                             );
                         },
-                    )
+                    )?;
+                    if let Some(info) = modpack_importado.or_else(|| {
+                        crate::comandos::modpacks::identificar_modpack_externo(&origem_metadados)
+                    }) {
+                        crate::comandos::modpacks::salvar_info_em_pasta(&caminho_destino, info)?;
+                    }
+                    Ok::<_, String>(total)
                 })
                 .await
                 .map_err(|e| format!("Falha interna ao copiar a instância importada: {}", e))?;
@@ -1696,6 +1739,36 @@ async fn importar_instancia_em_estado_com_opcoes(
 #[cfg(test)]
 mod testes_progresso_importacao {
     use super::{calcular_porcentagem, copiar_conteudo_instancia_importada};
+
+    #[test]
+    fn recupera_vinculo_modrinth_explicito_no_banco_atual_e_legado() {
+        let instancia: super::InstanciaImportavelExterna =
+            serde_json::from_value(serde_json::json!({
+                "idExterno": "modrinth:perfil", "launcher": "modrinth", "nome": "Minha aventura",
+                "versaoMinecraft": "1.21.1", "loaderType": "Fabric", "loaderVersion": "0.16.0",
+                "caminhoOrigem": "perfil", "caminhoJogo": "perfil"
+            }))
+            .unwrap();
+        for atual in [true, false] {
+            let conexao = rusqlite::Connection::open_in_memory().unwrap();
+            if atual {
+                conexao.execute_batch("CREATE TABLE instances (id TEXT, path TEXT);
+                    CREATE TABLE instance_links (instance_id TEXT, link_kind TEXT,
+                        modrinth_project_id TEXT, modrinth_version_id TEXT);
+                    INSERT INTO instances VALUES ('id', 'perfil');
+                    INSERT INTO instance_links VALUES ('id', 'modrinth_modpack', 'projeto', 'versao');").unwrap();
+            } else {
+                conexao.execute_batch("CREATE TABLE profiles (path TEXT, linked_project_id TEXT, linked_version_id TEXT);
+                    INSERT INTO profiles VALUES ('perfil', 'projeto', 'versao');").unwrap();
+            }
+            let info = super::consultar_vinculo_modrinth(&conexao, "perfil", &instancia).unwrap();
+            assert_eq!(info.project_id, "projeto");
+            assert_eq!(info.version_id, "versao");
+            assert!(
+                super::consultar_vinculo_modrinth(&conexao, "outra-pasta", &instancia).is_none()
+            );
+        }
+    }
 
     #[test]
     fn calcula_porcentagem_por_arquivos_e_limita_em_cem() {

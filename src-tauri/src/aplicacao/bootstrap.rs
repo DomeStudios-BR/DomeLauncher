@@ -12,6 +12,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .manage(LauncherState::new())
+        .manage(super::diagnostico_crash::EstadoDiagnosticos::default())
         .manage(crate::comandos::presenca_discord::EstadoDiscordPresence::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -26,7 +27,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::importacao_exportacao::listar_instancias_importaveis,
             super::importacao_exportacao::importar_instancias_externas,
             super::instancias_criacao::create_instance,
-            super::instancias_criacao::migrar_versao_instancia,
+            super::migracao_instancias::migrar_versao_instancia,
             super::sincronizacao_instancias::aplicar_sincronizacao_instancias,
             super::lancamento_jogo::launch_instance,
             super::lancamento_jogo::launch_instance_to_server,
@@ -56,6 +57,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::mods_conteudo::buscar_detalhes_projeto_curseforge,
             super::mods_conteudo::listar_versoes_projeto_curseforge,
             super::mods_conteudo::obter_versao_projeto_curseforge,
+            super::mods_conteudo::obter_changelog_versao_curseforge,
             super::mods_conteudo::planejar_instalacao_conteudo,
             super::mods_conteudo::install_mod,
             super::mods_conteudo::install_project_file,
@@ -65,6 +67,10 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::mods_conteudo::get_installed_resourcepacks,
             super::mods_conteudo::get_installed_shaders,
             super::conteudo_instalado::obter_conteudo_instalado_detalhado,
+            super::identificacao_mods::identificar_mods_instalados,
+            super::conteudo_local::importar_conteudo_local,
+            super::configuracoes_jogo::obter_configuracoes_jogo,
+            super::configuracoes_jogo::salvar_configuracoes_jogo,
             // Gerenciamento de instâncias
             super::instancias_basicas::get_instance_details,
             super::instancias_basicas::listar_capturas_perfil,
@@ -85,6 +91,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             crate::comandos::instancia_sistema::abrir_pasta_mundo,
             // Gerenciamento de logs
             crate::comandos::logs_instancia::get_log_files,
+            super::diagnostico_crash::obter_diagnostico_crash,
             crate::comandos::logs_instancia::get_log_content,
             crate::comandos::logs_instancia::delete_log_file,
             // Remoção de mods
@@ -98,6 +105,9 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             // Modpacks
             crate::comandos::modpacks::save_modpack_info,
             crate::comandos::modpacks::install_modpack_files,
+            crate::comandos::projetos_conteudo::listar_conteudos_versao_projeto,
+            crate::comandos::atualizacao_modpacks::trocar_versao_modpack_publico,
+            crate::comandos::modpacks::requisitos::obter_requisitos_modpack,
             crate::comandos::social_launcher::modpacks_dome::gerenciar_modpacks_dome,
             crate::comandos::social_launcher::modpacks_dome::enviar_midia_modpack_dome,
             crate::comandos::social_launcher::modpacks_dome::publicar_versao_modpack_dome,

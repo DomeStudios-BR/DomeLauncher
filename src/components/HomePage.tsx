@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Globe,
   Loader2,
@@ -13,6 +13,7 @@ import type { Instance } from "../hooks/useLauncher";
 import type { MinecraftAccount } from "../App";
 import { cn } from "../lib/utils";
 import { MotdMinecraft } from "./MotdMinecraft";
+import { reconciliarLista } from "../lib/reconciliarLista";
 
 const NoticiasMinecraft = lazy(() =>
   import("./NoticiasMinecraft").then((modulo) => ({ default: modulo.NoticiasMinecraft }))
@@ -37,6 +38,25 @@ interface MundoInfo {
   difficulty?: string;
   lastPlayed?: string;
   sizeOnDisk?: string;
+}
+
+interface OcultacaoVolteAJogar {
+    chave: string;
+    ultimaPartida: string;
+}
+
+function carregarOcultacoesVolteAJogar(): OcultacaoVolteAJogar[] {
+    try {
+        const salvos: unknown = JSON.parse(localStorage.getItem("dome:volte-a-jogar:ocultos") || "[]");
+        if (!Array.isArray(salvos)) return [];
+
+        return salvos.filter((item: unknown): item is OcultacaoVolteAJogar =>
+            typeof item === "object" && item !== null
+            && "chave" in item && typeof item.chave === "string"
+            && "ultimaPartida" in item && typeof item.ultimaPartida === "string");
+    } catch {
+        return [];
+    }
 }
 
 interface ServidorDome {
@@ -168,7 +188,7 @@ export default function HomePage({
   return (
     <div className="home-dome-figma space-y-8">
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-between gap-3"
       >
@@ -212,7 +232,7 @@ export default function HomePage({
       )}
 
       <motion.section
-        initial={{ opacity: 0, y: 10 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
         className="min-h-[calc(100vh-100px)] space-y-3"
@@ -504,18 +524,12 @@ function SecaoVolteAJogar({
       ? `mundo-${item.instancia.id}-${item.mundo.path}`
       : `servidor-${item.instancia.id}-${item.servidor.address}-${item.servidor.port}`;
 
-  const [itensVolteAJogar, setItensVolteAJogar] = useState<ItemVolteAJogar[]>(
+  const [itensDisponiveis, setItensDisponiveis] = useState<ItemVolteAJogar[]>(
     []
   );
+  const itensAtuais = useRef<ItemVolteAJogar[]>([]);
   const [menuItemAberto, setMenuItemAberto] = useState<string | null>(null);
-  const [itensOcultos, setItensOcultos] = useState<Set<string>>(() => {
-    try {
-      const salvos = JSON.parse(localStorage.getItem("dome:volte-a-jogar:ocultos") || "[]");
-      return new Set(Array.isArray(salvos) ? salvos.filter((item) => typeof item === "string") : []);
-    } catch {
-      return new Set();
-    }
-  });
+  const [itensOcultos, setItensOcultos] = useState<OcultacaoVolteAJogar[]>(carregarOcultacoesVolteAJogar);
   const [statusServidores, setStatusServidores] = useState<
     Record<
       string,
@@ -534,30 +548,36 @@ function SecaoVolteAJogar({
   const chaveServidor = (instanciaId: string, servidor: ServerInfo) =>
     `${instanciaId}:${servidor.address}:${servidor.port}`;
 
+  const itensVolteAJogar = useMemo(() => itensDisponiveis.filter((item) => !itensOcultos.some((ocultacao) =>
+    ocultacao.chave === chaveItemVolteAJogar(item)
+      && ocultacao.ultimaPartida === item.instancia.last_played
+  )).slice(0, 6), [itensDisponiveis, itensOcultos]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("dome:volte-a-jogar:ocultos", JSON.stringify(itensOcultos));
+    } catch (erro) {
+      console.warn("Não foi possível salvar os cartões removidos de Volte a jogar:", erro);
+    }
+  }, [itensOcultos]);
+
   useEffect(() => {
     let cancelado = false;
+    let consultaAtual = 0;
 
     const carregarItens = async () => {
+      const consulta = ++consultaAtual;
       const gruposPorInstancia = await Promise.all(
         instances.map(async (instancia) => {
-          let servidores: ServerInfo[] = [];
-          let mundos: MundoInfo[] = [];
-
-          try {
-            servidores = await invoke<ServerInfo[]>("get_servers", {
-              instanceId: instancia.id,
-            });
-          } catch {
-            // Ignorar erro de leitura de servidores.
-          }
-
-          try {
-            mundos = await invoke<MundoInfo[]>("get_worlds", {
-              instanceId: instancia.id,
-            });
-          } catch {
-            // Ignorar erro de leitura de mundos.
-          }
+          const anteriores = itensAtuais.current.filter((item) => item.instancia.id === instancia.id);
+          const [leituraServidores, leituraMundos] = await Promise.allSettled([
+            invoke<ServerInfo[]>("get_servers", { instanceId: instancia.id }),
+            invoke<MundoInfo[]>("get_worlds", { instanceId: instancia.id }),
+          ]);
+          const servidores = leituraServidores.status === "fulfilled" ? leituraServidores.value
+            : anteriores.flatMap((item) => item.tipo === "servidor" ? [item.servidor] : []);
+          const mundos = leituraMundos.status === "fulfilled" ? leituraMundos.value
+            : anteriores.flatMap((item) => item.tipo === "mundo" ? [item.mundo] : []);
 
           const itensDaInstancia: ItemVolteAJogar[] = [];
 
@@ -590,28 +610,33 @@ function SecaoVolteAJogar({
       const itensFallback = itens.filter((item) => item.tipo === "instancia");
       const itensOrdenados = [...itensPrioritarios, ...itensFallback];
 
-      if (!cancelado) {
-        setItensVolteAJogar(
-          itensOrdenados.filter((item) => !itensOcultos.has(chaveItemVolteAJogar(item))).slice(0, 6)
-        );
+      if (!cancelado && consulta === consultaAtual) {
+        itensAtuais.current = reconciliarLista(itensAtuais.current, itensOrdenados, chaveItemVolteAJogar);
+        setItensDisponiveis(itensAtuais.current);
       }
     };
 
-    carregarItens();
+    const atualizarAoRetornar = () => {
+      if (document.visibilityState === "visible") void carregarItens();
+    };
+
+    void carregarItens();
+    window.addEventListener("focus", atualizarAoRetornar);
+    document.addEventListener("visibilitychange", atualizarAoRetornar);
 
     return () => {
       cancelado = true;
+      window.removeEventListener("focus", atualizarAoRetornar);
+      document.removeEventListener("visibilitychange", atualizarAoRetornar);
     };
-  }, [instances, itensOcultos]);
+  }, [instances]);
 
   const removerDeVolteAJogar = (item: ItemVolteAJogar) => {
     const chave = chaveItemVolteAJogar(item);
-    setItensOcultos((anteriores) => {
-      const atualizados = new Set(anteriores);
-      atualizados.add(chave);
-      localStorage.setItem("dome:volte-a-jogar:ocultos", JSON.stringify([...atualizados]));
-      return atualizados;
-    });
+    setItensOcultos((anteriores) => [
+      ...anteriores.filter((ocultacao) => ocultacao.chave !== chave),
+      { chave, ultimaPartida: item.instancia.last_played ?? "" },
+    ]);
     setMenuItemAberto(null);
   };
 
@@ -677,7 +702,7 @@ function SecaoVolteAJogar({
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: 10 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.06 }}
       className="space-y-3"
@@ -697,7 +722,7 @@ function SecaoVolteAJogar({
           return (
             <motion.article
               key={chaveItem}
-              initial={{ opacity: 0, y: 8 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.04 + indice * 0.03 }}
               onClick={() => onSelectInstance(instancia)}

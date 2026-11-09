@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronDown, Pencil, Search } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
+import { criarCanalProgresso } from "../hooks/useProgressoOperacao";
 import { cn } from "../lib/utils";
 import EditorIconeModal, { gerarIconeAleatorio } from "./editor-icone/EditorIconeModal";
 import {
@@ -216,7 +217,12 @@ export default function CreateInstanceModal({
 
     // Criar em background
     try {
-      const params: any = { name, version, mcType: loader, icon: customIcon || "/dome-launcher.ico" };
+      const params: Record<string, unknown> = {
+        name, version, mcType: loader, icon: customIcon || "/dome-launcher.ico",
+        progresso: criarCanalProgresso((dados) => updateCreatingInstance(instanceId, {
+          progress: dados.porcentagem, message: dados.etapa, progressoIndeterminado: false,
+        })),
+      };
       if (loader !== "vanilla") {
         params.loaderType = loader;
         params.loaderVersion = loaderVersion;
@@ -224,8 +230,8 @@ export default function CreateInstanceModal({
 
       updateCreatingInstance(instanceId, {
         status: "downloading",
-        progress: 30,
-        progressoIndeterminado: true,
+        progress: 0,
+        progressoIndeterminado: false,
         message: "Preparando arquivos da instância...",
       });
 

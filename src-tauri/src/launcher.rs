@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
+use tauri::Manager;
 
 static BLOQUEIO_ARQUIVOS_INSTANCIA: Mutex<()> = Mutex::new(());
 
@@ -711,16 +712,20 @@ impl LauncherState {
         instance_id: &str,
         mut processo: std::process::Child,
         app: tauri::AppHandle,
+        sessao_logs: crate::aplicacao::diagnostico_crash::SessaoLogs,
     ) {
         let instance_id = instance_id.to_string();
         let pid = processo.id();
-        let inicio = std::time::Instant::now();
 
         let Ok(instances_path) = self.caminho_instancias() else {
             eprintln!("[Instâncias] Falha ao acessar a pasta durante o monitoramento.");
             return;
         };
         self.registrar_processo_instancia(&instance_id, pid);
+        let diagnostico = app
+            .state::<crate::aplicacao::diagnostico_crash::EstadoDiagnosticos>()
+            .iniciar(&instance_id, pid);
+        let _ = app.emit("dome:diagnostico-crash", diagnostico);
         let processos_instancias = Arc::clone(&self.processos_instancias);
 
         tauri::async_runtime::spawn_blocking(move || {
@@ -729,20 +734,23 @@ impl LauncherState {
             loop {
                 let terminou = match processo.try_wait() {
                     Ok(Some(saida)) => {
-                        if !saida.success() && inicio.elapsed() < std::time::Duration::from_secs(60)
-                        {
-                            let _ = app.emit(
-                                "dome:falha-inicializacao-instancia",
-                                serde_json::json!({
-                                    "instanceId": &instance_id,
-                                    "codigoSaida": saida.code(),
-                                }),
-                            );
-                        }
+                        let diagnostico =
+                            sessao_logs.analisar(&instance_id, Some(saida.success()), saida.code());
+                        crate::aplicacao::diagnostico_crash::publicar_diagnostico(
+                            &app,
+                            pid,
+                            diagnostico,
+                        );
                         true
                     }
                     Err(erro) => {
                         eprintln!("[Launch] Falha ao monitorar processo {}: {}", pid, erro);
+                        let diagnostico = sessao_logs.analisar(&instance_id, None, None);
+                        crate::aplicacao::diagnostico_crash::publicar_diagnostico(
+                            &app,
+                            pid,
+                            diagnostico,
+                        );
                         true
                     }
                     Ok(None) => false,

@@ -366,6 +366,18 @@ async fn launch_instance_com_opcoes(
 
     let mut comando_java = std::process::Command::new(&java_exe);
     comando_java.args(&args).current_dir(&instance_path);
+    let sessao_logs = super::diagnostico_crash::SessaoLogs::preparar(&instance_path);
+    let console = preparar_console_jogo(&instance_path)?;
+    comando_java.stdout(
+        console
+            .try_clone()
+            .map_err(|erro| format!("Falha ao preparar log do Java: {}", erro))?,
+    );
+    comando_java.stderr(
+        console
+            .try_clone()
+            .map_err(|erro| format!("Falha ao preparar log do Java: {}", erro))?,
+    );
     let processo_iniciado: std::process::Child;
 
     #[cfg(windows)]
@@ -386,6 +398,8 @@ async fn launch_instance_com_opcoes(
 
                 let mut comando_fallback = std::process::Command::new(&java_exe);
                 comando_fallback.args(&args).current_dir(&instance_path);
+                comando_fallback.stdout(console.try_clone().map_err(|erro| erro.to_string())?);
+                comando_fallback.stderr(console.try_clone().map_err(|erro| erro.to_string())?);
                 comando_fallback.spawn().map_err(|e| {
                     format!(
                         "Falha ao iniciar Java ({}): {}. Verifique suas configurações de Java.",
@@ -412,9 +426,22 @@ async fn launch_instance_com_opcoes(
         })?;
     }
 
-    state.iniciar_monitoramento_processo(&id, processo_iniciado, app);
+    state.iniciar_monitoramento_processo(&id, processo_iniciado, app, sessao_logs);
 
     Ok(())
+}
+
+fn preparar_console_jogo(instancia: &std::path::Path) -> Result<std::fs::File, String> {
+    let pasta = instancia.join("logs");
+    std::fs::create_dir_all(&pasta)
+        .map_err(|erro| format!("Falha ao preparar pasta de logs: {}", erro))?;
+    validar_caminho_dentro_raiz(instancia, &pasta)?;
+    let caminho = pasta.join("dome-console.log");
+    if caminho.exists() {
+        validar_caminho_dentro_raiz(instancia, &caminho)?;
+    }
+    std::fs::File::create(caminho)
+        .map_err(|erro| format!("Falha ao preparar log do Java: {}", erro))
 }
 
 #[tauri::command]

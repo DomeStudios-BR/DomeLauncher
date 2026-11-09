@@ -10,6 +10,16 @@ export interface DadosInstanciaImportavel {
     icone?: string;
     caminhoOrigem: string;
     caminhoJogo: string;
+    modpack?: {
+        projectId: string;
+        versionId: string;
+        source: string;
+        name: string;
+        author: string;
+        slug: string;
+        installedVersion: string;
+        icon?: string;
+    } | null;
 }
 
 export type EtapaImportacaoInstancia = "aguardando" | "preparando" | "copiando" | "concluida";

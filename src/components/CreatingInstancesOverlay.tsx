@@ -108,9 +108,7 @@ export default function CreatingInstancesOverlay() {
                 </div>
                 <p className="text-[10px] text-white/30 mt-1 flex items-center gap-1">
                   <Download size={10} />
-                  {instance.progressoIndeterminado
-                    ? "Processando..."
-                    : `${Math.round(instance.progress)}%`}
+                  {Math.floor(instance.progress)}%
                 </p>
               </div>
             )}

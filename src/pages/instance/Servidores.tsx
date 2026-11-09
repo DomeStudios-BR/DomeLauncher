@@ -19,6 +19,7 @@ import { AreaRolagemPersonalizada } from "../../components/scroll/AreaRolagemPer
 
 interface ServidoresProps {
     instanceId: string;
+    ativa?: boolean;
 }
 
 interface ServidorInfo {
@@ -55,7 +56,7 @@ function mensagemErro(erro: unknown): string {
     return erro instanceof Error ? erro.message : String(erro);
 }
 
-export default function Servidores({ instanceId }: ServidoresProps) {
+export default function Servidores({ instanceId, ativa = true }: ServidoresProps) {
     const [servidores, setServidores] = useState<ServidorInfo[]>([]);
     const [estados, setEstados] = useState<Record<string, EstadoServidor>>({});
     const [carregando, setCarregando] = useState(true);
@@ -95,7 +96,7 @@ export default function Servidores({ instanceId }: ServidoresProps) {
     }, [carregarServidores]);
 
     useEffect(() => {
-        if (!modalAberto) return;
+        if (!modalAberto || !ativa) return;
 
         const fecharComEscape = (evento: KeyboardEvent) => {
             if (evento.key === "Escape" && !salvando) setModalAberto(false);
@@ -103,7 +104,7 @@ export default function Servidores({ instanceId }: ServidoresProps) {
 
         window.addEventListener("keydown", fecharComEscape);
         return () => window.removeEventListener("keydown", fecharComEscape);
-    }, [modalAberto, salvando]);
+    }, [ativa, modalAberto, salvando]);
 
     const abrirModal = () => {
         setNome("");

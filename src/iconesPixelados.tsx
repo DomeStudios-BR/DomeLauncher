@@ -50,6 +50,7 @@ const {
     salvar,
     pesquisar,
     configuracoes,
+    engrenagem,
     escudo,
     brilho,
     estrela,
@@ -140,6 +141,7 @@ export const Rocket = criarIcone(foguete);
 export const Save = criarIcone(salvar);
 export const Search = criarIcone(pesquisar);
 export const Settings = criarIcone(configuracoes);
+export const Engrenagem = criarIcone(engrenagem);
 export const Shield = criarIcone(escudo);
 export const ShieldCheck = criarIcone(escudo);
 export const Sparkles = criarIcone(brilho);

@@ -1,5 +1,5 @@
 import { obterUrlCabecaMinecraft } from "./lib/avatarMinecraft";
-import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   AlertCircle,
@@ -28,6 +28,10 @@ import CreatingInstancesOverlay from "./components/CreatingInstancesOverlay";
 import IndicadorExclusoesInstancias from "./components/IndicadorExclusoesInstancias";
 import { useLauncher, type Instance } from "./hooks/useLauncher";
 import { useBreakpointXl } from "./hooks/useBreakpointXl";
+import { useHistoricoNavegacao } from "./hooks/useHistoricoNavegacao";
+import type {
+  ControleNavegacaoInstancia, EstadoNavegacaoInstancia, RestauracaoNavegacaoInstancia,
+} from "./components/InstanceManager";
 import type { AbaOrigemProjeto, ProjetoConteudo } from "./components/ProjetoDetalheModal";
 import HomePage from "./components/HomePage";
 import { LimiteErroSkins } from "./components/LimiteErroSkins";
@@ -41,6 +45,7 @@ import {
 } from "./lib/eventosTransferenciaSocial";
 import { solicitarNavegacaoInterna } from "./lib/navegacaoInterna";
 import { EVENTO_ABRIR_MEUS_MODPACKS } from "./lib/eventosModpacksDome";
+import { EVENTO_DIAGNOSTICO_CRASH, type DiagnosticoCrash } from "./lib/diagnosticoCrash";
 
 const carregarSkinManager = () =>
   import("./components/SkinManager").then((modulo) => ({ default: modulo.SkinManager }));
@@ -201,7 +206,15 @@ const CHAVE_ULTIMA_INSTANCIA = "dome:ultima-instancia-iniciada";
 const CHAVE_NOVIDADES_PENDENTES = "dome:novidades-pendentes";
 const CHAVE_ULTIMA_NOVIDADE_EXIBIDA = "dome:ultima-novidade-exibida";
 const INTERVALO_VERIFICACAO_INSTANCIAS_MS = 2 * 1000;
-const LIMITE_HISTORICO_NAVEGACAO = 50;
+interface DestinoNavegacao {
+  aba: string;
+  instanciaId: string;
+  estadoInstancia: EstadoNavegacaoInstancia | null;
+  projeto: ProjetoConteudo | null;
+  origemProjeto: AbaOrigemProjeto;
+  atividadeSocial: AmigoSocial | null;
+  perfilId: string | null;
+}
 type TipoExplorePresence = "modpack" | "mod" | "resourcepack" | "shader";
 type FonteExplorePresence = "modrinth" | "curseforge" | "dome" | "ambas";
 const TITULOS_ABA: Record<string, string> = {
@@ -221,10 +234,6 @@ export default function App() {
   const { instances, account: contaInicial, loading: carregandoLauncher, launch, launchServer, remove, fetchInstances } = useLauncher();
   const [activeTab, setActiveTab] = useState("home");
   const [perfilVisualizadoId, setPerfilVisualizadoId] = useState<string | null>(null);
-  const [historicoNavegacao, setHistoricoNavegacao] = useState<{
-    anteriores: string[];
-    proximas: string[];
-  }>({ anteriores: [], proximas: [] });
   const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -267,6 +276,9 @@ export default function App() {
   const ultimaAssinaturaPresence = useRef<string>("");
   const primeiraAba = useRef(true);
   const menuContaRef = useRef<HTMLDivElement | null>(null);
+  const gerenciadorInstanciaRef = useRef<ControleNavegacaoInstancia | null>(null);
+  const [navegacaoInstanciaRestaurada, setNavegacaoInstanciaRestaurada] =
+    useState<RestauracaoNavegacaoInstancia | null>(null);
 
   useEffect(() => {
     if (!carregandoLauncher) {
@@ -278,20 +290,19 @@ export default function App() {
     let ativo = true;
     let cancelar: (() => void) | undefined;
 
-    void listen<{ instanceId: string; codigoSaida: number | null }>(
-      "dome:falha-inicializacao-instancia",
+    void listen<DiagnosticoCrash>(
+      EVENTO_DIAGNOSTICO_CRASH,
       (evento) => {
-        const codigo = evento.payload.codigoSaida;
-        alert(
-          `A instância ${evento.payload.instanceId} encerrou logo após iniciar` +
-          `${codigo === null ? "" : ` (código ${codigo})`}. Consulte os Logs da instância para mais detalhes.`
-        );
+        if (evento.payload.estado === "crash") {
+          alert(`A instância ${evento.payload.instanceId} encerrou inesperadamente. ${evento.payload.resumo} ` +
+            "Consulte as evidências na aba Logs da instância.");
+        }
         void fetchInstances();
       }
     ).then((desinscrever) => {
       if (ativo) cancelar = desinscrever;
       else desinscrever();
-    }).catch((erro) => console.warn("Falha ao acompanhar a inicialização do jogo:", erro));
+    }).catch((erro) => console.warn("Falha ao acompanhar o diagnóstico do jogo:", erro));
 
     return () => {
       ativo = false;
@@ -310,15 +321,35 @@ export default function App() {
     alterarAba("home");
   }, [activeTab, alterarAba, user]);
 
-  const navegarParaAba = useCallback((aba: string) => {
-    if (aba === activeTab) return;
+  const capturarNavegacao = useCallback((): DestinoNavegacao => ({
+    aba: activeTab, instanciaId: managedInstanceId,
+    estadoInstancia: gerenciadorInstanciaRef.current?.capturar() ?? null,
+    projeto: projetoDetalhe, origemProjeto: abaOrigemProjeto,
+    atividadeSocial: atividadeSocialDetalhe, perfilId: perfilVisualizadoId,
+  }), [activeTab, managedInstanceId, projetoDetalhe, abaOrigemProjeto, atividadeSocialDetalhe, perfilVisualizadoId]);
 
-    setHistoricoNavegacao((historico) => ({
-      anteriores: [...historico.anteriores, activeTab].slice(-LIMITE_HISTORICO_NAVEGACAO),
-      proximas: [],
-    }));
+  const restaurarNavegacao = useCallback((destino: DestinoNavegacao) => {
+    setManagedInstanceId(destino.instanciaId);
+    setProjetoDetalhe(destino.projeto);
+    setAbaOrigemProjeto(destino.origemProjeto);
+    setAtividadeSocialDetalhe(destino.atividadeSocial);
+    setPerfilVisualizadoId(destino.perfilId);
+    setNavegacaoInstanciaRestaurada(destino.estadoInstancia ? {
+      instanciaId: destino.instanciaId, estado: destino.estadoInstancia,
+    } : null);
+    alterarAba(destino.aba);
+  }, [alterarAba]);
+
+  const { historico: historicoNavegacao, registrarSaida, voltar, avancar } =
+    useHistoricoNavegacao(capturarNavegacao, restaurarNavegacao);
+
+  const navegarParaAba = useCallback((aba: string, registrarNaMesmaAba = false) => {
+    if (aba === "profile" && !user) return;
+    if (aba === activeTab && !registrarNaMesmaAba) return;
+
+    registrarSaida();
     alterarAba(aba);
-  }, [activeTab, alterarAba]);
+  }, [activeTab, alterarAba, registrarSaida, user]);
 
   useEffect(() => {
     const abrir = () => navegarParaAba("meus-modpacks");
@@ -328,31 +359,13 @@ export default function App() {
 
   const voltarNavegacao = useCallback(() => {
     if (solicitarNavegacaoInterna(-1)) return;
-
-    const destino = historicoNavegacao.anteriores[
-      historicoNavegacao.anteriores.length - 1
-    ];
-    if (!destino) return;
-
-    setHistoricoNavegacao((historico) => ({
-      anteriores: historico.anteriores.slice(0, -1),
-      proximas: [activeTab, ...historico.proximas].slice(0, LIMITE_HISTORICO_NAVEGACAO),
-    }));
-    alterarAba(destino);
-  }, [activeTab, alterarAba, historicoNavegacao.anteriores]);
+    voltar();
+  }, [voltar]);
 
   const avancarNavegacao = useCallback(() => {
     if (solicitarNavegacaoInterna(1)) return;
-
-    const [destino] = historicoNavegacao.proximas;
-    if (!destino) return;
-
-    setHistoricoNavegacao((historico) => ({
-      anteriores: [...historico.anteriores, activeTab].slice(-LIMITE_HISTORICO_NAVEGACAO),
-      proximas: historico.proximas.slice(1),
-    }));
-    alterarAba(destino);
-  }, [activeTab, alterarAba, historicoNavegacao.proximas]);
+    avancar();
+  }, [avancar]);
 
   useEffect(() => {
     const atualizarPublicacoes = (evento: Event) => {
@@ -1067,7 +1080,7 @@ export default function App() {
     setAbaOrigemProjeto(origem);
     setAtividadeSocialDetalhe(null);
     setProjetoDetalhe(projeto);
-    navegarParaAba("project-detail");
+    navegarParaAba("project-detail", true);
   }, [navegarParaAba]);
 
   const abrirTrocaVersaoModpack = useCallback((instancia: Instance, projeto: ProjetoConteudo) => {
@@ -1079,10 +1092,11 @@ export default function App() {
   }, [navegarParaAba]);
 
   const abrirGerenciadorInstancia = useCallback((instancia: Instance) => {
+    setNavegacaoInstanciaRestaurada(null);
     setProjetoDetalhe(null);
     setAtividadeSocialDetalhe(null);
     setManagedInstanceId(instancia.id);
-    navegarParaAba("instance-manager");
+    navegarParaAba("instance-manager", true);
   }, [navegarParaAba]);
 
   const abrirAtividadeAmigo = useCallback(async (amigo: AmigoSocial) => {
@@ -1458,12 +1472,11 @@ export default function App() {
         >
           <Suspense fallback={<EsqueletoAba />}>
             <AnimatePresence mode="popLayout">
-            {activeTab === "home" && (
+            <Activity key="home" mode={activeTab === "home" ? "visible" : "hidden"}>
               <motion.div
                 key="home"
-                initial={{ opacity: 0, y: 10 }}
+                initial={false}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
                 className="h-full"
               >
                 <HomePage
@@ -1514,7 +1527,7 @@ export default function App() {
                   )}
                 />
               </motion.div>
-            )}
+            </Activity>
 
             {activeTab === "instances" && (
               <motion.div
@@ -1568,10 +1581,10 @@ export default function App() {
               </motion.div>
             )}
 
-            {activeTab === "explore" && (
+            <Activity key="explore" mode={activeTab === "explore" ? "visible" : "hidden"}>
               <motion.div
                 key="explore"
-                initial={{ opacity: 0, x: 10 }}
+                initial={false}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
               >
@@ -1592,7 +1605,7 @@ export default function App() {
                   }}
                 />
               </motion.div>
-            )}
+            </Activity>
 
             {activeTab === "meus-modpacks" && (
               <motion.div key="meus-modpacks" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
@@ -1648,8 +1661,9 @@ export default function App() {
                       : "Instalar"
                   }
                   onVoltar={() => {
-                    navegarParaAba(abaOrigemProjeto);
-                    setProjetoDetalhe(null);
+                    const anterior = historicoNavegacao.anteriores[historicoNavegacao.anteriores.length - 1];
+                    if (anterior?.aba === abaOrigemProjeto) voltarNavegacao();
+                    else navegarParaAba(abaOrigemProjeto);
                   }}
                 />
               </motion.div>
@@ -1735,7 +1749,12 @@ export default function App() {
                 )}
               >
                 <InstanceManager
+                  key={managedInstanceId}
+                  ref={gerenciadorInstanciaRef}
                   instanceId={managedInstanceId}
+                  navegacaoAtiva={activeTab === "instance-manager"}
+                  navegacaoRestaurada={navegacaoInstanciaRestaurada}
+                  onRegistrarNavegacao={registrarSaida}
                   onBack={() => navegarParaAba("home")}
                   onAbrirSocial={() => setSocialDrawerAberto(true)}
                   onAbrirProjeto={(projeto) => abrirProjeto("instance-manager", projeto)}
@@ -1761,13 +1780,11 @@ export default function App() {
               exit={{ y: 80, opacity: 0 }}
               className={cn(
                 "absolute bottom-0 left-0 right-0 p-6 transition-[padding]",
-                activeTab === "instances" || activeTab === "home"
-                  ? "pointer-events-auto"
-                  : "pointer-events-none",
+                "pointer-events-none",
                 ehTelaXl && chatSocialAberto && "pr-[384px]"
               )}
             >
-              <div className="pointer-events-auto mx-auto max-w-xl">
+              <div className="mx-auto max-w-xl">
                 <div className="flex items-center gap-3 border border-white/15 bg-[#101010] p-2">
                   <div className="ml-1 h-10 w-10 shrink-0 overflow-hidden border border-white/10">
                     <img src={instanciaBarra.icon} alt="" className="h-full w-full object-cover" />
@@ -1797,7 +1814,7 @@ export default function App() {
                     disabled={instanciaSendoEncerrada === instanciaBarra.id}
                     title={instanciaBarraEmExecucao ? "Encerrar o Minecraft" : undefined}
                     className={cn(
-                      "group flex items-center gap-3 border px-5 py-2.5 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-60",
+                      "group pointer-events-auto flex items-center gap-3 border px-5 py-2.5 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-60",
                       instanciaBarraEmExecucao
                         ? "cursor-pointer border-emerald-400/25 bg-emerald-400/10 text-emerald-300 hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300"
                         : user
@@ -1877,7 +1894,7 @@ export default function App() {
                   iconeAtividadeLocal={instanciaAtiva?.icon}
                   className={cn(
                     "h-full min-h-0 shrink-0",
-                    ehTelaXl && (painelSocialRecuado ? "w-[72px]" : "w-[340px]"),
+                    ehTelaXl && "w-full",
                     !ehTelaXl && "w-[340px]",
                     !ehTelaXl && "max-w-[92vw]"
                   )}

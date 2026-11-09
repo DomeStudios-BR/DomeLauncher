@@ -16,6 +16,8 @@ pub(crate) struct ConteudoInstaladoDetalhado {
     pub enabled: bool,
     pub identificadores: Vec<String>,
     pub dependencias: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identificacao: Option<super::identificacao_mods::ModIdentificado>,
 }
 
 #[derive(Default)]
@@ -43,13 +45,27 @@ pub(crate) async fn obter_conteudo_instalado_detalhado(
         _ => return Err("Tipo de conteúdo inválido.".to_string()),
     };
 
-    let caminho_pasta = instancia.path.join(pasta);
+    let raiz = state.caminho_instancias()?;
+    let caminho_instancia = validar_caminho_dentro_raiz(&raiz, &instancia.path)?;
+    let caminho_pasta = caminho_instancia.join(pasta);
     if !caminho_pasta.is_dir() {
         return Ok(Vec::new());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
-        listar_conteudo_da_pasta(&caminho_pasta, &tipo, aceita_diretorio)
+        let mut conteudos = listar_conteudo_da_pasta(&caminho_pasta, &tipo, aceita_diretorio)?;
+        if tipo == "mods" {
+            let nomes = conteudos
+                .iter()
+                .map(|item| item.file_name.clone())
+                .collect::<Vec<_>>();
+            let mut identificacoes =
+                super::identificacao_mods::restaurar_identificacoes(&caminho_instancia, &nomes);
+            for conteudo in &mut conteudos {
+                conteudo.identificacao = identificacoes.remove(&conteudo.file_name);
+            }
+        }
+        Ok(conteudos)
     })
     .await
     .map_err(|e| format!("Falha ao inspecionar conteúdo instalado: {}", e))?
@@ -107,6 +123,7 @@ fn inspecionar_conteudo(
         enabled: habilitado,
         identificadores: metadados.identificadores,
         dependencias: metadados.dependencias,
+        identificacao: None,
     }
 }
 
@@ -169,6 +186,13 @@ fn ler_metadados_mod<R: Read + Seek>(
         .or_else(|| ler_toml_mod(compactado, "META-INF/mods.toml"))
         .or_else(|| ler_forge_legado(compactado))
         .unwrap_or_else(|| ler_manifesto(compactado))
+}
+
+pub(super) fn ler_identidade_mod<R: Read + Seek>(
+    compactado: &mut zip::ZipArchive<R>,
+) -> (Option<String>, Vec<String>) {
+    let metadados = ler_metadados_mod(compactado, true);
+    (metadados.nome, metadados.identificadores)
 }
 
 fn ler_fabric<R: Read + Seek>(

@@ -9,6 +9,7 @@ export interface Instance {
   version: string;
   mc_type: string;
   loader_type?: string;
+  loader_version?: string;
   icon?: string;
   last_played?: string;
   tempo_total_jogado_segundos?: number;

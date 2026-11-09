@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useModpacksInstalados } from "../hooks/useModpacksInstalados";
 import { useFavoritosProjetos } from "../hooks/useFavoritosProjetos";
 import type { Instance } from "../hooks/useLauncher";
 import { obterTotalFavoritos } from "../services/favoritosProjetos";
@@ -24,6 +23,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { PublicadorModpacks } from "./modpacks/PublicadorModpacks";
 import { consultarModpacksDome } from "../services/modpacksDome";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
+import { DataLancamento } from "./DataLancamento";
+import { VersaoModpackBusca } from "./VersaoModpackBusca";
 
 type ContentType = "modpack" | "mod" | "resourcepack" | "shader";
 type Source = "modrinth" | "curseforge" | "dome";
@@ -59,6 +60,7 @@ interface SearchResult {
   description: string;
   icon_url?: string;
   author: string;
+  dataLancamento?: string | null;
   downloads?: number;
   follows?: number;
   project_type: TipoProjetoConteudo;
@@ -74,6 +76,7 @@ interface VarianteResultadoBusca {
   description: string;
   icon_url?: string;
   author: string;
+  dataLancamento?: string | null;
   downloads?: number;
   follows?: number;
   project_type: TipoProjetoConteudo;
@@ -89,6 +92,9 @@ interface ResultadoBuscaApi {
   iconUrl?: string;
   icon_url?: string;
   author?: string;
+  dataLancamento?: string | null;
+  date_created?: string | null;
+  date_published?: string | null;
   downloadCount?: number;
   download_count?: number;
   downloads?: number;
@@ -161,6 +167,7 @@ const mapearResultadoBusca = (
     description: String(item.description || ""),
     icon_url: item.iconUrl || item.icon_url || undefined,
     author: String(item.author || "Desconhecido"),
+    dataLancamento: item.dataLancamento ?? item.date_published ?? item.date_created,
     downloads:
       typeof item.downloadCount === "number"
         ? item.downloadCount
@@ -239,7 +246,6 @@ interface ExploreProps {
 }
 
 export default function Explore({
-  instancias,
   instalacoesEmAndamento,
   onAtualizarPresencaExplore,
   onAbrirProjeto,
@@ -268,7 +274,6 @@ export default function Explore({
   const [erroCategorias, setErroCategorias] = useState(false);
   const [ordenacao, setOrdenacao] = useState<OrdenacaoBusca>("relevancia");
 
-  const modpacksInstalados = useModpacksInstalados(instancias);
   const { contagens: contagensFavoritos, revisao: revisaoFavoritos } = useFavoritosProjetos(
     results.flatMap((item) => item.fontes.map((source) => ({
       source, projectId: item.variantes[source]?.id || item.id,
@@ -1277,8 +1282,6 @@ export default function Explore({
             className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3"
           >
           {results.map((item, index) => {
-            const instalado = item.project_type === "modpack" && item.fontes.some((source) =>
-              modpacksInstalados.projetos.has(`${source}:${item.variantes[source]?.id || item.id}`));
             const instalando = item.fontes.some((source) =>
               instalacoesEmAndamento.includes(`${source}:${item.variantes[source]?.id || item.id}`));
             const totalFavoritosDome = item.fontes.reduce((total, source) => {
@@ -1352,6 +1355,12 @@ export default function Explore({
               <p className="text-sm text-white/60 line-clamp-3 leading-relaxed">
                 {item.description}
               </p>
+              {item.project_type === "modpack" && (
+                <VersaoModpackBusca projeto={{
+                  ...(item.variantes[FONTE_PRIORITARIA] || item.variantes.curseforge || item),
+                  icon_url: item.icon_url || "",
+                }} />
+              )}
 
               <div className="mt-auto flex flex-wrap items-center gap-3 border-t border-white/5 pt-4">
                 <div className="flex shrink-0 gap-4 text-white/40">
@@ -1372,6 +1381,9 @@ export default function Explore({
                   )}
                 </div>
 
+                <DataLancamento data={item.dataLancamento}
+                    className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] font-bold text-white/60" />
+
                 <div className="ml-auto flex shrink-0 gap-2">
                   <button
                     onClick={(e) => {
@@ -1388,17 +1400,16 @@ export default function Explore({
                     <Heart size={16} fill={favorites.has(item.id) ? "currentColor" : "none"} />
                   </button>
                   <button
-                    disabled={instalado || instalando
-                      || (item.project_type === "modpack" && modpacksInstalados.carregando)}
+                    disabled={instalando}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (instalado || instalando) return;
+                      if (instalando) return;
                       abrirDetalheProjeto(item, true);
                     }}
                     className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-50 disabled:cursor-default disabled:active:scale-100"
                   >
-                    {instalado ? <Check size={14} /> : <Download size={14} />}
-                    {instalado ? "Instalado" : instalando ? "Instalando..." : "Instalar"}
+                    <Download size={14} />
+                    {instalando ? "Instalando..." : "Instalar"}
                   </button>
                 </div>
               </div>

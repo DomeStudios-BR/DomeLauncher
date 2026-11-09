@@ -9,6 +9,7 @@ import {
 } from "../../iconesPixelados";
 import { cn } from "../../lib/utils";
 import { organizarPlanoInstalacao } from "../../lib/planoInstalacaoConteudo";
+import { formatarMotivoFalha, type FalhaPlanoInstalacaoConteudo } from "../../lib/filaInstalacaoConteudo";
 
 export interface ItemPlanoInstalacaoConteudo {
     chave: string;
@@ -23,12 +24,14 @@ export interface ItemPlanoInstalacaoConteudo {
     tipoProjeto: "mod" | "resourcepack" | "shader";
     requeridoPor: string[];
     selecionado: boolean;
+    selecoes: string[];
 }
 
 interface ProgressoInstalacao {
     atual: number;
     total: number;
     nome: string;
+    porcentagem?: number;
 }
 
 interface RevisaoInstalacaoConteudoProps {
@@ -37,6 +40,7 @@ interface RevisaoInstalacaoConteudoProps {
     carregando: boolean;
     instalando: boolean;
     erro?: string | null;
+    falhas?: FalhaPlanoInstalacaoConteudo[];
     progresso?: ProgressoInstalacao | null;
     onFechar: () => void;
     onConfirmar: () => void;
@@ -96,6 +100,7 @@ export default function RevisaoInstalacaoConteudo({
     carregando,
     instalando,
     erro,
+    falhas = [],
     progresso,
     onFechar,
     onConfirmar,
@@ -183,6 +188,24 @@ export default function RevisaoInstalacaoConteudo({
                         </div>
                     ) : (
                         <div className="space-y-4">
+                            {falhas.length > 0 && (
+                                <section aria-label="Conteúdos pendentes" className="space-y-2 p-1">
+                                    {falhas.map((falha) => (
+                                        <article
+                                            key={falha.chave}
+                                            className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3"
+                                        >
+                                            <p className="flex items-center gap-2 text-sm font-bold text-amber-200">
+                                                <AlertCircle size={15} aria-hidden="true" />
+                                                {falha.nome}
+                                            </p>
+                                            <p className="mt-1 break-words text-xs text-amber-100/65">
+                                                {formatarMotivoFalha(falha)}
+                                            </p>
+                                        </article>
+                                    ))}
+                                </section>
+                            )}
                             {gruposPlano.map((grupo) => (
                                 <section
                                     key={grupo.tipoProjeto}
@@ -337,12 +360,13 @@ export default function RevisaoInstalacaoConteudo({
                                 "text-[11px] text-white/45"
                             )}>
                                 <span className="truncate">Baixando {progresso.nome}</span>
-                                <span>{progresso.atual}/{progresso.total}</span>
+                                <span>{Math.floor(progresso.porcentagem ?? progresso.atual / progresso.total * 100)}%
+                                    {" · "}{progresso.atual}/{progresso.total}</span>
                             </div>
                             <div className="h-1.5 overflow-hidden rounded-full bg-white/8">
                                 <div
                                     className="h-full bg-emerald-400 transition-[width] duration-300"
-                                    style={{ width: `${(progresso.atual / progresso.total) * 100}%` }}
+                                    style={{ width: `${progresso.porcentagem ?? progresso.atual / progresso.total * 100}%` }}
                                 />
                             </div>
                         </div>

@@ -331,6 +331,7 @@ pub(crate) async fn delete_instance(
 pub(crate) fn abrir_pasta_instancia(
     state: State<'_, LauncherState>,
     instance_id: String,
+    tipo_conteudo: Option<String>,
 ) -> Result<(), String> {
     let caminho = caminho_instancia_por_id(&state, &instance_id)?;
     if !caminho.is_dir() {
@@ -340,7 +341,33 @@ pub(crate) fn abrir_pasta_instancia(
         ));
     }
 
-    open::that(caminho).map_err(|e| format!("Erro ao abrir pasta da instância: {}", e))
+    let destino = match tipo_conteudo {
+        Some(tipo) => preparar_pasta_conteudo_instancia(&caminho, &tipo)?,
+        None => caminho,
+    };
+    open::that(destino).map_err(|e| format!("Erro ao abrir pasta da instância: {}", e))
+}
+
+fn preparar_pasta_conteudo_instancia(
+    raiz: &std::path::Path,
+    tipo_conteudo: &str,
+) -> Result<std::path::PathBuf, String> {
+    let nome = match tipo_conteudo {
+        "mods" => "mods",
+        "resourcepacks" => "resourcepacks",
+        "shaders" => "shaderpacks",
+        _ => return Err("Categoria de conteúdo inválida.".to_string()),
+    };
+    let destino = raiz.join(nome);
+    if !destino.exists() {
+        std::fs::create_dir(&destino)
+            .map_err(|e| format!("Não foi possível criar a pasta de conteúdo: {e}"))?;
+    }
+    let validado = validar_caminho_dentro_raiz(raiz, &destino)?;
+    if !validado.is_dir() {
+        return Err("O destino do conteúdo não é uma pasta.".to_string());
+    }
+    Ok(validado)
 }
 
 #[tauri::command]
@@ -378,7 +405,19 @@ pub(crate) async fn update_instance_name(
     instance_id: String,
     new_name: String,
 ) -> Result<(), String> {
-    let instance_path = caminho_instancia_por_id(&state, &instance_id)?;
+    atualizar_nome_instancia(&state, &instance_id, &new_name)
+}
+
+fn atualizar_nome_instancia(
+    state: &LauncherState,
+    instance_id: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    let nome = new_name.trim();
+    if nome.is_empty() {
+        return Err("O nome da instância não pode ficar vazio.".into());
+    }
+    let instance_path = caminho_instancia_por_id(state, instance_id)?;
     let config_path = instance_path.join("instance.json");
 
     if !config_path.exists() {
@@ -391,7 +430,7 @@ pub(crate) async fn update_instance_name(
     let mut instance: Instance = serde_json::from_str(&content)
         .map_err(|e| format!("Erro ao parsear instance.json: {}", e))?;
 
-    instance.name = new_name;
+    instance.name = nome.to_string();
     if let Some(pasta_nome) = instance_path.file_name().and_then(|n| n.to_str()) {
         instance.id = pasta_nome.to_string();
     }
@@ -561,10 +600,7 @@ pub(crate) async fn rename_instance_folder(
     instance_id: String,
     new_folder_name: String,
 ) -> Result<String, String> {
-    let id_base = normalizar_nome_pasta_instancia(&new_folder_name);
-    if id_base.is_empty() {
-        return Err("Nome da pasta não pode ser vazio".to_string());
-    }
+    let id_base = super::nomes_instancias::preparar_nome_pasta(&new_folder_name)?;
 
     let pasta_atual = caminho_instancia_por_id(&state, &instance_id)?;
     if !pasta_atual.exists() {
@@ -576,7 +612,6 @@ pub(crate) async fn rename_instance_folder(
         if config_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
                 if let Ok(mut instance) = serde_json::from_str::<Instance>(&content) {
-                    instance.name = new_folder_name;
                     instance.id = id_base.clone();
                     instance.path = pasta_atual.clone();
                     if let Ok(new_content) = serde_json::to_string_pretty(&instance) {
@@ -589,13 +624,13 @@ pub(crate) async fn rename_instance_folder(
     }
 
     let mut novo_id = id_base.clone();
-    let mut contador = 2;
+    let mut contador = 1;
     let pasta_nova = loop {
         let candidata = state.caminho_instancias()?.join(&novo_id);
         if !candidata.exists() {
             break candidata;
         }
-        novo_id = format!("{}_{}", id_base, contador);
+        novo_id = format!("{} ({})", id_base, contador);
         contador += 1;
     };
 
@@ -614,7 +649,6 @@ pub(crate) async fn rename_instance_folder(
                 if let Ok(mut instance) = serde_json::from_str::<Instance>(&content) {
                     instance.id = novo_id.clone();
                     instance.path = pasta_nova.clone();
-                    instance.name = new_folder_name.clone();
 
                     if let Ok(new_content) = serde_json::to_string_pretty(&instance) {
                         if std::fs::write(&config_path, new_content).is_ok() {
@@ -638,9 +672,80 @@ pub(crate) async fn rename_instance_folder(
 
 #[cfg(test)]
 mod testes {
-    use super::{
-        calcular_porcentagem_exclusao, normalizar_nome_pasta_instancia, validar_icone_instancia,
-    };
+    use super::*;
+
+    #[test]
+    fn prepara_pastas_de_conteudo_preservando_arquivos_e_recusando_categorias_invalidas() {
+        let raiz =
+            std::env::temp_dir().join(format!("dome-pastas-conteudo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(raiz.join("mods")).unwrap();
+        let _limpeza = crate::comandos::social_launcher::pacotes_sociais::PastaTemporaria::nova(
+            raiz.parent().unwrap(),
+            &raiz,
+        )
+        .unwrap();
+        std::fs::write(raiz.join("mods/existente.jar"), b"preservado").unwrap();
+        for (categoria, pasta) in [
+            ("mods", "mods"),
+            ("resourcepacks", "resourcepacks"),
+            ("shaders", "shaderpacks"),
+        ] {
+            let destino = preparar_pasta_conteudo_instancia(&raiz, categoria).unwrap();
+            assert_eq!(destino, raiz.join(pasta).canonicalize().unwrap());
+            assert!(destino.is_dir());
+        }
+        assert_eq!(
+            std::fs::read(raiz.join("mods/existente.jar")).unwrap(),
+            b"preservado"
+        );
+        for categoria in ["../fora", "C:/Windows", "saves", ""] {
+            assert!(preparar_pasta_conteudo_instancia(&raiz, categoria).is_err());
+        }
+        assert!(!raiz.join("saves").exists());
+    }
+
+    #[test]
+    fn nome_personalizado_persiste_apos_renomear_pasta_externamente() {
+        let raiz = std::env::temp_dir().join(format!("dome-nomes-{}", uuid::Uuid::new_v4()));
+        let pasta = raiz.join("LostSMP");
+        std::fs::create_dir_all(&pasta).unwrap();
+        let _limpeza = crate::comandos::social_launcher::pacotes_sociais::PastaTemporaria::nova(
+            raiz.parent().unwrap(),
+            &raiz,
+        )
+        .unwrap();
+        let state = LauncherState {
+            account: Default::default(),
+            accounts: Default::default(),
+            processos_instancias: Default::default(),
+            instances_path: std::sync::Arc::new(std::sync::Mutex::new(raiz.clone())),
+        };
+        std::fs::write(
+            pasta.join("instance.json"),
+            serde_json::json!({
+                "id": "LostSMP", "name": "LostSMP", "version": "1.21.1", "mcType": "vanilla",
+                "path": pasta, "created": "2026-10-19"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(pasta.join("modpack.json"), b"metadados do projeto").unwrap();
+        atualizar_nome_instancia(&state, "LostSMP", "Minha aventura").unwrap();
+        assert!(pasta.exists());
+        let destino = raiz.join("Minha pasta (1)");
+        std::fs::rename(&pasta, &destino).unwrap();
+        let instancias = state.get_instances().unwrap();
+        assert_eq!(instancias[0].name, "Minha aventura");
+        assert_eq!(instancias[0].id, "Minha pasta (1)");
+        assert_eq!(instancias[0].path, destino);
+        atualizar_nome_instancia(&state, "Minha pasta (1)", "Minha pasta (1)").unwrap();
+        assert_eq!(state.get_instances().unwrap()[0].name, "Minha pasta (1)");
+        assert!(atualizar_nome_instancia(&state, "Minha pasta (1)", " ").is_err());
+        assert_eq!(
+            std::fs::read(destino.join("modpack.json")).unwrap(),
+            b"metadados do projeto"
+        );
+    }
 
     #[test]
     fn calcula_progresso_da_exclusao_e_limita_em_cem() {

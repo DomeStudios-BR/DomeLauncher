@@ -1,3 +1,4 @@
+use crate::comandos::progresso_operacao::Acompanhamento;
 use crate::launcher::VersionDetail;
 use futures::{stream, StreamExt};
 use sha1::{Digest, Sha1};
@@ -100,11 +101,18 @@ impl Transferencias {
                 .is_none_or(|hash| format!("{:x}", Sha1::digest(bytes)).eq_ignore_ascii_case(hash))
     }
 
-    async fn executar(self: &Arc<Self>, arquivos: Vec<Arquivo>) -> Result<(), String> {
+    async fn executar(
+        self: &Arc<Self>,
+        arquivos: Vec<Arquivo>,
+        progresso: &Acompanhamento,
+    ) -> Result<(), String> {
         let mut destinos = std::collections::HashSet::new();
         let arquivos = arquivos
             .into_iter()
-            .filter(|a| destinos.insert(a.destino.clone()));
+            .filter(|a| destinos.insert(a.destino.clone()))
+            .collect::<Vec<_>>();
+        let total = arquivos.len() as u64;
+        let mut concluidos = 0;
         let mut tarefas = stream::iter(arquivos)
             .map(|arquivo| self.obter(arquivo))
             .buffer_unordered(LIMITE_DOWNLOADS);
@@ -112,6 +120,9 @@ impl Transferencias {
         while let Some(resultado) = tarefas.next().await {
             if let Err(erro) = resultado {
                 primeiro_erro.get_or_insert(erro);
+            } else {
+                concluidos += 1;
+                progresso.informar("Preparando arquivos do Minecraft", concluidos, total);
             }
         }
         primeiro_erro.map_or(Ok(()), Err)
@@ -122,7 +133,7 @@ async fn baixar_assets(
     transferencias: &Arc<Transferencias>,
     instancia: &Path,
     detalhes: &VersionDetail,
-) -> Result<(), String> {
+) -> Result<Vec<Arquivo>, String> {
     let indice = &detalhes.asset_index;
     let destino = instancia
         .join("assets/indexes")
@@ -157,12 +168,20 @@ async fn baixar_assets(
             sha1: Some(hash.to_string()),
         });
     }
-    transferencias.executar(arquivos).await
+    Ok(arquivos)
 }
 
 pub(super) async fn download_instance_files(
     instancia: &Path,
     detalhes: &VersionDetail,
+) -> Result<(), String> {
+    download_instance_files_com_progresso(instancia, detalhes, &Acompanhamento::default()).await
+}
+
+pub(super) async fn download_instance_files_com_progresso(
+    instancia: &Path,
+    detalhes: &VersionDetail,
+    progresso: &Acompanhamento,
 ) -> Result<(), String> {
     let inicio = std::time::Instant::now();
     let transferencias = Arc::new(Transferencias {
@@ -227,12 +246,8 @@ pub(super) async fn download_instance_files(
             }
         }
     }
-    let (binarios, assets) = tokio::join!(
-        transferencias.executar(arquivos),
-        baixar_assets(&transferencias, instancia, detalhes)
-    );
-    binarios?;
-    assets?;
+    arquivos.extend(baixar_assets(&transferencias, instancia, detalhes).await?);
+    transferencias.executar(arquivos, progresso).await?;
     println!(
         "[Instância] Arquivos preparados em {:.2}s",
         inicio.elapsed().as_secs_f64()
@@ -295,10 +310,13 @@ mod testes {
         let (pasta, transferencias) = preparar();
         let inicio = std::time::Instant::now();
         transferencias
-            .executar(vec![
-                arquivo(&url, pasta.join("primeira/client.jar")),
-                arquivo(&url, pasta.join("segunda/client.jar")),
-            ])
+            .executar(
+                vec![
+                    arquivo(&url, pasta.join("primeira/client.jar")),
+                    arquivo(&url, pasta.join("segunda/client.jar")),
+                ],
+                &Acompanhamento::default(),
+            )
             .await
             .unwrap();
         let frio = inicio.elapsed();
@@ -405,7 +423,7 @@ mod testes {
             .collect();
         tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            transferencias.executar(tarefas),
+            transferencias.executar(tarefas, &Acompanhamento::default()),
         )
         .await
         .unwrap()

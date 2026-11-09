@@ -64,6 +64,21 @@ No desenvolvimento, o Vite prepara os módulos da tela inicial antes da primeira
 pixelados usados pela interface ficam reunidos em `src/assets/dadosIconesPixelados.json`, evitando uma requisição por
 ícone na WebView. O DevTools pode ser aberto manualmente quando necessário; ele não abre junto com a janela.
 
+O Início usa `Activity` para preservar estado e DOM ao navegar, pausando efeitos e consultas enquanto está oculto.
+Ao voltar, Novidades e Volte a jogar consultam os dados sem esvaziar os cartões, reiniciar o carregamento ou
+repetir animações de entrada.
+Listas iguais preservam as referências; falhas de uma fonte mantêm os últimos dados daquela fonte e respostas
+anteriores à navegação são ignoradas. Resultados vazios bem-sucedidos removem itens que deixaram de existir.
+Remover um cartão de Volte a jogar filtra o conteúdo já carregado, sem reler mundos e servidores.
+A remoção guarda a última partida da instância junto da chave do cartão. O item permanece oculto nessa partida,
+inclusive após reabrir o launcher, e volta a ficar elegível quando a instância for iniciada novamente.
+Ocultações antigas que guardavam apenas a chave expiram na migração, pois não registravam a partida associada.
+Com o Início aberto, recuperar o foco da janela ou voltar à visibilidade também relê mundos e servidores,
+mesmo sem mudança na lista de instâncias. Isso permite incorporar servidores salvos durante uma partida.
+Essa seleção ainda usa o primeiro servidor salvo por instância; não acompanha qual foi acessado dentro do jogo.
+`bun run verificar:inicio` exercita a navegação real do App com IPC simulado no navegador; não substitui
+conferir os serviços e os arquivos locais na janela nativa.
+
 ## Ambiente e comandos
 
 Use Bun, nunca npm. Consulte `package.json` antes de inventar scripts. A CI usa Bun 1.3.5 e Rust 1.99.0
@@ -111,6 +126,14 @@ de biblioteca e a entrada exigida pelo Tauri.
 - Preserve sanitização de HTML/Markdown externo e carregamento sob demanda de telas.
 - Valide assets em produção: caminhos aceitos pelo Vite podem falhar no bundle ou na CSP.
 
+O painel social mantém o botão de recolher/abrir, a lista, os compartilhamentos e o chat montados ao alternar
+o recolhimento. O botão permanece no canto inferior direito, inclusive durante a animação.
+A largura interna acompanha a largura animada do contêiner; não altere as duas larguras de forma independente.
+Preserve a aba selecionada e não refaça consultas por essa alternância.
+`bun run verificar:recolhimento-social` exercita esse comportamento com sessão, IPC e Socket.IO simulados,
+incluindo amostras durante a animação, cliques rápidos, duas resoluções, visitante e drawer.
+Não substitui conferir a janela nativa com uma sessão real.
+
 ## Tauri, segurança e dados locais
 
 Ao alterar um comando:
@@ -138,8 +161,149 @@ inclusive em criações simultâneas, e retorna o ID efetivamente criado. Instal
 devem usar esse retorno. Editar o nome na interface altera apenas `instance.json`, preservando a pasta e o ID
 para evitar renomeações de diretórios bloqueados pelo jogo ou por outros processos.
 
+Pelo Explorar, modpacks podem ser instalados novamente, inclusive na mesma versão. Modrinth/CurseForge usam
+`create_instance` com `copiaModpack: true`; a publicação local da fonte Dome usa a mesma reserva de nomes.
+Cada cópia recebe nome e pasta no padrão `LostSMP`, `LostSMP (1)`, `LostSMP (2)`, considerando nomes exibidos
+e pastas ocupadas, inclusive instalações parciais ou simultâneas. Caracteres inválidos para pastas são adaptados.
+Trocar versão a partir de uma instância continua operando somente naquela instância.
+Na página do projeto, o selo `Instalada` considera todas as instâncias do mesmo projeto e fonte, inclusive
+cópias renomeadas. O selo não bloqueia novas cópias; em uma troca de versão, somente a versão já instalada
+na instância escolhida bloqueia a ação. A indicação é consultada novamente após concluir uma instalação.
+
+O nome exibido pode ser salvo pelo botão Salvar ou por Enter; Escape cancela a edição. Renomear a pasta não
+altera esse nome. A leitura das instâncias atualiza o ID e o caminho quando uma pasta é renomeada externamente.
+`bun run verificar:copias-modpacks` exercita Explorar e edição com IPC simulado nas três fontes; os testes Rust
+conferem reserva simultânea, publicação de cópias e persistência após renomear pastas. Não substituem instalar
+um pacote remoto e abrir o jogo na janela nativa.
+
 A exclusão de instâncias exige confirmação e continua em segundo plano. O progresso percentual e erros aparecem
 em um indicador compacto, inclusive após navegar para outra aba. Exclusões adicionais aguardam em fila.
+
+Mods, Resource Packs e Shaders mantêm suas listas
+carregadas enquanto o gerenciador daquela instância estiver montado. Voltar a uma categoria ou à aba Conteúdo
+reutiliza os dados e a consulta que ainda estiver em andamento. Cada categoria tem seu indicador de carregamento;
+uma resposta de outra categoria não deve ocultar a carga atual. Importações e instalações relêem a categoria
+alterada; trocar o modpack invalida todas. Fechar a instância ou abrir outra encerra esse reaproveitamento.
+A ação Trocar versão do conteúdo instalado fica centralizada no rodapé do modal, inclusive na janela mínima.
+Duplo clique em Mods, Resource Packs ou Shaders abre a pasta correspondente da instância;
+um clique simples continua apenas selecionando a categoria.
+As abas Curseforge/Modrinth/Dome e Servidores permanecem montadas depois da primeira abertura até fechar
+a instância. Cada versão consultada em Mods conserva sua lista e a consulta pendente ao alternar abas.
+Os servidores preservam lista, status Online/Offline, MOTD, jogadores e ping; verificar manualmente continua
+atualizando o servidor. Reabrir a instância descarta esses dados; trocar o modpack renova as consultas da origem.
+
+A identificação de mods externos usa `aplicacao/identificacao_mods.rs`: SHA-512 no Modrinth e fingerprint exato
+no CurseForge, incluindo desativados e arquivos renomeados. Preserve a verificação de todos os lotes, a distinção
+entre arquivo desconhecido e falha de rede e o bloqueio de download para terceiros. O módulo
+`cache_identificacao_mods.rs` persiste assinaturas e identificações por instância, invalidando por tamanho/datas.
+Não recalcule hashes nem consulte a rede para arquivos sem mudanças e resultados ainda válidos. Respeite o
+limite global de quatro consultas, a expiração dos resultados negativos e a gravação atômica do cache.
+Vínculos confirmados não expiram por tempo. A leitura local do conteúdo restaura projeto/fonte/versão pelo
+registro nativo, independentemente do cache da interface; substituir o JAR invalida a restauração.
+
+Na lista de conteúdo instalado, o evento nativo de arraste copia arquivos `.jar` para `mods` ou `.zip` para
+`resourcepacks`/`shaderpacks`, conforme a categoria aberta. A importação preserva a origem, recusa arquivos inválidos
+e nomes já existentes (inclusive a variante desativada) e informa resultados parciais. Use criação exclusiva e remova
+o arquivo parcial em caso de erro, sem depender de links físicos do sistema de arquivos.
+A lista recarrega após a cópia; respostas antigas de identificação e atualização não devem substituir uma carga
+mais recente. Nome, Ativo e Versão
+alternam a direção da ordenação. Ícone e nome abrem a página interna quando há projeto e fonte identificados.
+Em Versão, o terceiro estado coloca atualizações disponíveis primeiro, mantendo o texto Versão e usando o ícone
+de recarregar no lugar da seta de ordenação. O ícone e a numeração da versão têm molduras separadas.
+O ícone abre a escolha de versão e usa a cor de destaque quando há atualização; não há botão individual
+Atualizar na linha. Clicar na numeração abre a aba
+Changelog da versão instalada. No modal de troca, a aba Changelog fica visível desde a abertura e consulta
+a versão selecionada. Clicar no número de outra versão continua abrindo suas notas sem alterar a seleção.
+Nas páginas de projetos, os cartões somente selecionam a versão.
+A seleção é indicada somente pela cor do cartão; o selo INSTALADA fica no canto superior direito.
+A numeração da versão, o Minecraft suportado e o loader usam blocos separados dentro do cartão.
+Loader fica abaixo de MC. Projetos usam duas colunas por quatro linhas (8 versões por página).
+O painel de instalação do conteúdo permanece à direita da grade, inclusive em janelas menores,
+e acompanha a rolagem da página sem descer abaixo das versões nem criar rolagem interna.
+O modal Trocar versão usa três colunas por duas linhas, com seis versões por página.
+A troca de página preserva a versão selecionada e não refaz a consulta remota.
+O modal confere Minecraft e loader também nos metadados retornados, além dos filtros enviados à plataforma.
+A ausência dos textos de apoio não muda a compatibilidade nem a ordem de instalação: o arquivo anterior
+só é removido após instalar o novo com sucesso; falhas preservam o anterior.
+As abas Changelog e Mods (modpacks) ou
+Dependências (mods, texturas e shaders) ficam acessíveis diretamente e consultam a versão selecionada,
+sem botões adicionais nos cartões. Dependências podem incluir mods, texturas e shaders; itens opcionais são identificados.
+A aba Mods dos modpacks usa cartões em até três colunas, reduzindo para duas ou uma conforme a largura
+disponível do painel. Nome, arquivo e versão longos não podem alargar a grade.
+Na origem do modpack instalado, clicar no nome de um mod identificado abre sua página interna usando a fonte
+do próprio mod, inclusive quando difere da fonte do pacote. O nome não fica sublinhado, inclusive no hover.
+O restante do cartão não inicia navegação ou instalação.
+Voltar preserva a instância, a versão consultada e a lista já carregada; arquivos sem projeto identificado continuam como texto.
+Na lista de instâncias para instalação de conteúdo, a seleção usa o destaque verde original e as demais
+opções têm fundo neutro, com menor opacidade nas incompatíveis. Falhas de consulta continuam visíveis.
+Todas as Versões fica acima das instâncias, inclusive durante a busca, e mostra versões de qualquer
+Minecraft/loader, incluindo arquivos sem download. Nesse modo a instalação fica desativada; escolher uma
+instância restaura o filtro e as regras de instalação.
+Sem correspondência da versão instalada, informe
+a falha de identificação; nunca use as notas da versão mais recente como substituição.
+Instalação, download e troca de versão mostram o percentual nativo, com fases e unidades concluídas;
+não simule avanço por tempo. A barra inferior deixa somente o botão Jogar/Login/Encerrar interativo:
+texto, laterais e padding do rodapé não podem interceptar cliques nos elementos que estão atrás.
+A aba Mundos usa a soma recursiva real dos arquivos e mostra falha de leitura separadamente do estado vazio.
+Os indicadores dos cabeçalhos ocupam um espaço fixo; alternar a ordenação mantém a posição do texto e a altura
+do cabeçalho, sem remontar a lista nem consultar novamente o conteúdo. A verificação amostra essa transição por quadro.
+
+Em Adicionar conteúdo, clicar no nome abre a página interna do projeto, preservando a instância de origem.
+O restante do cartão marca o conteúdo para instalar depois; abrir o projeto não altera essa seleção.
+O histórico guarda a instância e o contexto da visita: modo, busca, fonte, categorias, ordenação, resultados,
+seleção e rolagem. Voltar e avançar restauram esse contexto, inclusive após visitar outra instância ou tela.
+Somente o gerenciador visível pode interceptar a navegação interna; o gerenciador oculto na página do projeto
+não deve consumir o clique em Voltar. O fluxo de Adicionar conteúdo também ocupa uma entrada no histórico.
+
+Explorar permanece montado com `Activity` ao abrir um projeto. Voltar preserva pesquisa, filtros,
+resultados e paginação, sem repetir a busca concluída. Cartões de modpacks visíveis consultam a publicação
+selecionada pela instalação direta e mostram sua versão e a versão principal do Minecraft.
+A consulta usa a mesma fonte e ordenação da página do projeto, com cache temporário por fonte e projeto.
+`verificar:inicio` cobre o retorno no App e `verificar:copias-modpacks` confere a informação nas três fontes.
+
+A aba Configuração também aparece em instâncias Vanilla.
+Ela oferece a seção Versão e Loader, no mesmo componente recolhível de Desempenho e Opções do Minecraft.
+Os três campos são Versão do Minecraft, Loader e Versão do Loader, com um único botão Alterar.
+A seção carrega as versões na primeira abertura e preserva escolhas e consultas ao recolher e expandir.
+Vanilla mantém Versão do Loader desativada. Sem mudança nos campos, Alterar permanece desativado.
+O seletor de Minecraft respeita Mostrar Snapshots (`show_snapshots`) das configurações globais,
+como a criação de instâncias: release sempre aparece, snapshot somente quando habilitado.
+A versão atualmente instalada continua visível mesmo se o filtro global a ocultaria.
+O aviso é curto, informa a prioridade de canais e a desativação de mods, sem o trecho sobre mundos e backup.
+A aplicação prepara backup e atualiza os mods reconhecidos com prioridade
+Estável → Beta → Alpha, escolhendo o mais recente dentro do canal compatível com Minecraft e loader.
+Mods sem identificação ou versão compatível ficam na instância como `.jar.disabled`; os que já estavam
+desativados conservam esse estado, reconciliado por identidade depois de instalar todas as dependências.
+Cada mod tem até três tentativas de preparação; falhas persistentes preservam a instância anterior.
+A publicação só ocorre com o jogo fechado. Migração e troca de modpack compartilham a reserva da instância.
+O backup fica na mesma unidade, em `.dome-backups-instancias` dentro da raiz de instâncias. Após ativação
+bem sucedida, mantenha somente o backup mais recente da mesma instância. Não apague backups legados automaticamente.
+`aplicacao/migracao_instancias.rs` concentra preparação, identificação, desativação e publicação;
+`aplicacao/mods_migracao.rs` concentra a preferência por estabilidade, sem alterar a seleção de instalações comuns.
+`bun run verificar:alteracao-ambiente` exercita os três campos nas quatro origens, preservação das escolhas ao
+recolher a seção sem nova consulta, releitura de conteúdo, falhas e Vanilla em 960×640 com IPC simulado.
+Os testes Rust cobrem seleção de versões,
+paginação/filtro CurseForge com HTTP local, preservação de arquivos e restauração após falha de publicação.
+Não substituem baixar mods remotos e abrir o jogo após uma migração real.
+As seções Desempenho e Opções do Minecraft começam recolhidas; seus títulos abrem e fecham os controles,
+preservando os campos e as edições em andamento ao recolher.
+Distância de renderização e Limite de FPS oferecem listas com todos os valores inteiros aceitos pelo backend;
+o limite de 260 FPS aparece como Ilimitado.
+Escala da interface usa o mesmo seletor, de 0 (Automática) a 3, com validação também no backend.
+A roda do mouse ajusta os campos numéricos, incluindo a passagem entre Padrão do jogo e o mínimo.
+Salvar Padrão do jogo remove apenas a chave conhecida correspondente de `options.txt`.
+`configuracoes_jogo.rs` lê as opções conhecidas de `options.txt` e salva somente os campos alterados,
+preservando atalhos, opções de mods e chaves desconhecidas.
+A gravação substitui o arquivo por uma cópia temporária e exige que o Minecraft da instância esteja fechado.
+`bun run verificar:conteudo-instancia` exercita a interface em 960×640 e escala de 150%, com IPC e eventos Tauri
+simulados; não substitui arrastar arquivos do Explorador para a janela nativa nem conferir as opções dentro do jogo.
+`bun run verificar:changelog` exercita as quatro categorias de Modrinth/CurseForge e modpacks Dome com respostas
+simuladas, incluindo notas completas, seleção preservada, HTML sanitizado, vazio e erro com nova tentativa.
+`bun run verificar:paginacao-versoes` confere oito itens por página dos projetos, seis itens no modal,
+reposicionamento de Loader abaixo de MC e preservação da seleção sem nova consulta, com IPC simulado.
+`bun run verificar:compatibilidade-instancias` exercita a lista antes do clique, seleção sem nova consulta,
+agrupamento por Minecraft/loader, falhas e respostas atrasadas com IPC simulado. Não substitui conferir a listagem
+do projeto remoto na janela nativa.
 
 `aplicacao/downloads_instancias.rs` prepara cliente, bibliotecas e assets com até 32 transferências simultâneas.
 O cache fica em `pasta_dados_launcher()/cache/arquivos-minecraft` (`%APPDATA%\dome` no Windows,
@@ -157,10 +321,74 @@ prepara as bibliotecas na criação e reaproveita o mesmo ajuste ao iniciar inst
 algumas bibliotecas ficam no Maven do Forge e outras no repositório de bibliotecas do Minecraft.
 Compare desempenho com mesma versão/conexão e cache vazio/preenchido; testes HTTP locais não comprovam velocidade real.
 
+Na instalação de modpacks Modrinth e CurseForge, inclusive pelo painel social, leia o manifesto do arquivo
+selecionado antes de criar a instância. Use as versões exatas do Minecraft e do loader, respeitando `primary`
+no CurseForge. Não substitua a versão declarada pela mais recente. Manifestos inválidos ou loaders não suportados
+interrompem a instalação. Antes de substituir conteúdo, o Rust confere novamente os requisitos do arquivo baixado
+contra a instância. Se forem diferentes, preserve o conteúdo e oriente instalar uma nova cópia.
+O arquivo do modpack é consultado para os requisitos e baixado novamente na instalação; não há cache entre essas etapas.
+Os testes de requisitos e `bun run verificar:copias-modpacks` cobrem o Forge 47.4.10 em dados controlados,
+sem comprovar a execução nativa do Gravitas² 0.9.4.
+
 A instalação de mods compara os identificadores declarados nos metadados dos JARs, sem aliases de compatibilidade.
 Versões anteriores do mesmo conjunto de mods, inclusive desativadas, são substituídas após o download completo.
 Falhas na publicação restauram os arquivos preservados. Arquivos sem identidade reconhecida só são substituídos
 quando o nome coincide. Essa comparação evita duplicação, mas não valida as restrições de versão de todos os mods locais.
+
+## Protótipo de diagnóstico de crashes
+
+`aplicacao/diagnostico_crash.rs` fotografa os logs antes de iniciar o Java e acompanha o código de saída durante
+toda a execução. O lançamento redireciona stdout/stderr para `logs/dome-console.log`, recriado a cada partida;
+esse arquivo permite investigar falhas anteriores à criação de `latest.log`, sem usar pipes que dependam do launcher.
+São lidos apenas logs novos/alterados da sessão: console, latest/debug, até quatro relatórios recentes e `hs_err_pid*`.
+Arquivos antigos intactos e trechos anteriores de logs apenas acrescidos são ignorados. A leitura usa os últimos
+2 MiB de cada arquivo, com validação de caminhos dentro da instância.
+
+`origem_crash.rs` examina blocos fatais e causas profundas, relacionando entrypoints, mixins, arquivos e classes aos
+metadados locais de Fabric, Quilt, Forge/NeoForge e Forge legado. `indice_mods_crash.rs` inspeciona os JARs habilitados
+sem executar código, incluindo bibliotecas embutidas até dois níveis, 16 MiB por JAR interno e 64 MiB por mod externo.
+Empates permanecem como candidatos; a interface mostra causa provável, confiança e evidências. Memória, Java incompatível
+e falhas nativas são categorias separadas, sem atribuição automática a um mod.
+
+`relacoes_crash.rs` conserva os mods nas chamadas contíguas da causa profunda e o dono da classe alvo de um mixin
+que falhou, conferindo a classe nos JARs locais. O campo opcional `mods[].relacao` distingue `chamada` e `alvoMixin`
+da origem provável. A presença na mesma falha não prova responsabilidade individual nem incompatibilidade formal.
+Anotações `pl:mixin:APP` em frames só enumeram transformações aplicadas; não são evidência de falha desses mixins.
+O identificador depois de `from mod` termina no primeiro separador, sem absorver nomes da classe alvo.
+
+Saída zero sem relatório fatal novo indica fechamento normal. Um relatório recuperado seguido de `Stopping!` também
+respeita a saída zero. A exceção é um relatório novo de erro no carregamento dos mods: o Forge pode mostrar
+`Error loading mods` e encerrar com código zero ao fechar essa tela, sem ter conseguido abrir o jogo.
+Nesse caso, o relatório com `Description: Mod loading...` e `Failure message:` prevalece sobre `Stopping!`.
+Parar pelo launcher registra intenção junto do encerramento do PID e não gera alerta de crash.
+Falha ao consultar o processo fica indeterminada; saída anormal sem evidência causal informa
+`A origem do crash não foi encontrada.`. Encerramento externo forçado pode ser indistinguível de um crash sem logs.
+
+`obter_diagnostico_crash` consulta o último resultado em memória e `dome:diagnostico-crash` comunica início/encerramento.
+A aba Logs exibe o resultado; o aviso global aparece somente em crash. Reiniciar o launcher perde o resultado e não
+recupera o código de saída de jogos já abertos. O protótipo não promete identificar todos os crashes nem mede taxa de acerto.
+`bun run verificar:crash` exercita a interface com IPC/eventos simulados; os testes Rust usam sessões e JARs sintéticos.
+Essas verificações não substituem abrir/fechar e reproduzir crashes reais no Minecraft/WebView2.
+
+Em 19–20/10/2026, foram conferidos na janela nativa Minecraft 26.2/Fabric 0.19.5 e Minecraft 1.20.1/Forge 47.4.23,
+com ImmediatelyFast 1.5.4+1.20.4 incompatível e Antique Atlas 8.0.1 sem UnionLib. A rodada detectou e corrigiu o falso
+negativo do Forge com saída zero; a repetição real identificou Antique Atlas. Os controles com Quit Game, inclusive
+com os relatórios fml antigos presentes, e ENCERRAR pelo launcher não geraram alerta de crash.
+O relatório local e os logs ficaram em `testing/crashes-reais/RELATORIO.md` (pasta ignorada pelo Git).
+Esses casos cobrem inicialização e menu; não comprovam crashes em mundos/servidores nem execução real de NeoForge/Quilt.
+
+Em 20/10/2026 também foram reproduzidas duas falhas silenciosas de inicialização no Fabric 26.2: Survive 10.2.0-beta
+com UnionLib 13.3 (NPE na criação de armadura) e EMF Compat Core 1.1.2 com EMF 3.3.7/ETF 7.2.3 (método alvo de
+mixin ausente). Os processos encerraram automaticamente antes do menu, sem tela explicativa do loader.
+Os logs e JARs reais foram reanalisados depois da correção das relações. Após uma interrupção por acesso negado
+na automação, as duas falhas foram repetidas e conferidas na interface nativa: autor/alvo do mixin e mods da mesma
+chamada apareceram separados, com saída -1. EMF/ETF sem EMF Compat e Fabric API sozinho abriram o menu e fecharam
+normalmente, mantendo os relatórios antigos. UnionLib sozinho abriu o menu, mas o watchdog interrompeu seu fechamento
+com saída -8; o detector ficou inconclusivo, sem atribuir origem apenas pelo thread dump. Consulte
+`testing/conflitos-mods/RELATORIO.md` para separar falha de inicialização, falha no encerramento e controles normais.
+Para reanalisar um corpus local sem iniciar o jogo, `DOME_CORPUS_CRASH` aponta para um JSON com capturas
+(`raiz`, `log`, `principais`, `relacionados`); execute `cargo test --manifest-path src-tauri/Cargo.toml
+reanalisa_corpus_local_com_mods_reais -- --ignored --nocapture`. Esse teste é ignorado na CI por depender dos JARs locais.
 
 ## Validação e entrega
 

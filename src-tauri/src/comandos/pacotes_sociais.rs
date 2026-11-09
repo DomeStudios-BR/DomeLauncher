@@ -160,6 +160,55 @@ pub fn previa(instancia: &Instance) -> Result<PreviaSocial, String> {
     criar_previa(instancia, true, None)
 }
 
+pub(crate) fn arquivos_modpack(instancia: &Instance) -> Result<Vec<ArquivoSocial>, String> {
+    let mut arquivos = Vec::new();
+    for pasta in crate::comandos::modpacks::PASTAS_CONTEUDO_MODPACK {
+        coletar(
+            &instancia.path,
+            &instancia.path.join(pasta),
+            &mut arquivos,
+            true,
+            None,
+        )?;
+    }
+    let recibo = instancia.path.join("modpack-arquivos.json");
+    if recibo.exists() {
+        let caminhos: Vec<String> =
+            serde_json::from_slice(&std::fs::read(recibo).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("Recibo do modpack inválido: {e}"))?;
+        for caminho in caminhos {
+            validar_nome(&caminho)?;
+            if arquivos.iter().any(|a| a.caminho == caminho)
+                || !instancia.path.join(&caminho).is_file()
+                || !crate::comandos::modpacks::caminho_conteudo_permitido(&caminho)
+                || [
+                    "options.txt",
+                    "optionsof.txt",
+                    "optionsshaders.txt",
+                    "servers.dat",
+                ]
+                .contains(&caminho.as_str())
+            {
+                continue;
+            }
+            let local = crate::comandos::instancia_sistema::validar_caminho_dentro_raiz(
+                &instancia.path,
+                &instancia.path.join(&caminho),
+            )?;
+            let (sha256, sha512) = hashes_arquivo(&local)?;
+            arquivos.push(ArquivoSocial {
+                caminho,
+                sha256,
+                sha512,
+                configuracao: true,
+                referencia: None,
+                tamanho_bytes: std::fs::metadata(local).map_err(|e| e.to_string())?.len(),
+            });
+        }
+    }
+    Ok(arquivos)
+}
+
 pub fn previa_rapida(instancia: &Instance) -> Result<PreviaSocial, String> {
     criar_previa(instancia, false, None)
 }

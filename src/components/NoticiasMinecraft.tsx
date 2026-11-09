@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { Calendar, ChevronRight, Loader2, Newspaper, X } from "../iconesPixelados";
 import { AreaRolagemPersonalizada } from "./scroll/AreaRolagemPersonalizada";
 import { CONFIGURACAO_SOCIAL } from "../lib/configuracaoSocial";
 import ReactMarkdown from "react-markdown";
+import { reconciliarLista } from "../lib/reconciliarLista";
 
 interface NoticiaMinecraft {
     titulo: string;
@@ -60,9 +61,16 @@ export function NoticiasMinecraft() {
     const [conteudo, setConteudo] = useState<ConteudoNoticiaMinecraft | null>(null);
     const [carregandoArtigo, setCarregandoArtigo] = useState(false);
     const [erroArtigo, setErroArtigo] = useState<string | null>(null);
+    const consultaAtual = useRef(0);
+    const noticiasPorOrigem = useRef<{ minecraft: NoticiaMinecraft[]; dome: NoticiaMinecraft[] }>({
+        minecraft: [],
+        dome: [],
+    });
 
-    const carregarNoticias = async () => {
-        setCarregando(true);
+    const carregarNoticias = useCallback(async () => {
+        const consulta = ++consultaAtual.current;
+        const cache = noticiasPorOrigem.current;
+        if (!cache.minecraft.length && !cache.dome.length) setCarregando(true);
         setErro(null);
         try {
             const [minecraft, dome] = await Promise.allSettled([
@@ -73,12 +81,13 @@ export function NoticiasMinecraft() {
                 }),
             ]);
 
-            const todas: NoticiaMinecraft[] = [];
+            if (consulta !== consultaAtual.current) return;
+
             if (minecraft.status === "fulfilled") {
-                todas.push(...minecraft.value.map((item) => ({ ...item, origem: "minecraft" as const })));
+                cache.minecraft = minecraft.value.map((item) => ({ ...item, origem: "minecraft" as const }));
             }
             if (dome.status === "fulfilled") {
-                todas.push(...dome.value.map((item) => ({
+                cache.dome = dome.value.map((item) => ({
                     titulo: item.titulo,
                     descricao: item.resumo,
                     url: `dome://${item.id}`,
@@ -87,21 +96,24 @@ export function NoticiasMinecraft() {
                     origem: "dome" as const,
                     categoria: item.categoria,
                     conteudo_local: item.conteudo,
-                })));
+                }));
             }
+            const todas = [...cache.minecraft, ...cache.dome];
             todas.sort((a, b) => new Date(b.publicado_em).getTime() - new Date(a.publicado_em).getTime());
-            setNoticias(todas.slice(0, 4));
+            setNoticias((anteriores) => reconciliarLista(anteriores, todas.slice(0, 4), (item) => item.url));
             if (!todas.length) throw new Error("Nenhuma novidade disponível.");
         } catch {
+            if (consulta !== consultaAtual.current) return;
             setErro("As notícias não puderam ser carregadas agora.");
         } finally {
-            setCarregando(false);
+            if (consulta === consultaAtual.current) setCarregando(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         void carregarNoticias();
-    }, []);
+        return () => { consultaAtual.current += 1; };
+    }, [carregarNoticias]);
 
     useEffect(() => {
         if (!noticiaAberta) return;
@@ -139,7 +151,7 @@ export function NoticiasMinecraft() {
     return (
         <>
             <motion.section
-                initial={{ opacity: 0, y: 10 }}
+                initial={false}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.02 }}
                 className="space-y-3 pb-2"
@@ -175,7 +187,7 @@ export function NoticiasMinecraft() {
                             <motion.button
                                 key={noticia.url}
                                 type="button"
-                                initial={{ opacity: 0, y: 8 }}
+                                initial={false}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: 0.04 + indice * 0.035 }}
                                 onClick={() => void abrirNoticia(noticia)}
