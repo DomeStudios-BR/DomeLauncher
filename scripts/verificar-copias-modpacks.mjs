@@ -43,6 +43,7 @@ try {
     for (const fonte of ['modrinth', 'curseforge', 'dome']) {
         await pagina.goto(`${base}?fonte=${fonte}`);
         await conferirDataProjeto(15);
+        await pagina.getByText('Versão 2.0 · Minecraft 1.21.1', { exact: true }).waitFor();
         if (fonte !== 'dome') {
             for (const [categoria, dia] of [['Mods', 16], ['Textures', 17], ['Shaders', 18], ['Modpacks', 15]]) {
                 await pagina.getByRole('button', { name: categoria, exact: true }).click();

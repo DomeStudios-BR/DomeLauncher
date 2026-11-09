@@ -177,6 +177,20 @@ function compararVersoesPorData(a: VersaoProjeto, b: VersaoProjeto): number {
   return dataB - dataA;
 }
 
+/** Consulte a publicação selecionada por padrão ao instalar um modpack sem escolher uma versão. */
+export async function obterVersaoPadraoModpack(projeto: ProjetoConteudo) {
+    const versoes = projeto.source === "dome"
+        ? await consultarModpacksDome<VersaoProjeto[]>("versoes", projeto.id)
+        : projeto.source === "modrinth"
+            ? await buscarVersoesProjetoModrinth(projeto.id)
+            : await buscarVersoesProjetoCurseforge(projeto.id, null, "modpack");
+    const versao = [...versoes].sort(compararVersoesPorData)[0];
+    return versao ? {
+        numero: versao.version_number,
+        minecraft: escolherVersaoMinecraftIdeal(versao.game_versions || []),
+    } : null;
+}
+
 function tagVersaoCompativel(tag: string, versaoInstancia: string): boolean {
   if (tag === versaoInstancia) return true;
   const ehNumerica = /^[0-9.]+$/.test(tag);

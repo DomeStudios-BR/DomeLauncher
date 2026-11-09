@@ -1581,10 +1581,10 @@ export default function App() {
               </motion.div>
             )}
 
-            {activeTab === "explore" && (
+            <Activity key="explore" mode={activeTab === "explore" ? "visible" : "hidden"}>
               <motion.div
                 key="explore"
-                initial={{ opacity: 0, x: 10 }}
+                initial={false}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
               >
@@ -1605,7 +1605,7 @@ export default function App() {
                   }}
                 />
               </motion.div>
-            )}
+            </Activity>
 
             {activeTab === "meus-modpacks" && (
               <motion.div key="meus-modpacks" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">

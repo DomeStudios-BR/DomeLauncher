@@ -255,6 +255,12 @@ seleção e rolagem. Voltar e avançar restauram esse contexto, inclusive após 
 Somente o gerenciador visível pode interceptar a navegação interna; o gerenciador oculto na página do projeto
 não deve consumir o clique em Voltar. O fluxo de Adicionar conteúdo também ocupa uma entrada no histórico.
 
+Explorar permanece montado com `Activity` ao abrir um projeto. Voltar preserva pesquisa, filtros,
+resultados e paginação, sem repetir a busca concluída. Cartões de modpacks visíveis consultam a publicação
+selecionada pela instalação direta e mostram sua versão e a versão principal do Minecraft.
+A consulta usa a mesma fonte e ordenação da página do projeto, com cache temporário por fonte e projeto.
+`verificar:inicio` cobre o retorno no App e `verificar:copias-modpacks` confere a informação nas três fontes.
+
 A aba Configuração também aparece em instâncias Vanilla.
 Ela oferece a seção Versão e Loader, no mesmo componente recolhível de Desempenho e Opções do Minecraft.
 Os três campos são Versão do Minecraft, Loader e Versão do Loader, com um único botão Alterar.

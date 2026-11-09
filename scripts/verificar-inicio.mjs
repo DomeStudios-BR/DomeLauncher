@@ -40,7 +40,7 @@ try {
             metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
             transformCallback: () => ++callbackAtual,
             unregisterCallback: () => {},
-            invoke: async (comando) => {
+            invoke: async (comando, argumentos = {}) => {
                 teste.consultas.push(comando);
                 const dados = structuredClone(teste.dados[comando]);
                 const falhar = teste.falhas.includes(comando);
@@ -49,6 +49,13 @@ try {
                 }
                 if (falhar) throw new Error("Falha simulada");
                 if (dados !== undefined) return dados;
+                if (comando === "get_minecraft_versions") return { versions: [{ id: "1.21.1", type: "release" }] };
+                if (comando === "listar_categorias_busca_online") return [];
+                if (comando === "gerenciar_modpacks_dome") return [];
+                if (comando === "search_mods_online") return argumentos.platform === "modrinth" ? [{
+                    id: "pesquisa-pack", title: "Pacote pesquisado", slug: "pesquisa-pack", author: "Dome",
+                    description: "Resultado de teste", platform: "modrinth", project_type: "modpack",
+                }] : [];
                 if (comando === "plugin:event|listen") return ++callbackAtual;
                 if (comando === "plugin:app|version") return "0.4.4";
                 if (comando === "get_running_instances" || comando === "get_settings") return {};
@@ -296,6 +303,35 @@ try {
     });
     assert.deepEqual(areas.fora, [false, false, false], 'Laterais, faixa inferior e texto não interceptam o mouse.');
     assert.equal(areas.botao, true, 'O botão continua interativo.');
+    await pagina.route('https://api.modrinth.com/v2/project/pesquisa-pack**', (rota) => rota.fulfill({
+        json: rota.request().url().endsWith('/version') ? [{
+            id: 'v2', version_number: '2.0', game_versions: ['1.21.1'], loaders: ['fabric'],
+            date_published: '2026-11-09T00:00:00Z',
+            files: [{ url: 'https://example.com/pack.mrpack', filename: 'pack.mrpack', primary: true }],
+        }] : { id: 'pesquisa-pack', title: 'Pacote pesquisado', slug: 'pesquisa-pack',
+            project_type: 'modpack', body: 'Descrição do pacote' },
+    }));
+    await pagina.getByRole('button', { name: 'Explorar', exact: true }).click();
+    const busca = pagina.getByPlaceholder('Pesquisar modpacks, mods, textures, shaders...');
+    await busca.fill('Pacote específico');
+    await pagina.getByText('Versão 2.0 · Minecraft 1.21.1', { exact: true }).waitFor();
+    await pagina.waitForTimeout(600);
+    const buscasAntes = await pagina.evaluate(() => window.verificacaoInicio.consultas
+        .filter((comando) => comando === 'search_mods_online').length);
+    await pagina.evaluate(() => { window.campoBuscaExplore = document.querySelector('input[placeholder^="Pesquisar modpacks"]'); });
+    await pagina.getByRole('heading', { name: 'Pacote pesquisado', exact: true }).click();
+    await pagina.getByRole('button', { name: 'Versões', exact: true }).click();
+    await pagina.getByRole('group', { name: 'Versão 2.0', exact: true }).waitFor();
+    await pagina.getByRole('button', { name: 'Voltar', exact: true }).first().click();
+    await busca.waitFor();
+    assert.equal(await busca.inputValue(), 'Pacote específico');
+    assert(await pagina.evaluate(() => window.campoBuscaExplore ===
+        document.querySelector('input[placeholder^="Pesquisar modpacks"]')));
+    await pagina.waitForTimeout(600);
+    assert.equal(await pagina.evaluate(() => window.verificacaoInicio.consultas
+        .filter((comando) => comando === 'search_mods_online').length), buscasAntes,
+        'Voltar do projeto deve preservar a pesquisa e os resultados sem repetir a busca.');
+    console.log('Explorar no App: versão padrão visível, campo e resultados preservados após consultar versões e voltar.');
     assert.deepEqual(erros, []);
     console.log("Início verificado no App: DOM preservado, atualização silenciosa, dados novos/editados/removidos, " +
         "retorno ao foco/visibilidade, falhas parciais/totais, respostas atrasadas, ocultação sem releitura " +

@@ -24,6 +24,7 @@ import { PublicadorModpacks } from "./modpacks/PublicadorModpacks";
 import { consultarModpacksDome } from "../services/modpacksDome";
 import { obterImagemProjeto } from "../lib/imagemProjeto";
 import { DataLancamento } from "./DataLancamento";
+import { VersaoModpackBusca } from "./VersaoModpackBusca";
 
 type ContentType = "modpack" | "mod" | "resourcepack" | "shader";
 type Source = "modrinth" | "curseforge" | "dome";
@@ -1354,6 +1355,12 @@ export default function Explore({
               <p className="text-sm text-white/60 line-clamp-3 leading-relaxed">
                 {item.description}
               </p>
+              {item.project_type === "modpack" && (
+                <VersaoModpackBusca projeto={{
+                  ...(item.variantes[FONTE_PRIORITARIA] || item.variantes.curseforge || item),
+                  icon_url: item.icon_url || "",
+                }} />
+              )}
 
               <div className="mt-auto flex flex-wrap items-center gap-3 border-t border-white/5 pt-4">
                 <div className="flex shrink-0 gap-4 text-white/40">
