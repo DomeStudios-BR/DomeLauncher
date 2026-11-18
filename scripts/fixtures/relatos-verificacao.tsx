@@ -8,6 +8,10 @@ import '../../src/index.css';
 
 Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {
     invoke: async (comando: string, argumentos: Record<string, unknown>) => {
+        if (comando === 'get_instances') return [{ id: 'instancia-teste', name: 'Minecraft de teste' }];
+        if (comando === 'obter_logs_relato_instancia') {
+            return 'java.lang.OutOfMemoryError: Java heap space\naccess_token: segredo-do-jogo';
+        }
         if (comando === 'plugin:dialog|open') {
             const opcoes = argumentos.options as { filters: Array<{ name: string }> };
             return opcoes.filters[0].name === 'Vídeo' ? 'C:\\clip.webm' : 'C:\\captura.png';

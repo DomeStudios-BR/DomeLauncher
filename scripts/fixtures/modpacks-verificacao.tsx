@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Explore from "../../src/components/Explore";
-import InstanceManager from "../../src/components/InstanceManager";
+import LibraryPage from "../../src/components/LibraryPage";
+import Settings from "../../src/components/Settings";
+import InstanceManager, { type ControleNavegacaoInstancia } from "../../src/components/InstanceManager";
 import ProjetoDetalheModal, { type ProjetoConteudo } from "../../src/components/ProjetoDetalheModal";
 import type { Instance } from "../../src/hooks/useLauncher";
 import "../../src/index.css";
@@ -57,6 +59,18 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
     transformCallback: (callback: unknown) => { callbacks.set(++proximoCallback, callback); return proximoCallback; },
     invoke: async (comando: string, argumentos: Record<string, unknown> = {}) => {
         chamadas.push({ comando, argumentos });
+        if (comando === "listar_instancias_importaveis") return [{
+            idExterno: "curseforge:ultimachance", launcher: "curseforge", nome: "UltimaChance",
+            versaoMinecraft: "1.18.2", loaderType: "Forge", loaderVersion: "40.2.21",
+            caminhoOrigem: "D:/CurseForge/UltimaChance",
+        }];
+        if (comando === "plugin:dialog|open") return "D:/Downloads/UltimaChance-1.4.zip";
+        if (comando === "importar_arquivo_biblioteca") {
+            if (new URLSearchParams(location.search).has("zipInvalido")) {
+                throw "O ZIP do CurseForge precisa conter manifest.json na raiz.";
+            }
+            return "ultimachance";
+        }
         if (comando === "plugin:event|listen") return ++proximoCallback;
         if (comando === "get_instance_details") return { ...instancia, mcType: "fabric" };
         if (comando === "update_instance_name") { instancia.name = String(argumentos.newName); return; }
@@ -95,18 +109,37 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
         if (comando === "listar_versoes_projeto_curseforge") return versoes;
         if (comando === "buscar_detalhes_projeto_curseforge") return { ...projeto, categorias: [], galeria: [] };
         if (comando === "listar_categorias_busca_online" || comando === "obter_conteudo_instalado_detalhado") return [];
-        if (comando === "get_settings") return { ram_mb: 4096, java_args: "" };
+        if (comando === "get_system_ram") return 16384;
+        if (comando === "get_instances" || comando === "detect_java_installations") return [];
+        if (comando === "get_settings") return {
+            ram_mb: 4096, java_args: "", instances_path: "D:/Dome", width: 1280, height: 720,
+            sincronizacao_instancias: { instancia_origem_id: null },
+        };
         return null;
     },
 } });
 Object.assign(window, { chamadas });
 
 function Verificacao() {
+    const gerenciador = useRef<ControleNavegacaoInstancia>(null);
     const [aberto, setAberto] = useState(false);
     const [instalar, setInstalar] = useState(false);
     const [instancias, setInstancias] = useState(instanciasIniciais);
+    if (new URLSearchParams(location.search).has("configuracoes")) return <Settings />;
+    if (new URLSearchParams(location.search).has("importarZip")) return (
+        <LibraryPage instances={instancias} instanciaAtivaId={null} user={{}}
+            onSelectInstance={() => {}} onDesselecionarInstancia={() => {}}
+            onAbrirGerenciadorInstancia={() => {}} onLaunch={() => {}} onDelete={async () => {}}
+            onCreateNew={() => {}} onLogin={() => {}} onTrocarVersaoModpack={() => {}}
+            onAtualizarInstancias={async () => {
+                setInstancias([...instanciasIniciais, { ...instancia, id: "ultimachance", name: "UltimaChance" }]);
+            }} />
+    );
     if (new URLSearchParams(location.search).has("editar")) return (
-        <InstanceManager instanceId={instancia.id} onBack={() => {}} />
+        <>
+            <button title="Editar nome" onClick={() => gerenciador.current?.editar()}>Editar</button>
+            <InstanceManager ref={gerenciador} instanceId={instancia.id} onBack={() => {}} />
+        </>
     );
     return aberto ? (
         <ProjetoDetalheModal projeto={projeto} instancias={instancias} usuarioLogado instalarAoAbrir={instalar}

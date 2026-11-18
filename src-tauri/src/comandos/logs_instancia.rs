@@ -5,6 +5,41 @@ use crate::launcher::{Instance, LauncherState};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+#[tauri::command]
+pub async fn obter_logs_relato_instancia(
+    instance_id: String,
+    state: State<'_, LauncherState>,
+) -> Result<String, String> {
+    let instancia = obter_instancia_por_id(&state, &instance_id)?;
+    tauri::async_runtime::spawn_blocking(move || coletar_logs_relato(&instancia.path))
+        .await
+        .map_err(|_| "Não foi possível preparar os logs do Minecraft.".to_string())?
+}
+
+fn coletar_logs_relato(raiz: &std::path::Path) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut resultado = String::new();
+    for nome in ["dome-console.log", "latest.log"] {
+        let caminho = raiz.join("logs").join(nome);
+        if !caminho.exists() {
+            continue;
+        }
+        let seguro = validar_caminho_dentro_raiz(raiz, &caminho)?;
+        let mut arquivo = std::fs::File::open(seguro).map_err(|erro| erro.to_string())?;
+        let tamanho = arquivo.metadata().map_err(|erro| erro.to_string())?.len();
+        arquivo
+            .seek(SeekFrom::Start(tamanho.saturating_sub(8000)))
+            .map_err(|erro| erro.to_string())?;
+        let mut bytes = Vec::new();
+        arquivo
+            .take(8000)
+            .read_to_end(&mut bytes)
+            .map_err(|erro| erro.to_string())?;
+        resultado.push_str(&format!("\n{nome}:\n{}", String::from_utf8_lossy(&bytes)));
+    }
+    Ok(resultado)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LogFile {
@@ -124,4 +159,27 @@ pub fn delete_log_file(
     let instance = obter_instancia_por_id(&state, &instance_id)?;
     let caminho_log = validar_caminho_log_instancia(&instance, &file_path)?;
     std::fs::remove_file(caminho_log).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod testes_relato {
+    use super::*;
+
+    #[test]
+    fn coleta_final_dos_logs_com_limite_sem_modificar_originais() {
+        let raiz = std::env::temp_dir().join(format!("dome-relato-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(raiz.join("logs")).unwrap();
+        let console = format!("{}FALHA_JAVA", "a".repeat(20000));
+        std::fs::write(raiz.join("logs/dome-console.log"), &console).unwrap();
+        std::fs::write(raiz.join("logs/latest.log"), "Última mensagem do jogo").unwrap();
+        let resultado = coletar_logs_relato(&raiz).unwrap();
+        assert!(resultado.contains("FALHA_JAVA"));
+        assert!(resultado.contains("Última mensagem do jogo"));
+        assert!(resultado.len() < 8100);
+        assert_eq!(
+            std::fs::read_to_string(raiz.join("logs/dome-console.log")).unwrap(),
+            console
+        );
+        std::fs::remove_dir_all(raiz).unwrap();
+    }
 }

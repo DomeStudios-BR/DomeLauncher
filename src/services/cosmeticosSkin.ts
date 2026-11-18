@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import { invoke } from "@tauri-apps/api/core";
 import { resolverTexturaMinecraft } from "../lib/texturaMinecraft";
 
@@ -70,11 +71,7 @@ export function carregarPreviewSkin(
         const textura = await resolverTexturaMinecraft(cosmeticos.skinUrl);
         const previa = { cosmeticos, textura, atualizadaEm: Date.now() };
         previas.set(uuid, previa);
-        try {
-            localStorage.setItem(chavePreview(uuid), JSON.stringify(previa));
-        } catch {
-            console.warn("Não foi possível salvar a prévia da skin nesta conta.");
-        }
+        gravarArmazenamentoLocal(chavePreview(uuid), JSON.stringify(previa));
         return previa;
     });
     consultas.set(uuid, { inicio: agora, promessa });

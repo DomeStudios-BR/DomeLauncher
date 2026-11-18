@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, type KeyboardEvent } from "react";
 import {
   Cpu,
   Monitor,
@@ -109,7 +109,37 @@ const JVM_PRESETS = [
   },
 ];
 
+const ABAS_CONFIGURACOES = [
+  { id: "launcher", titulo: "Launcher", Icone: Rocket },
+  { id: "desempenho", titulo: "Desempenho", Icone: Cpu },
+  { id: "java", titulo: "Java", Icone: Coffee },
+  { id: "janela", titulo: "Janela do jogo", Icone: Monitor },
+  { id: "sincronizacao", titulo: "Sincronização", Icone: RefreshCw },
+  { id: "conta", titulo: "Conta e onboarding", Icone: Shield },
+] as const;
+
+type AbaConfiguracoes = (typeof ABAS_CONFIGURACOES)[number]["id"];
+
 export default function Settings() {
+  const [abaAtiva, setAbaAtiva] = useState<AbaConfiguracoes>("launcher");
+  const painelAbas = useRef<HTMLDivElement>(null);
+
+  const botoesAbas = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function navegarAbas(evento: KeyboardEvent<HTMLButtonElement>, indice: number) {
+    const total = ABAS_CONFIGURACOES.length;
+    const destinos: Record<string, number> = {
+      ArrowDown: (indice + 1) % total,
+      ArrowUp: (indice + total - 1) % total,
+      Home: 0,
+      End: total - 1,
+    };
+    const destino = destinos[evento.key];
+    if (typeof destino !== "number") return;
+    evento.preventDefault();
+    setAbaAtiva(ABAS_CONFIGURACOES[destino].id);
+    botoesAbas.current[destino]?.focus();
+  }
   const [settings, setSettings] = useState<GlobalSettings>({
     ram_mb: 4096,
     java_path: null,
@@ -135,6 +165,10 @@ export default function Settings() {
   const [javas, setJavas] = useState<JavaInfo[]>([]);
   const [systemRam, setSystemRam] = useState(16384);
   const [carregando, setCarregando] = useState(true);
+
+  useLayoutEffect(() => {
+    if (painelAbas.current) painelAbas.current.scrollTop = 0;
+  }, [abaAtiva, carregando]);
   const [detectandoJava, setDetectandoJava] = useState(false);
   const [instalandoJava, setInstalandoJava] = useState<number | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -393,7 +427,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6 pb-32">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       {/* Alerta de erro */}
       <AnimatePresence>
         {erro && (
@@ -401,7 +435,8 @@ export default function Settings() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm"
+            role="alert"
+            className="flex items-center gap-3 border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400"
           >
             <AlertCircle size={18} />
             <span className="flex-1">{erro}</span>
@@ -412,13 +447,42 @@ export default function Settings() {
         )}
       </AnimatePresence>
 
-      <div className="flex flex-col gap-6">
+      <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-3 lg:gap-5">
+        <div role="tablist" aria-label="Configurações" aria-orientation="vertical"
+          className="grid max-h-full w-11 self-start gap-1 overflow-y-auto border border-white/10
+            bg-[#111111] p-1 sm:w-48">
+          {ABAS_CONFIGURACOES.map(({ id, titulo, Icone }, indice) => (
+            <button
+              key={id}
+              ref={(elemento) => { botoesAbas.current[indice] = elemento; }}
+              id={`configuracao-aba-${id}`}
+              type="button"
+              role="tab"
+              title={titulo}
+              aria-label={titulo}
+              aria-selected={abaAtiva === id}
+              aria-controls={`configuracao-painel-${id}`}
+              tabIndex={abaAtiva === id ? 0 : -1}
+              onClick={() => setAbaAtiva(id)}
+              onKeyDown={(evento) => navegarAbas(evento, indice)}
+              className="flex min-h-9 items-center justify-center gap-2 border border-transparent px-2
+                text-xs font-bold text-white/65 hover:bg-white/5 hover:text-white focus-visible:outline-emerald-400
+                aria-selected:border-emerald-400/30 aria-selected:border-l-emerald-400
+                aria-selected:bg-emerald-400/10 aria-selected:text-emerald-300 sm:justify-start"
+            >
+              <Icone size={16} className="shrink-0" />
+              <span className="hidden sm:inline">{titulo}</span>
+            </button>
+          ))}
+        </div>
+        <div
+          ref={painelAbas}
+          className="min-h-0 min-w-0 overflow-y-auto border border-white/10 bg-[#171717] [scrollbar-gutter:stable]"
+        >
 
       {/* ===== LAUNCHER ===== */}
       <Secao
-        icone={<Rocket className="text-purple-400" size={20} />}
-        titulo="Launcher"
-        descricao="Comportamento do launcher"
+        id="launcher" ativa={abaAtiva === "launcher"}
       >
         <div className="space-y-2">
           <p className="text-sm font-medium">Pasta de instâncias</p>
@@ -475,9 +539,7 @@ export default function Settings() {
 
       {/* ===== DESEMPENHO ===== */}
       <Secao
-        icone={<Cpu className="text-emerald-400" size={20} />}
-        titulo="Desempenho"
-        descricao="Memória padrão dos modpacks e configurações da JVM"
+        id="desempenho" ativa={abaAtiva === "desempenho"}
       >
         {/* RAM Slider */}
         <div className="space-y-3">
@@ -581,7 +643,7 @@ export default function Settings() {
                     <button
                       key={preset.nome}
                       onClick={() => atualizarConfig("java_args", preset.args)}
-                      className={`flex-1 px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                      className={`flex-1 px-3 py-2 text-xs font-medium transition-all border ${
                         settings.java_args === preset.args
                           ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                           : "bg-white/3 border-white/5 text-white/40 hover:bg-white/5 hover:text-white/60"
@@ -598,7 +660,7 @@ export default function Settings() {
                   onChange={(e) => atualizarConfig("java_args", e.target.value)}
                   placeholder="-XX:+UseG1GC ..."
                   rows={3}
-                  className="w-full bg-white/3 border border-white/5 rounded-xl p-3 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50 text-white/70 resize-none"
+                  className="w-full bg-white/3 border border-white/5 p-3 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50 text-white/70 resize-none"
                 />
               </motion.div>
             )}
@@ -608,9 +670,7 @@ export default function Settings() {
 
       {/* ===== JAVA ===== */}
       <Secao
-        icone={<Coffee className="text-amber-400" size={20} />}
-        titulo="Java Runtime"
-        descricao="Detecção e instalação automática de Java"
+        id="java" ativa={abaAtiva === "java"}
       >
         {/* Toggle Auto Java */}
         <div className="flex items-center justify-between">
@@ -624,6 +684,7 @@ export default function Settings() {
             </p>
           </div>
           <Toggle
+            titulo="Java automático"
             ativo={settings.auto_java}
             onChange={(v) => atualizarConfig("auto_java", v)}
           />
@@ -684,7 +745,7 @@ export default function Settings() {
                           atualizarConfig("java_path", java.path);
                         }
                       }}
-                      className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer group ${
+                      className={`flex items-center gap-3 p-3 border transition-all cursor-pointer group ${
                         !settings.auto_java && settings.java_path === java.path
                           ? "bg-emerald-500/10 border-emerald-500/20"
                           : "bg-white/2 border-white/5 hover:bg-white/5"
@@ -692,7 +753,7 @@ export default function Settings() {
                     >
                       {/* Ícone do vendor */}
                       <div
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center text-xs font-black ${
+                        className={`w-10 h-10 flex items-center justify-center text-xs font-black ${
                           java.is_managed
                             ? "bg-emerald-500/10 text-emerald-400"
                             : "bg-white/5 text-white/30"
@@ -747,7 +808,7 @@ export default function Settings() {
                         key={v}
                         onClick={() => !jaExiste && instalarJava(v)}
                         disabled={!!instalandoJava || jaExiste}
-                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all border ${
+                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-all border ${
                           jaExiste
                             ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/40 cursor-default"
                             : "bg-white/3 border-white/5 text-white/40 hover:bg-emerald-500/10 hover:border-emerald-500/20 hover:text-emerald-400"
@@ -773,16 +834,14 @@ export default function Settings() {
 
       {/* ===== JANELA ===== */}
       <Secao
-        icone={<Monitor className="text-cyan-400" size={20} />}
-        titulo="Janela do Jogo"
-        descricao="Resolução e modo de exibição"
+        id="janela" ativa={abaAtiva === "janela"}
       >
         {/* Resoluções predefinidas */}
         <div className="space-y-3">
           <label className="text-sm font-medium text-white/60">
             Resolução Inicial
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {RESOLUTIONS.map((res) => (
               <button
                 key={res.label}
@@ -790,9 +849,9 @@ export default function Settings() {
                   atualizarConfig("width", res.w);
                   atualizarConfig("height", res.h);
                 }}
-                className={`px-3 py-2.5 rounded-xl text-xs font-medium transition-all border ${
+                className={`px-3 py-2.5 text-xs font-medium transition-all border ${
                   settings.width === res.w && settings.height === res.h
-                    ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400"
+                    ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
                     : "bg-white/3 border-white/5 text-white/40 hover:bg-white/5 hover:text-white/60"
                 }`}
               >
@@ -808,14 +867,14 @@ export default function Settings() {
                 type="number"
                 value={settings.width}
                 onChange={(e) => atualizarConfig("width", parseInt(e.target.value) || 854)}
-                className="w-24 bg-white/3 border border-white/5 rounded-xl p-2.5 text-sm text-center focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                className="w-24 bg-white/3 border border-white/5 p-2.5 text-sm text-center focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
               />
               <X size={14} className="text-white/20" />
               <input
                 type="number"
                 value={settings.height}
                 onChange={(e) => atualizarConfig("height", parseInt(e.target.value) || 480)}
-                className="w-24 bg-white/3 border border-white/5 rounded-xl p-2.5 text-sm text-center focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                className="w-24 bg-white/3 border border-white/5 p-2.5 text-sm text-center focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
               />
             </div>
           )}
@@ -823,9 +882,7 @@ export default function Settings() {
       </Secao>
 
         <Secao
-          icone={<RefreshCw className="text-emerald-400" size={20} />}
-          titulo="Sincronização entre instâncias"
-          descricao="Use uma instância como base para as demais"
+          id="sincronizacao" ativa={abaAtiva === "sincronizacao"}
         >
           <div className="space-y-2">
             <label className="text-sm font-medium text-white/70">Instância de origem</label>
@@ -877,9 +934,7 @@ export default function Settings() {
         </Secao>
 
         <Secao
-          icone={<Shield size={18} className="text-emerald-400" />}
-          titulo="Conta e onboarding"
-          descricao="Sessões, integrações e ferramentas de teste"
+          id="conta" ativa={abaAtiva === "conta"}
         >
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-4 border border-white/10 bg-white/[0.02] p-4">
@@ -927,6 +982,7 @@ export default function Settings() {
             </div>
           </div>
         </Secao>
+        </div>
       </div>
     </div>
   );
@@ -935,75 +991,55 @@ export default function Settings() {
 // ===== COMPONENTES AUXILIARES =====
 
 function Secao({
-  icone,
-  titulo,
-  descricao,
+  id,
+  ativa,
   children,
 }: {
-  icone: React.ReactNode;
-  titulo: string;
-  descricao: string;
+  id: AbaConfiguracoes;
+  ativa: boolean;
   children: React.ReactNode;
 }) {
-  const [aberta, setAberta] = useState(false);
-
+  const titulo = ABAS_CONFIGURACOES.find((aba) => aba.id === id)?.titulo;
   return (
-    <section className="overflow-hidden rounded-2xl border border-white/5 bg-white/[0.02]">
-      <button
-        type="button"
-        onClick={() => setAberta((valor) => !valor)}
-        aria-expanded={aberta}
-        className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.025]"
-      >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.04]">
-          {icone}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-base font-bold">{titulo}</h3>
-          <p className="truncate text-[11px] text-white/25">{descricao}</p>
-        </div>
-        <motion.span
-          animate={{ rotate: aberta ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="text-white/30"
-        >
-          <ChevronDown size={17} />
-        </motion.span>
-      </button>
-      <AnimatePresence initial={false}>
-        {aberta && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-            className="overflow-hidden"
-          >
-            <div className="space-y-4 border-t border-white/5 p-5">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <section
+      id={`configuracao-painel-${id}`}
+      aria-labelledby={`configuracao-aba-${id}`}
+      role="tabpanel"
+      hidden={!ativa}
+      tabIndex={0}
+      className="focus-visible:outline-emerald-400 focus-visible:outline-offset-[-2px]"
+    >
+      <h2 className="border-b border-white/10 bg-[#111111] px-4 py-3 text-xs font-bold uppercase tracking-wider">
+        {titulo}
+      </h2>
+      <div className="space-y-4 p-4 sm:p-5">{children}</div>
     </section>
   );
 }
 
 function Toggle({
+  titulo,
   ativo,
   onChange,
 }: {
+  titulo: string;
   ativo: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
     <button
+      type="button"
       onClick={() => onChange(!ativo)}
-      className={`w-11 h-6 rounded-full transition-all relative ${
-        ativo ? "bg-emerald-500" : "bg-white/10"
+      role="switch"
+      aria-label={titulo}
+      aria-checked={ativo}
+      className={`relative h-6 w-11 shrink-0 border transition-colors ${
+        ativo ? "border-emerald-400/45 bg-emerald-500/25" : "border-white/15 bg-white/5"
       }`}
     >
       <motion.div
-        className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
-        animate={{ left: ativo ? 24 : 4 }}
+        className={`absolute top-[3px] size-4 ${ativo ? "bg-emerald-400" : "bg-white/55"}`}
+        animate={{ left: ativo ? 23 : 3 }}
         transition={{ type: "spring", stiffness: 500, damping: 30 }}
       />
     </button>
@@ -1027,7 +1063,7 @@ function ToggleItem({
         <p className="text-sm font-medium">{titulo}</p>
         <p className="text-xs text-white/30 mt-0.5">{descricao}</p>
       </div>
-      <Toggle ativo={ativo} onChange={onChange} />
+      <Toggle titulo={titulo} ativo={ativo} onChange={onChange} />
     </div>
   );
 }

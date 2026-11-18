@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import { obterRequisitosModpack } from "../services/requisitosModpack";
 import { ativarContaFavoritos, sincronizarColecaoFavoritos } from '../services/colecaoFavoritos';
 import { obterPerfilFavoritos } from '../services/favoritosProjetos';
@@ -1325,7 +1326,7 @@ export default function SocialSidebar({
 
   useEffect(() => {
     if (!chaveStorageNaoLidas) return;
-    localStorage.setItem(chaveStorageNaoLidas, JSON.stringify(naoLidasPorAmigo));
+    gravarArmazenamentoLocal(chaveStorageNaoLidas, JSON.stringify(naoLidasPorAmigo));
   }, [chaveStorageNaoLidas, naoLidasPorAmigo]);
 
   useEffect(() => {

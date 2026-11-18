@@ -48,7 +48,12 @@ try {
         throw new Error('Envio vazio foi permitido.');
     }
     await pagina.getByText('Conferir logs que serão enviados', { exact: true }).click();
+    await pagina.getByRole('combobox', { name: 'Logs do Minecraft' }).selectOption('instancia-teste');
+    await pagina.waitForFunction(() => document.querySelector('pre')?.textContent?.includes('OutOfMemoryError'));
     const logs = await pagina.locator('pre').innerText();
+    if (!logs.includes('OutOfMemoryError') || logs.includes('segredo-do-jogo')) {
+        throw new Error('Logs do Minecraft ausentes ou sem sanitização.');
+    }
     if (logs.includes('segredo-nao-publicavel') || logs.includes('Pessoa') ||
         logs.includes('detalhe-nao-publicavel') || !logs.includes('Falha ao carregar') ||
         !logs.includes('http://localhost:1420/src/main.tsx:20:4') || !logs.includes('Falha detalhada')) {

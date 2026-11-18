@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
+pub mod importacao;
 pub mod requisitos;
 
 fn cliente_modpack() -> Result<reqwest::Client, String> {
@@ -129,7 +130,8 @@ pub(crate) fn caminho_conteudo_permitido(caminho: &str) -> bool {
             "natives",
             "temp",
         ]
-        .contains(&primeiro)
+        .iter()
+        .any(|nome| nome.eq_ignore_ascii_case(primeiro))
 }
 
 fn montar_url_cdn_curseforge(file_id: u64, nome_arquivo: &str) -> String {
@@ -300,11 +302,9 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
     progresso: &Acompanhamento,
 ) -> Result<(), String> {
     progresso.informar("Preparando modpack", 0, 1);
-    let mods_path = instance_path.join("mods");
     let temp_path = instance_path.join("temp");
 
     // Criar diretórios
-    std::fs::create_dir_all(&mods_path).map_err(|e| format!("Erro ao criar pasta mods: {}", e))?;
     std::fs::create_dir_all(&temp_path).map_err(|e| format!("Erro ao criar pasta temp: {}", e))?;
 
     let nome_arquivo_seguro = std::path::Path::new(&file_name)
@@ -366,7 +366,21 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
     let file =
         std::fs::File::open(&mrpack_path).map_err(|e| format!("Erro ao abrir mrpack: {}", e))?;
 
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Erro ao ler ZIP: {}", e))?;
+    let archive = zip::ZipArchive::new(file).map_err(|e| format!("Erro ao ler ZIP: {}", e))?;
+    instalar_conteudo_zip(instance_path, archive, client, false, progresso).await?;
+    std::fs::remove_dir_all(&temp_path).ok();
+    Ok(())
+}
+
+async fn instalar_conteudo_zip(
+    instance_path: PathBuf,
+    mut archive: zip::ZipArchive<std::fs::File>,
+    client: reqwest::Client,
+    importacao_local: bool,
+    progresso: &Acompanhamento,
+) -> Result<(), String> {
+    let mods_path = instance_path.join("mods");
+    std::fs::create_dir_all(&mods_path).map_err(|e| format!("Erro ao criar pasta mods: {}", e))?;
     progresso.faixa(0, 30).concluir("Pacote recebido");
 
     let requisitos = requisitos::ler_requisitos(&mut archive)?;
@@ -485,34 +499,23 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
             .iter()
             .map(|(_, file_id)| *file_id)
             .collect();
-        let detalhes_url = format!("{}/mods/files", crate::CURSEFORGE_API_BASE);
-        let request = crate::anexar_headers_curseforge(
-            client
-                .post(&detalhes_url)
-                .json(&serde_json::json!({ "fileIds": ids_arquivos })),
-        )?;
-        let resposta = request
-            .send()
-            .await
-            .map_err(|e| format!("Erro ao buscar arquivos do modpack no CurseForge: {}", e))?;
-
-        if !resposta.status().is_success() {
-            return Err(format!(
-                "CurseForge retornou HTTP {} ao buscar os arquivos do modpack.",
-                resposta.status()
-            ));
+        let mut detalhes_por_id = HashMap::new();
+        for lote in ids_arquivos.chunks(50) {
+            let dados = super::projetos_conteudo::json_remoto(crate::anexar_headers_curseforge(
+                client
+                    .post(format!("{}/mods/files", crate::CURSEFORGE_API_BASE))
+                    .json(&serde_json::json!({ "fileIds": lote })),
+            )?)
+            .await?;
+            for detalhe in dados["data"]
+                .as_array()
+                .ok_or("Resposta sem arquivos CurseForge.")?
+            {
+                if let Some(id) = detalhe["id"].as_u64() {
+                    detalhes_por_id.insert(id, detalhe.clone());
+                }
+            }
         }
-
-        let payload: serde_json::Value = resposta
-            .json()
-            .await
-            .map_err(|e| format!("Erro ao interpretar arquivos do CurseForge: {}", e))?;
-        let detalhes_por_id: HashMap<u64, serde_json::Value> = payload["data"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|detalhe| detalhe["id"].as_u64().map(|id| (id, detalhe.clone())))
-            .collect();
 
         for (mod_id, file_id) in arquivos_curseforge {
             let Some(data) = detalhes_por_id.get(&file_id) else {
@@ -606,6 +609,11 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
         let Some(relative) = nome
             .strip_prefix(&prefixo_overrides)
             .or_else(|| nome.strip_prefix("client-overrides/"))
+            .or_else(|| {
+                (importacao_local
+                    && crate::aplicacao::importacao_exportacao::conteudo_na_raiz_importavel(&nome))
+                .then_some(nome.as_str())
+            })
         else {
             continue;
         };
@@ -613,7 +621,12 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
             continue;
         }
         super::social_launcher::pacotes_sociais::validar_nome(relative.trim_end_matches('/'))?;
-        if !caminho_conteudo_permitido(relative) {
+        let mundo_importado = importacao_local
+            && relative
+                .split('/')
+                .next()
+                .is_some_and(|pasta| pasta.eq_ignore_ascii_case("saves"));
+        if !mundo_importado && !caminho_conteudo_permitido(relative) {
             continue;
         }
         let dest = instance_path.join(relative);
@@ -628,17 +641,26 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
                 .map_err(|e| format!("Erro ao criar arquivo: {}", e))?;
             std::io::copy(&mut file, &mut outfile)
                 .map_err(|e| format!("Erro ao copiar arquivo: {}", e))?;
-            if ![
-                "options.txt",
-                "optionsof.txt",
-                "optionsshaders.txt",
-                "servers.dat",
-            ]
-            .contains(&relative)
+            if !mundo_importado
+                && ![
+                    "options.txt",
+                    "optionsof.txt",
+                    "optionsshaders.txt",
+                    "servers.dat",
+                ]
+                .contains(&relative)
             {
                 caminhos_gerenciados.push(relative.into());
             }
         }
+    }
+
+    if importacao_local {
+        arquivos_para_baixar.retain(|(_, _, caminho)| {
+            !caminhos_gerenciados
+                .iter()
+                .any(|local| local.eq_ignore_ascii_case(caminho))
+        });
     }
 
     println!(
@@ -785,9 +807,6 @@ pub(crate) async fn instalar_arquivos_em_pasta_com_progresso(
     )
     .map_err(|e| e.to_string())?;
 
-    // Limpar arquivos temporários
-    std::fs::remove_dir_all(&temp_path).ok();
-
     println!("[install_modpack_files] Instalação concluída!");
     progresso.concluir("Modpack instalado");
     Ok(())
@@ -911,6 +930,74 @@ mod testes {
     use super::{
         montar_url_cdn_curseforge, requisitos::RequisitosModpack, validar_requisitos_instancia,
     };
+
+    #[tokio::test]
+    async fn importa_conteudo_da_raiz_e_overrides_sem_descartar_mundos() {
+        use std::io::Write;
+
+        let temp = std::env::temp_dir();
+        let raiz = temp.join(format!("dome-zip-teste-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&raiz).unwrap();
+        let _limpeza =
+            crate::comandos::social_launcher::pacotes_sociais::PastaTemporaria::nova(&temp, &raiz)
+                .unwrap();
+        let instancia = raiz.join("instancia");
+        std::fs::create_dir(&instancia).unwrap();
+        let dados = serde_json::json!({
+            "id": "teste", "name": "Teste", "version": "1.18.2", "mcType": "Forge",
+            "loaderType": "Forge", "loaderVersion": "40.2.21", "path": instancia, "created": ""
+        });
+        std::fs::write(instancia.join("instance.json"), dados.to_string()).unwrap();
+        let caminho_zip = raiz.join("modpack.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&caminho_zip).unwrap());
+        let manifesto = serde_json::json!({
+            "minecraft": { "version": "1.18.2", "modLoaders": [
+                { "id": "forge-40.2.21", "primary": true }
+            ] },
+            "files": [],
+            "overrides": "conteudo"
+        });
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(manifesto.to_string().as_bytes()).unwrap();
+        for caminho in [
+            "mods/local.jar",
+            "saves/mundo/level.dat",
+            "conteudo/config/mod.toml",
+            "conteudo/resourcepacks/textura.zip",
+            "conteudo/versions/protegido.json",
+        ] {
+            zip.start_file(caminho, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(caminho.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        let arquivo = zip::ZipArchive::new(std::fs::File::open(caminho_zip).unwrap()).unwrap();
+        super::instalar_conteudo_zip(
+            instancia.clone(),
+            arquivo,
+            super::cliente_modpack().unwrap(),
+            true,
+            &super::Acompanhamento::default(),
+        )
+        .await
+        .unwrap();
+        for (destino, origem) in [
+            ("mods/local.jar", "mods/local.jar"),
+            ("saves/mundo/level.dat", "saves/mundo/level.dat"),
+            ("config/mod.toml", "conteudo/config/mod.toml"),
+            (
+                "resourcepacks/textura.zip",
+                "conteudo/resourcepacks/textura.zip",
+            ),
+        ] {
+            assert_eq!(
+                std::fs::read(instancia.join(destino)).unwrap(),
+                origem.as_bytes()
+            );
+        }
+        assert!(!instancia.join("versions/protegido.json").exists());
+    }
 
     #[test]
     fn exige_versao_exata_antes_de_substituir_conteudo() {

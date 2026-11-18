@@ -192,6 +192,9 @@ a instância. Cada versão consultada em Mods conserva sua lista e a consulta pe
 Os servidores preservam lista, status Online/Offline, MOTD, jogadores e ping; verificar manualmente continua
 atualizando o servidor. Reabrir a instância descarta esses dados; trocar o modpack renova as consultas da origem.
 
+As sugestões de atualização de conteúdo no Modrinth consideram somente publicações release.
+Betas e alphas permanecem na escolha manual. O cache antigo de sugestões deve ser revalidado.
+
 A identificação de mods externos usa `aplicacao/identificacao_mods.rs`: SHA-512 no Modrinth e fingerprint exato
 no CurseForge, incluindo desativados e arquivos renomeados. Preserve a verificação de todos os lotes, a distinção
 entre arquivo desconhecido e falha de rede e o bloqueio de download para terceiros. O módulo
@@ -209,10 +212,11 @@ A lista recarrega após a cópia; respostas antigas de identificação e atualiz
 mais recente. Nome, Ativo e Versão
 alternam a direção da ordenação. Ícone e nome abrem a página interna quando há projeto e fonte identificados.
 Em Versão, o terceiro estado coloca atualizações disponíveis primeiro, mantendo o texto Versão e usando o ícone
-de recarregar no lugar da seta de ordenação. O ícone e a numeração da versão têm molduras separadas.
-O ícone abre a escolha de versão e usa a cor de destaque quando há atualização; não há botão individual
-Atualizar na linha. Clicar na numeração abre a aba
-Changelog da versão instalada. No modal de troca, a aba Changelog fica visível desde a abertura e consulta
+de recarregar no lugar da seta de ordenação. A coluna mostra somente setas opostas para trocar a versão, sem fundo e com borda visível
+apenas no hover. A versão atual permanece no nome acessível e nos detalhes do conteúdo.
+O botão usa a cor de destaque quando há atualização.
+A tela de instância fica centralizada com largura máxima de 1600 px.
+No modal de troca, a aba Changelog fica visível desde a abertura e consulta
 a versão selecionada. Clicar no número de outra versão continua abrindo suas notas sem alterar a seleção.
 Nas páginas de projetos, os cartões somente selecionam a versão.
 A seleção é indicada somente pela cor do cartão; o selo INSTALADA fica no canto superior direito.
@@ -242,7 +246,9 @@ instância restaura o filtro e as regras de instalação.
 Sem correspondência da versão instalada, informe
 a falha de identificação; nunca use as notas da versão mais recente como substituição.
 Instalação, download e troca de versão mostram o percentual nativo, com fases e unidades concluídas;
-não simule avanço por tempo. A barra inferior deixa somente o botão Jogar/Login/Encerrar interativo:
+não simule avanço por tempo. A barra inferior existente no App atende também a tela da instância, com Jogar/Login/Encerrar
+centralizado em fonte Minecraft e opções no canto direito. A lista reserva espaço para o rodapé.
+Somente o botão principal e as opções interceptam cliques:
 texto, laterais e padding do rodapé não podem interceptar cliques nos elementos que estão atrás.
 A aba Mundos usa a soma recursiva real dos arquivos e mostra falha de leitura separadamente do estado vazio.
 Os indicadores dos cabeçalhos ocupam um espaço fixo; alternar a ordenação mantém a posição do texto e a altura
@@ -484,3 +490,11 @@ A descrição publicada no `latest.json` é guardada antes da instalação e exi
 novidades, quando a versão instalada for aberta pela primeira vez. Preserve esse vínculo com `releaseBody`.
 
 As notas versionadas em `.github/releases/vX.Y.Z.md` têm prioridade sobre a mensagem do commit para o corpo da release e do manifesto. Isso preserva as novidades mesmo em merges que alteram a descrição do commit.
+
+## Armazenamento da interface
+
+Use `gravarArmazenamentoLocal` para preferências da interface. O cache de conteúdo instalado fica limitado
+a 512 Ki caracteres e não persiste ícones em data URI. A inicialização compacta o cache legado antes de
+montar React. Quando falta espaço, a gravação descarta somente esse cache regenerável e tenta novamente.
+Uma segunda falha retorna `false`, sem interromper a renderização. Dados de contas, mundos e instâncias
+não são removidos. Fluxos de migração que dependem de persistência confirmada devem verificar o resultado.

@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "./armazenamentoLocal";
 export const VERSAO_ONBOARDING = 1;
 export const CHAVE_ONBOARDING = 'dome:onboarding:versao-concluida';
 export const CHAVE_FORCAR_ONBOARDING = 'dome:onboarding:forcar';
@@ -8,13 +9,13 @@ export function onboardingConcluido(): boolean {
 }
 
 export function concluirOnboarding(): void {
-    localStorage.setItem(CHAVE_ONBOARDING, String(VERSAO_ONBOARDING));
+    gravarArmazenamentoLocal(CHAVE_ONBOARDING, String(VERSAO_ONBOARDING));
     localStorage.removeItem(CHAVE_FORCAR_ONBOARDING);
 }
 
 export function reiniciarOnboarding(): void {
     localStorage.removeItem(CHAVE_ONBOARDING);
-    localStorage.setItem(CHAVE_FORCAR_ONBOARDING, '1');
+    gravarArmazenamentoLocal(CHAVE_FORCAR_ONBOARDING, '1');
     window.dispatchEvent(new Event(EVENTO_REEXIBIR_ONBOARDING));
 }
 

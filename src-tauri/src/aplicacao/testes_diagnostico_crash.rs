@@ -1,6 +1,27 @@
 use super::*;
 use std::io::{Cursor, Write};
 
+#[test]
+fn identifica_memoria_esgotada_sem_cabecalho_de_crash() {
+    let cenario = Cenario::novo();
+    let resultado = cenario.diagnosticar("java.lang.OutOfMemoryError: Java heap space");
+    assert_eq!(
+        resultado.origem.as_deref(),
+        Some("memória insuficiente para o Java")
+    );
+}
+
+#[test]
+fn identifica_driver_opengl_incompativel() {
+    let cenario = Cenario::novo();
+    let resultado =
+        cenario.diagnosticar("GLFW error 65542: WGL: The driver does not support OpenGL");
+    assert_eq!(
+        resultado.origem.as_deref(),
+        Some("driver gráfico sem suporte ao OpenGL necessário")
+    );
+}
+
 struct Cenario(PathBuf);
 
 impl Cenario {

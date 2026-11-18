@@ -80,7 +80,6 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             super::instancias_basicas::rename_instance_folder,
             // Exportação / Importação de instâncias
             super::importacao_exportacao::exportar_instancia,
-            super::importacao_exportacao::importar_instancia_arquivo,
             // Gerenciamento de mundos
             crate::comandos::instancia_sistema::get_worlds,
             crate::comandos::instancia_sistema::get_servers,
@@ -91,6 +90,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             crate::comandos::instancia_sistema::abrir_pasta_mundo,
             // Gerenciamento de logs
             crate::comandos::logs_instancia::get_log_files,
+            crate::comandos::logs_instancia::obter_logs_relato_instancia,
             super::diagnostico_crash::obter_diagnostico_crash,
             crate::comandos::logs_instancia::get_log_content,
             crate::comandos::logs_instancia::delete_log_file,
@@ -105,6 +105,7 @@ pub fn run(contexto: tauri::Context<tauri::Wry>) {
             // Modpacks
             crate::comandos::modpacks::save_modpack_info,
             crate::comandos::modpacks::install_modpack_files,
+            crate::comandos::modpacks::importacao::importar_arquivo_biblioteca,
             crate::comandos::projetos_conteudo::listar_conteudos_versao_projeto,
             crate::comandos::atualizacao_modpacks::trocar_versao_modpack_publico,
             crate::comandos::modpacks::requisitos::obter_requisitos_modpack,

@@ -38,10 +38,35 @@ export default function RelatarProblemaModal({ onFechar }: { onFechar: () => voi
     const [anexando, setAnexando] = useState(false);
     const [erro, setErro] = useState('');
     const [issue, setIssue] = useState<IssueCriada | null>(null);
-    const [logs] = useState(obterLogsRelato);
+    const [logs, setLogs] = useState(obterLogsRelato);
+    const [instancias, setInstancias] = useState<{ id: string; name: string }[]>([]);
+    const [instanciaId, setInstanciaId] = useState('');
+    const [carregandoLogs, setCarregandoLogs] = useState(false);
     const [envioId] = useState(() => crypto.randomUUID());
     const envioAtivo = useRef(false);
     const anexosIncluidos = anexos.filter((anexo) => descricao.includes(`{{anexo:${anexo.id}}}`));
+
+    useEffect(() => {
+        let ativo = true;
+        invoke<{ id: string; name: string }[]>('get_instances').then((itens) => {
+            if (ativo && Array.isArray(itens)) setInstancias(itens);
+        }).catch(() => {});
+        return () => { ativo = false; };
+    }, []);
+
+    useEffect(() => {
+        let ativo = true;
+        const interfaceLogs = obterLogsRelato();
+        setLogs(interfaceLogs);
+        setCarregandoLogs(Boolean(instanciaId));
+        if (!instanciaId) return;
+        invoke<string>('obter_logs_relato_instancia', { instanceId: instanciaId }).then((texto) => {
+            if (ativo) setLogs(sanitizarDiagnostico(texto).slice(-18000) + '\n' + interfaceLogs.slice(-5999));
+        }).catch(() => {
+            if (ativo) setErro('Não foi possível ler os logs da instância selecionada.');
+        }).finally(() => { if (ativo) setCarregandoLogs(false); });
+        return () => { ativo = false; };
+    }, [instanciaId]);
 
     useEffect(() => {
         let ativo = true;
@@ -66,7 +91,7 @@ export default function RelatarProblemaModal({ onFechar }: { onFechar: () => voi
     };
     const enviar = async (evento: FormEvent) => {
         evento.preventDefault();
-        if (!previa || envioAtivo.current || anexando || issue) return;
+        if (!previa || envioAtivo.current || anexando || issue || carregandoLogs) return;
         if (descricao.trim().length < 10 || descricao.length > 10000) {
             setErro('A descrição deve ter entre 10 e 10000 caracteres.');
             return;
@@ -144,6 +169,16 @@ export default function RelatarProblemaModal({ onFechar }: { onFechar: () => voi
                                 onChange={(evento) => setIncluirLogs(evento.target.checked)}
                                 className="accent-emerald-400" />Incluir logs
                         </label>
+                        {incluirLogs && <label className="block space-y-2 text-sm text-white/80">
+                            Logs do Minecraft
+                            <select value={instanciaId} disabled={iniciado}
+                                onChange={(evento) => setInstanciaId(evento.target.value)} className={estiloCampo}>
+                                <option value="">Somente registros do launcher</option>
+                                {instancias.map((instancia) => <option key={instancia.id} value={instancia.id}>
+                                    {instancia.name}
+                                </option>)}
+                            </select>
+                        </label>}
                         {incluirLogs && <details className="text-xs text-white/60">
                             <summary className="cursor-pointer py-1">Conferir logs que serão enviados</summary>
                             <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all
@@ -161,7 +196,7 @@ export default function RelatarProblemaModal({ onFechar }: { onFechar: () => voi
                 <footer className="flex shrink-0 justify-end gap-3 border-t border-white/10 p-4">
                     <button type="button" onClick={fechar} disabled={enviando || anexando}
                         className="px-4 py-2 text-sm text-white/60 disabled:opacity-30">Cancelar</button>
-                    <button type="submit" disabled={carregando || !previa || enviando || anexando ||
+                    <button type="submit" disabled={carregando || carregandoLogs || !previa || enviando || anexando ||
                         titulo.trim().length < 5 || descricao.trim().length < 10 || descricao.length > 10000}
                         className="flex items-center gap-2 border border-emerald-400/50 bg-emerald-500/15 px-4 py-2
                             text-sm text-emerald-300 hover:bg-emerald-500/25

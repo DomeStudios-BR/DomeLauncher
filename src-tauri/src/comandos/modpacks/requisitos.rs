@@ -19,7 +19,7 @@ fn texto_obrigatorio(valor: &Value, campo: &str) -> Result<String, String> {
         .ok_or_else(|| format!("O manifesto do modpack não informa {}.", campo))
 }
 
-fn ler_manifesto(arquivo: &mut impl Read) -> Result<Value, String> {
+pub(super) fn ler_manifesto(arquivo: &mut impl Read) -> Result<Value, String> {
     let mut conteudo = String::new();
     arquivo
         .take(1024 * 1024 + 1)
@@ -80,7 +80,7 @@ fn requisitos_modrinth(manifesto: &Value) -> Result<RequisitosModpack, String> {
     })
 }
 
-fn requisitos_curseforge(manifesto: &Value) -> Result<RequisitosModpack, String> {
+pub(super) fn requisitos_curseforge(manifesto: &Value) -> Result<RequisitosModpack, String> {
     let minecraft = &manifesto["minecraft"];
     let versao_minecraft = texto_obrigatorio(&minecraft["version"], "a versão do Minecraft")?;
     let loaders = minecraft["modLoaders"]
