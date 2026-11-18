@@ -34,6 +34,51 @@ try {
         })) : { id: 'pack', title: 'LostSMP', slug: 'lostsmp', project_type: 'modpack' },
     }));
     const base = servidor.resolvedUrls.local[0] + 'verificacao-modpacks';
+    await pagina.goto(`${base}?configuracoes=1`);
+    const abas = pagina.getByRole('tablist', { name: 'Configurações' });
+    const abaLauncher = abas.getByRole('tab', { name: 'Launcher', exact: true });
+    const painelLauncher = pagina.getByRole('tabpanel', { name: 'Launcher' });
+    await painelLauncher.waitFor();
+    assert.equal(await abas.getByRole('tab').count(), 6);
+    assert.ok((await abas.boundingBox()).x < (await painelLauncher.boundingBox()).x);
+    await abaLauncher.press('ArrowDown');
+    const abaDesempenho = abas.getByRole('tab', { name: 'Desempenho' });
+    assert.equal(await abaDesempenho.getAttribute('aria-selected'), 'true');
+    assert.equal(await pagina.getByRole('tabpanel').count(), 1);
+    await abas.getByRole('tab', { name: 'Janela do jogo' }).click();
+    await pagina.getByRole('tabpanel', { name: 'Janela do jogo' })
+        .getByRole('button', { name: '1280 × 720 (HD)' }).waitFor();
+
+    await pagina.goto(`${base}?importarZip=1`);
+    await pagina.getByRole('button', { name: 'Importar', exact: true }).click();
+    await pagina.getByRole('button', { name: /^Importar de outro launcher/ }).click();
+    const importacaoExterna = pagina.getByRole('dialog', { name: 'Importar de outro launcher' });
+    const perfil = importacaoExterna.getByRole('button', { name: /^UltimaChance/ });
+    await perfil.waitFor();
+    assert.equal(await perfil.getAttribute('aria-pressed'), 'true');
+    await perfil.click();
+    assert.equal(await perfil.getAttribute('aria-pressed'), 'false');
+    assert.equal(await importacaoExterna.getByRole('button', { name: 'Importar selecionadas' }).isDisabled(), true);
+    for (const invalido of [false, true]) {
+        await pagina.goto(`${base}?importarZip=1${invalido ? '&zipInvalido=1' : ''}`);
+        await pagina.getByRole('button', { name: 'Importar', exact: true }).click();
+        const menu = pagina.getByRole('dialog', { name: 'Importar', exact: true });
+        assert.equal(await menu.getByRole('button', { name: /^Importar / }).count(), 2);
+        const importar = menu.getByRole('button', { name: /^Importar arquivo/ });
+        await importar.click();
+        if (invalido) {
+            await pagina.getByRole('alert').filter({ hasText: 'manifest.json na raiz' }).waitFor();
+            assert.equal(await importar.isEnabled(), true);
+        } else {
+            await importar.waitFor({ state: 'hidden' });
+            await pagina.getByText('UltimaChance', { exact: true }).waitFor();
+        }
+        const chamadas = await pagina.evaluate(() => window.chamadas);
+        const seletor = chamadas.find((chamada) => chamada.comando === 'plugin:dialog|open');
+        assert.deepEqual(seletor.argumentos.options.filters[0].extensions, ['dome', 'zip']);
+        const importacao = chamadas.find((chamada) => chamada.comando === 'importar_arquivo_biblioteca');
+        assert.equal(importacao.argumentos.caminhoArquivo, 'D:/Downloads/UltimaChance-1.4.zip');
+    }
     const cartaoVersao = (numero) => pagina.getByRole('group', { name: `Versão ${numero}`, exact: true });
     const conferirDataProjeto = async (dia) => {
         const data = pagina.locator(`time[datetime="2026-10-${dia + 1}T00:00:00Z"]`);
@@ -118,13 +163,14 @@ try {
     const nome = pagina.getByRole('textbox', { name: 'Nome da instância', exact: true });
     await nome.fill('Minha aventura');
     await nome.press('Enter');
-    await pagina.getByRole('heading', { name: 'Minha aventura', exact: true }).waitFor();
+    await pagina.getByRole('dialog', { name: 'Editar inst\u00e2ncia', exact: true }).waitFor({ state: 'hidden' });
     const edicao = await pagina.evaluate(() => window.chamadas.filter((item) => item.comando === 'update_instance_name'));
     assert.deepEqual(edicao[0].argumentos, { instanceId: 'pasta_original', newName: 'Minha aventura' });
     await pagina.getByTitle('Editar nome', { exact: true }).click();
+    assert.equal(await nome.inputValue(), 'Minha aventura');
     await nome.fill('Descartar');
     await nome.press('Escape');
-    await pagina.getByRole('heading', { name: 'Minha aventura', exact: true }).waitFor();
+    await pagina.getByRole('dialog', { name: 'Editar inst\u00e2ncia', exact: true }).waitFor({ state: 'hidden' });
     assert.equal((await pagina.evaluate(() => window.chamadas.filter((item) => item.comando === 'update_instance_name'))).length, 1);
     assert.deepEqual(erros, []);
     console.log('Renomeação salva com Enter, preserva ID e cancela com Escape. Sem erros na interface.');

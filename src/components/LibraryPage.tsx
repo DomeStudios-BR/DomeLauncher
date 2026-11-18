@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import CabecalhoGrupo from './CabecalhoGrupo';
 import { useArrastoItem } from '../hooks/useArrastoItem';
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
@@ -65,6 +66,7 @@ import { EVENTO_PUBLICAR_MODPACK_DOME } from "../lib/eventosModpacksDome";
 import MigrarVersaoInstanciaModal from "./MigrarVersaoInstanciaModal";
 import ModalExclusaoInstancia from "./ModalExclusaoInstancia";
 import type { InstanciaParaExclusao } from "../stores/exclusoesInstancias";
+import { criarCanalProgresso, type ProgressoOperacao } from "../hooks/useProgressoOperacao";
 
 // Tipos
 type ViewMode = "grid" | "list";
@@ -161,7 +163,7 @@ function carregarEstado(): LibraryState {
 
 // Salvar estado
 function salvarEstado(state: LibraryState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  gravarArmazenamentoLocal(STORAGE_KEY, JSON.stringify(state));
 }
 
 function formatarTempoJogadoTotal(segundos: number | undefined): string {
@@ -845,6 +847,33 @@ export default function LibraryPage({
   // ===== EXPORTAR / IMPORTAR POR ARQUIVO =====
   const [exportandoId, setExportandoId] = useState<string | null>(null);
   const [importandoArquivo, setImportandoArquivo] = useState(false);
+  const [progressoImportacaoArquivo, setProgressoImportacaoArquivo] = useState<ProgressoOperacao | null>(null);
+  const [erroImportacaoArquivo, setErroImportacaoArquivo] = useState("");
+
+  const importarArquivo = async () => {
+    setImportandoArquivo(true);
+    setErroImportacaoArquivo("");
+    try {
+      const caminho = await openDialog({
+        title: "Selecionar arquivo de instância",
+        filters: [{ name: "Instâncias e modpacks", extensions: ["dome", "zip"] }],
+        multiple: false,
+      });
+      if (!caminho) return;
+      setProgressoImportacaoArquivo({ porcentagem: 0, etapa: "Lendo arquivo da instância" });
+      await invoke("importar_arquivo_biblioteca", {
+        caminhoArquivo: caminho,
+        progresso: criarCanalProgresso(setProgressoImportacaoArquivo),
+      });
+      await onAtualizarInstancias();
+      setModalEscolhaImportacaoAberto(false);
+    } catch (erro) {
+      setErroImportacaoArquivo(erro instanceof Error ? erro.message : String(erro));
+    } finally {
+      setProgressoImportacaoArquivo(null);
+      setImportandoArquivo(false);
+    }
+  };
 
   const exportarInstancia = async (instanceId: string) => {
     setExportandoId(instanceId);
@@ -863,37 +892,6 @@ export default function LibraryPage({
       alert(`Erro ao exportar: ${erro instanceof Error ? erro.message : String(erro)}`);
     } finally {
       setExportandoId(null);
-    }
-  };
-
-  const importarArquivoDome = async () => {
-    try {
-      // Usar dialog nativo do Tauri para selecionar arquivo
-      const caminho = await openDialog({
-        title: "Selecionar arquivo .dome",
-        filters: [{ name: "Dome Instance", extensions: ["dome", "zip"] }],
-        multiple: false,
-        directory: false,
-      });
-      if (!caminho) return;
-
-      setImportandoArquivo(true);
-      const resultado = await invoke<{
-        sucesso: boolean;
-        instanciaId?: string;
-        mensagem: string;
-      }>("importar_instancia_arquivo", { caminhoArquivo: caminho });
-
-      if (resultado.sucesso) {
-        alert(`✅ ${resultado.mensagem}`);
-        window.location.reload();
-      } else {
-        alert(`❌ ${resultado.mensagem}`);
-      }
-    } catch (erro) {
-      alert(`Erro ao importar: ${erro instanceof Error ? erro.message : String(erro)}`);
-    } finally {
-      setImportandoArquivo(false);
     }
   };
 
@@ -1023,7 +1021,7 @@ export default function LibraryPage({
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             placeholder="Buscar instâncias..."
-            className="w-full bg-white/3 border border-white/5 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500/30 placeholder:text-white/15 transition-all"
+            className="w-full bg-white/3 border border-white/5 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500/30 placeholder:text-white/15 transition-all"
           />
           {busca && (
             <button
@@ -1041,7 +1039,7 @@ export default function LibraryPage({
             onClick={() =>
               setMenuAberto(menuAberto === "sort" ? null : "sort")
             }
-            className="flex items-center gap-1.5 px-3 py-2 bg-white/3 border border-white/5 rounded-xl text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 bg-white/3 border border-white/5 text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
           >
             <ArrowUpDown size={13} />
             {sortLabels[state.sortKey]}
@@ -1083,14 +1081,14 @@ export default function LibraryPage({
         {/* Novo grupo */}
         <button
           onClick={criarGrupo}
-          className="flex items-center gap-1.5 px-3 py-2 bg-white/3 border border-white/5 rounded-xl text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
+          className="flex items-center gap-1.5 px-3 py-2 bg-white/3 border border-white/5 text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
           title="Criar grupo"
         >
           <FolderPlus size={13} />
         </button>
 
         {/* View mode */}
-        <div className="flex bg-white/3 border border-white/5 rounded-xl overflow-hidden">
+        <div className="flex bg-white/3 border border-white/5 overflow-hidden">
           <button
             onClick={() => setState((p) => ({ ...p, viewMode: "grid" }))}
             className={`p-2 transition-all ${
@@ -1117,7 +1115,7 @@ export default function LibraryPage({
         <button
           onClick={abrirModalImportacao}
           disabled={importandoInstancias}
-          className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/15 rounded-xl text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all font-bold disabled:opacity-40 disabled:cursor-wait"
+          className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/15 text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all font-bold disabled:opacity-40 disabled:cursor-wait"
         >
           {importandoInstancias ? (
             <Loader2 size={13} className="animate-spin" />
@@ -1134,7 +1132,7 @@ export default function LibraryPage({
         <button
           onClick={exportarInstanciaSelecionada}
           disabled={!instanciaSelecionadaId || Boolean(exportandoId)}
-          className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/15 rounded-xl text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all font-bold disabled:opacity-40"
+          className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/15 text-xs text-white/70 hover:text-white hover:bg-white/10 transition-all font-bold disabled:opacity-40"
           title="Exportar instância selecionada"
         >
           {exportandoId ? (
@@ -1147,7 +1145,7 @@ export default function LibraryPage({
 
         <button
           onClick={onCreateNew}
-          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 hover:bg-emerald-500/20 transition-all font-bold"
+          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 hover:bg-emerald-500/20 transition-all font-bold"
         >
           <Plus size={13} />
           Nova
@@ -1734,58 +1732,76 @@ export default function LibraryPage({
               initial={{ opacity: 0, y: 12, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 12, scale: 0.98 }}
-              className="w-full max-w-xl bg-[#141416] border border-white/15 rounded-2xl overflow-hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-importacao-biblioteca"
+              className="w-full max-w-md overflow-hidden border border-white/15 bg-[#171717] shadow-xl"
               onClick={(evento) => evento.stopPropagation()}
             >
-              <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wide">Importar</h3>
-                  <p className="text-xs text-white/50 mt-1">
-                    Escolha como deseja importar para a biblioteca.
-                  </p>
-                </div>
+              <div className="flex items-center justify-between border-b border-white/10 bg-[#111111] px-4 py-3">
+                <h3 id="titulo-importacao-biblioteca" className="text-xs font-bold uppercase tracking-wider">
+                  Importar
+                </h3>
                 <button
+                  aria-label="Fechar"
+                  disabled={importandoArquivo}
                   onClick={() => setModalEscolhaImportacaoAberto(false)}
-                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  className="border border-white/10 bg-white/5 p-1.5 text-white/50 hover:text-white disabled:opacity-40"
                 >
                   <X size={14} />
                 </button>
               </div>
 
-              <div className="p-5 space-y-3">
+              <div className="space-y-2 p-4">
                 <button
-                  onClick={async () => {
-                    setModalEscolhaImportacaoAberto(false);
-                    await importarArquivoDome();
-                  }}
+                  onClick={() => void importarArquivo()}
                   disabled={importandoArquivo}
-                  className="w-full text-left border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl px-4 py-3 transition-all disabled:opacity-40"
+                  className="group flex w-full items-center gap-3 border border-white/10 bg-[#1e1e1e] p-3
+                    text-left transition-colors hover:border-emerald-400/40 hover:bg-emerald-400/5 disabled:opacity-40"
                 >
-                  <p className="text-sm font-bold flex items-center gap-2">
-                    {importandoArquivo ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Upload size={14} />
-                    )}
-                    Importar arquivo `.dome`
-                  </p>
-                  <p className="text-xs text-white/55 mt-1">
-                    Também aceita `.dome.zip` para compatibilidade.
-                  </p>
+                  <span className="grid size-8 shrink-0 place-items-center border border-emerald-400/20
+                    bg-emerald-400/10 text-emerald-400">
+                    <Upload size={16} />
+                  </span>
+                  <span className="grow">
+                    <span className="block text-sm font-bold">Importar arquivo</span>
+                    <span className="block text-xs text-white/55">.dome, .dome.zip ou ZIP do CurseForge</span>
+                  </span>
+                  <ChevronRight size={14} className="text-white/35 group-hover:text-emerald-400" />
                 </button>
 
                 <button
                   onClick={abrirModalImportacaoInstancias}
-                  className="w-full text-left border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl px-4 py-3 transition-all"
+                  disabled={importandoArquivo}
+                  className="group flex w-full items-center gap-3 border border-white/10 bg-[#1e1e1e] p-3
+                    text-left transition-colors hover:border-emerald-400/40 hover:bg-emerald-400/5 disabled:opacity-40"
                 >
-                  <p className="text-sm font-bold flex items-center gap-2">
-                    <FolderOpen size={14} />
-                    Importar de outro launcher
-                  </p>
-                  <p className="text-xs text-white/55 mt-1">
-                    Detecta instâncias de Prism Launcher, Modrinth e CurseForge.
-                  </p>
+                  <span className="grid size-8 shrink-0 place-items-center border border-white/10 bg-white/5
+                    text-white/60 group-hover:text-emerald-400">
+                    <FolderOpen size={16} />
+                  </span>
+                  <span className="grow">
+                    <span className="block text-sm font-bold">Importar de outro launcher</span>
+                    <span className="block text-xs text-white/55">Prism Launcher, Modrinth e CurseForge</span>
+                  </span>
+                  <ChevronRight size={14} className="text-white/35 group-hover:text-emerald-400" />
                 </button>
+                {progressoImportacaoArquivo && (
+                  <div role="status" className="space-y-2 text-xs text-white/70">
+                    <p>{progressoImportacaoArquivo.etapa}</p>
+                    <progress
+                      aria-label="Progresso da importação"
+                      className="w-full accent-emerald-500"
+                      max={100}
+                      value={progressoImportacaoArquivo.porcentagem}
+                    />
+                  </div>
+                )}
+                {erroImportacaoArquivo && (
+                  <p role="alert" className="max-h-36 overflow-auto break-words text-xs text-red-300">
+                    {erroImportacaoArquivo}
+                  </p>
+                )}
               </div>
             </motion.div>
           </motion.div>
@@ -1806,41 +1822,45 @@ export default function LibraryPage({
               initial={{ opacity: 0, y: 12, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 12, scale: 0.98 }}
-              className="w-full max-w-3xl bg-[#141416] border border-white/15 rounded-2xl overflow-hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-importacao-externa"
+              className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden
+                border border-white/15 bg-[#171717] shadow-xl"
               onClick={(evento) => evento.stopPropagation()}
             >
-              <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wide">Importar Instâncias</h3>
-                  <p className="text-xs text-white/50 mt-1">
-                    Detectadas automaticamente ou nas instalações que você apontar.
-                  </p>
-                </div>
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111111] px-4 py-3">
+                <h3 id="titulo-importacao-externa" className="text-xs font-bold uppercase tracking-wider">
+                  Importar de outro launcher
+                </h3>
                 <button
+                  aria-label="Fechar"
+                  disabled={importandoInstancias}
                   onClick={() => {
                     if (importandoInstancias) return;
                     setModalImportacaoAberto(false);
                     setModalEscolhaImportacaoAberto(false);
                   }}
-                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  className="border border-white/10 bg-white/5 p-1.5 text-white/50 hover:text-white disabled:opacity-40"
                 >
                   <X size={14} />
                 </button>
               </div>
 
-              <div className="px-5 py-4">
-                <div className="mb-4 rounded-xl border border-white/10 bg-white/3 p-3">
-                  <div className="flex items-center justify-between gap-3">
+              <div className="min-h-0 overflow-y-auto p-4">
+                <div className="mb-4 border border-white/10 bg-[#1e1e1e] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-white/80">Instalação personalizada</p>
-                      <p className="mt-0.5 text-[11px] text-white/40">
-                        Aponte a pasta do Prism Launcher, Modrinth, CurseForge ou a pasta de perfis.
+                      <p className="text-xs font-bold text-white/85">Buscar em outra pasta</p>
+                      <p className="mt-0.5 text-[11px] text-white/55">
+                        Selecione a pasta do launcher ou dos perfis.
                       </p>
                     </div>
                     <button
                       onClick={() => void apontarPastaInstancias()}
                       disabled={carregandoImportaveis}
-                      className="flex shrink-0 items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-white/75 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
+                      className="flex shrink-0 items-center gap-2 border border-white/15 bg-white/5 px-3 py-2
+                        text-xs font-bold text-white/75 hover:border-emerald-400/40 hover:text-white disabled:opacity-40"
                     >
                       <FolderPlus size={13} />
                       Apontar pasta
@@ -1851,7 +1871,7 @@ export default function LibraryPage({
                       {pastasAdicionaisImportacao.map((pasta) => (
                         <div
                           key={pasta}
-                          className="flex items-center gap-2 rounded-lg bg-black/20 px-2.5 py-2"
+                          className="flex items-center gap-2 border border-white/10 bg-black/20 px-2.5 py-2"
                         >
                           <FolderOpen size={12} className="shrink-0 text-emerald-400/70" />
                           <span className="min-w-0 flex-1 truncate text-[10px] text-white/45">
@@ -1860,7 +1880,7 @@ export default function LibraryPage({
                           <button
                             onClick={() => void removerPastaApontada(pasta)}
                             disabled={carregandoImportaveis}
-                            className="rounded p-1 text-white/30 transition-colors hover:bg-white/10 hover:text-white/70 disabled:opacity-30"
+                            className="p-1 text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-30"
                             aria-label={`Remover pasta ${pasta}`}
                           >
                             <X size={11} />
@@ -1872,7 +1892,7 @@ export default function LibraryPage({
                 </div>
 
                 {erroImportacao && (
-                  <div className="mb-3 border border-red-400/30 bg-red-500/10 text-red-200 text-xs px-3 py-2 rounded-lg">
+                  <div role="alert" className="mb-3 border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
                     {erroImportacao}
                   </div>
                 )}
@@ -1910,23 +1930,27 @@ export default function LibraryPage({
                             key={instancia.idExterno}
                             onClick={() => alternarSelecaoImportacao(instancia.idExterno)}
                             className={cn(
-                              "w-full text-left border rounded-xl px-3 py-2 transition-all",
+                              "w-full border px-3 py-2.5 text-left transition-colors",
                               selecionada
                                 ? "border-emerald-400/40 bg-emerald-500/10"
-                                : "border-white/10 bg-white/3 hover:bg-white/6"
+                                : "border-white/10 bg-[#1e1e1e] hover:border-emerald-400/40 hover:bg-emerald-400/5"
                             )}
+                            aria-pressed={selecionada}
                           >
                             <div className="flex items-start gap-3">
-                              <input
-                                type="checkbox"
-                                checked={selecionada}
-                                readOnly
-                                className="mt-1 w-4 h-4"
-                              />
+                              <span aria-hidden="true" className={cn(
+                                "mt-0.5 grid size-5 shrink-0 place-items-center border",
+                                selecionada
+                                  ? "border-emerald-400 bg-emerald-400 text-[#111111]"
+                                  : "border-white/25 bg-[#111111]"
+                              )}>
+                                {selecionada && <Check size={13} />}
+                              </span>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-bold truncate">{instancia.nome}</p>
-                                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-white/60">
+                                  <span className="shrink-0 border border-white/10 bg-white/5 px-1.5 py-0.5
+                                    text-[10px] uppercase tracking-wide text-white/60">
                                     {nomeLauncher(instancia.launcher)}
                                   </span>
                                 </div>
@@ -1935,7 +1959,7 @@ export default function LibraryPage({
                                   {instancia.loaderType ? ` • ${instancia.loaderType}` : " • Vanilla"}
                                   {instancia.loaderVersion ? ` ${instancia.loaderVersion}` : ""}
                                 </p>
-                                <p className="text-[10px] text-white/35 mt-1 truncate">
+                                <p title={instancia.caminhoOrigem} className="mt-1 truncate text-[11px] text-white/50">
                                   {instancia.caminhoOrigem}
                                 </p>
                               </div>
@@ -1949,12 +1973,15 @@ export default function LibraryPage({
 
               </div>
 
-              <div className="px-5 py-4 border-t border-white/10 flex items-center justify-between gap-3">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3
+                border-t border-white/10 bg-[#111111] px-4 py-3">
                 <button
                   onClick={() => void carregarInstanciasImportaveis()}
                   disabled={carregandoImportaveis || importandoInstancias}
-                  className="text-xs text-white/65 hover:text-white disabled:opacity-40 transition-colors"
+                  className="flex items-center gap-2 border border-white/15 bg-white/5 px-3 py-2
+                    text-xs font-bold text-white/70 hover:text-white disabled:opacity-40"
                 >
+                  <RefreshCw size={13} />
                   Rebuscar
                 </button>
                 <div className="flex items-center gap-2">
@@ -1966,7 +1993,7 @@ export default function LibraryPage({
                       idsSelecionadosImportacao.size === 0
                     }
                     className={cn(
-                      "px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wide transition-all flex items-center gap-2",
+                      "flex items-center gap-2 border border-transparent px-3 py-2 text-xs font-bold uppercase",
                       importandoInstancias ||
                         carregandoImportaveis ||
                         idsSelecionadosImportacao.size === 0
@@ -2186,7 +2213,7 @@ function GrupoWidget({
       onMouseEnter={onEntrarGrupoDestino}
       data-grupo-biblioteca
       data-grupo-id={grupo.id}
-      className={`rounded-xl border transition-colors ${
+      className={`border transition-colors ${
         dragOver
           ? "border-emerald-500/30 bg-emerald-500/5"
           : "border-transparent"
@@ -2346,7 +2373,7 @@ function CardGrid({
       data-grupo-id={grupoId}
       data-modo-visualizacao="grid"
       className={cn(
-        "group relative flex cursor-grab flex-col items-center rounded-xl border p-3 text-center transition-colors",
+        "group relative flex cursor-grab flex-col items-center border p-3 text-center transition-colors",
         "active:cursor-grabbing",
         selecionada
           ? "bg-emerald-500/10 border-emerald-400/30 shadow-realce-selecao"
@@ -2465,7 +2492,7 @@ function CardList({
       data-grupo-id={grupoId}
       data-modo-visualizacao="list"
       className={cn(
-        "group flex cursor-grab items-center gap-3 rounded-xl border px-3 py-2 transition-colors",
+        "group flex cursor-grab items-center gap-3 border px-3 py-2 transition-colors",
         "active:cursor-grabbing",
         selecionada
           ? "bg-emerald-500/10 border-emerald-400/30 shadow-realce-selecao"

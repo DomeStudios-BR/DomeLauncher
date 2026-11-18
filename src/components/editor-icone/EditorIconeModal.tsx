@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../../lib/armazenamentoLocal";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, Check, RefreshCw, Save, Upload, X } from "../../iconesPixelados";
@@ -198,7 +199,7 @@ export default function EditorIconeModal({
             if (chavePersistencia) {
                 const chave = `dome:editor-icone:${chavePersistencia}`;
                 if (modo === "gerado") {
-                    localStorage.setItem(chave, JSON.stringify({
+                    gravarArmazenamentoLocal(chave, JSON.stringify({
                         fundoId,
                         simboloId,
                         assinatura: assinaturaIcone(icone),

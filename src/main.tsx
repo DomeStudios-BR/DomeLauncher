@@ -3,8 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { iniciarDiagnosticoRelatos } from "./lib/diagnosticoRelatos";
+import { prepararArmazenamentoLocal } from "./lib/armazenamentoLocal";
 
 iniciarDiagnosticoRelatos();
+prepararArmazenamentoLocal();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

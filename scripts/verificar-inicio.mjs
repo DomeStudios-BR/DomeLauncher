@@ -285,7 +285,7 @@ try {
     await pagina.getByRole("heading", { name: "Instância teste", exact: true }).click();
     const barraJogar = pagina.locator("footer").filter({ has: pagina.getByRole("button", { name: /^(LOGIN|JOGAR)$/ }) });
     await barraJogar.waitFor();
-    await barraJogar.getByRole("button").hover();
+    await barraJogar.getByRole("button", { name: /^(LOGIN|JOGAR)$/ }).hover();
     const areas = await barraJogar.evaluate((barra) => {
         const botao = barra.querySelector('button');
         const retangulo = barra.getBoundingClientRect();
@@ -303,6 +303,17 @@ try {
     });
     assert.deepEqual(areas.fora, [false, false, false], 'Laterais, faixa inferior e texto não interceptam o mouse.');
     assert.equal(areas.botao, true, 'O botão continua interativo.');
+    const centralizado = await barraJogar.getByRole('button', { name: /^(LOGIN|JOGAR)$/ })
+        .evaluate((botao) => {
+            const area = botao.getBoundingClientRect();
+            const barra = botao.parentElement.getBoundingClientRect();
+            return { distancia: Math.abs(area.left + area.width / 2 - barra.left - barra.width / 2), fonte: getComputedStyle(botao).fontFamily, classe: botao.parentElement.className };
+        });
+    assert.ok(centralizado.distancia <= 1 && centralizado.fonte.includes('MinecraftTen'), JSON.stringify(centralizado));
+    await barraJogar.getByRole('button', { name: /Op.*es da inst/ }).click();
+    await barraJogar.getByRole('button', { name: 'Abrir pasta', exact: true }).click();
+    assert(await pagina.evaluate(() => window.verificacaoInicio.consultas.includes('abrir_pasta_instancia')));
+    assert.equal(await barraJogar.getByRole('button', { name: 'Abrir pasta', exact: true }).count(), 0);
     await pagina.route('https://api.modrinth.com/v2/project/pesquisa-pack**', (rota) => rota.fulfill({
         json: rota.request().url().endsWith('/version') ? [{
             id: 'v2', version_number: '2.0', game_versions: ['1.21.1'], loaders: ['fabric'],
@@ -332,6 +343,43 @@ try {
         .filter((comando) => comando === 'search_mods_online').length), buscasAntes,
         'Voltar do projeto deve preservar a pesquisa e os resultados sem repetir a busca.');
     console.log('Explorar no App: versão padrão visível, campo e resultados preservados após consultar versões e voltar.');
+    await pagina.evaluate(() => {
+        const teste = window.verificacaoInicio;
+        const instancia = teste.dados.get_instances[0];
+        teste.dados.get_instance_details = {
+            ...instancia, mcType: instancia.mc_type, loaderType: 'Fabric',
+        };
+        teste.dados.list_instance_content = [];
+        teste.dados.obter_conteudo_instalado_detalhado = [];
+    });
+    await barraJogar.getByRole('button', { name: /Op.*es da inst/ }).click();
+    await barraJogar.getByRole('button', { name: /Gerenciar inst/ }).click();
+    await pagina.getByRole('button', { name: 'Conteúdo', exact: true }).waitFor();
+    assert.equal(await pagina.locator('footer').count(), 1);
+    assert.equal(await pagina.locator('.launcher-painel-instancia').evaluate((painel) =>
+        getComputedStyle(painel).backgroundColor), 'rgb(13, 13, 14)');
+    await pagina.locator('footer').getByRole('button', { name: /Op.*es da inst/ }).click();
+    await pagina.getByRole('button', { name: /Editar inst/ }).click();
+    const edicao = pagina.getByRole('dialog', { name: /Editar inst/ });
+    await edicao.waitFor();
+    await edicao.getByRole('textbox', { name: /Nome da inst/ }).press('Escape');
+    await edicao.waitFor({ state: 'hidden' });
+    for (const tamanho of [{ width: 2000, height: 1100 }, { width: 960, height: 640 }]) {
+        await pagina.setViewportSize(tamanho);
+        const posicoes = await pagina.locator('footer').evaluate((rodape) => {
+            const botao = rodape.querySelector('button');
+            const acao = botao.getBoundingClientRect();
+            const barra = botao.parentElement.getBoundingClientRect();
+            const lista = document.getElementById('lista-conteudo-instancia').getBoundingClientRect();
+            return { distancia: Math.abs(acao.left + acao.width / 2 - barra.left - barra.width / 2),
+                sobrepoe: lista.bottom > rodape.getBoundingClientRect().top,
+                larguraPagina: document.documentElement.scrollWidth };
+        });
+        assert.ok(posicoes.distancia <= 1);
+        assert.equal(posicoes.sobrepoe, false);
+        assert.ok(posicoes.larguraPagina <= tamanho.width);
+    }
+    console.log('Barra original reutilizada na instância: ação centralizada, fonte Minecraft, opções e lista sem sobreposição.');
     assert.deepEqual(erros, []);
     console.log("Início verificado no App: DOM preservado, atualização silenciosa, dados novos/editados/removidos, " +
         "retorno ao foco/visibilidade, falhas parciais/totais, respostas atrasadas, ocultação sem releitura " +

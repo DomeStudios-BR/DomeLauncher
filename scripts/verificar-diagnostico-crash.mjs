@@ -2,7 +2,8 @@ import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 
-const servidor = await createServer({ server: { port: 0, open: false, warmup: { clientFiles: [] } }, plugins: [{
+const servidor = await createServer({
+    server: { port: 0, open: false, warmup: { clientFiles: [] } }, plugins: [{
     name: 'verificacao-crash',
     configureServer(vite) {
         vite.middlewares.use('/verificacao-crash', (_req, res) => {
@@ -22,7 +23,10 @@ try {
     const pagina = await navegador.newPage({ viewport: { width: 960, height: 640 }, deviceScaleFactor: 1.5 });
     pagina.setDefaultTimeout(30000);
     const erros = [];
-    pagina.on('pageerror', (erro) => erros.push(erro.message));
+    pagina.on('pageerror', (erro) => { erros.push(erro.message); console.error(erro.message); });
+    pagina.on('console', (mensagem) => {
+        if (mensagem.type() === 'error') console.error(mensagem.text());
+    });
     await pagina.goto(servidor.resolvedUrls.local[0] + 'verificacao-crash', { waitUntil: 'domcontentloaded' });
     await pagina.getByText('Inicie o Minecraft pelo launcher para analisar o próximo encerramento.').waitFor();
     const diagnostico = {
@@ -76,6 +80,9 @@ try {
     assert.equal(await pagina.evaluate(() => window.quantidadeOuvintes()), 1);
     assert.deepEqual(erros, []);
     console.log('Diagnóstico: estados, evidências, troca de instância, eventos e consulta concorrente verificados em 960×640/150%.');
+} catch (erro) {
+    console.error(erro);
+    process.exitCode = 1;
 } finally {
     await navegador?.close();
     await servidor.close();

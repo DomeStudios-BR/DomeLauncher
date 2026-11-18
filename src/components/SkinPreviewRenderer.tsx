@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import React, { useRef, useEffect, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -283,11 +284,7 @@ export const SkinPreviewRenderer: React.FC<SkinPreviewRendererProps> = ({
     const tratarPerdaContexto = (evento: Event) => {
       evento.preventDefault();
       if (descartado) return;
-      try {
-        localStorage.setItem("dome-skins-modo-seguro", "true");
-      } catch {
-        // A recuperação em memória não depende da persistência do WebView.
-      }
+      gravarArmazenamentoLocal("dome-skins-modo-seguro", "true");
       setLoading(false);
       setErroModelo(true);
       onFalhaWebgl?.();

@@ -255,8 +255,8 @@ pub struct ComentarioPerfilLauncherApi {
 #[serde(rename_all = "camelCase")]
 pub struct PerfilSocialLauncherApi {
     pub perfil_id: String,
-    pub discord_id: String,
-    pub discord_username: String,
+    pub discord_id: Option<String>,
+    pub discord_username: Option<String>,
     pub discord_global_name: Option<String>,
     pub discord_avatar: Option<String>,
     pub handle: String,
@@ -456,11 +456,19 @@ fn criar_cliente_http_transferencia() -> Result<reqwest::Client, String> {
 pub async fn extrair_mensagem_erro_launcher(resposta: reqwest::Response, contexto: &str) -> String {
     let status = resposta.status();
     let corpo = resposta.text().await.unwrap_or_default();
+    formatar_mensagem_erro_launcher(status, &corpo, contexto)
+}
+
+fn formatar_mensagem_erro_launcher(
+    status: reqwest::StatusCode,
+    corpo: &str,
+    contexto: &str,
+) -> String {
     if corpo.is_empty() {
         return format!("{} (HTTP {})", contexto, status.as_u16());
     }
 
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&corpo) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(corpo) {
         let mensagem = json
             .get("erro")
             .and_then(|erro| erro.get("mensagem"))
@@ -474,8 +482,11 @@ pub async fn extrair_mensagem_erro_launcher(resposta: reqwest::Response, context
         }
     }
 
-    let trecho: String = corpo.chars().take(200).collect();
-    format!("{} (HTTP {}): {}", contexto, status.as_u16(), trecho)
+    format!(
+        "{} (HTTP {}). O serviço está indisponível ou retornou uma resposta inválida. Tente novamente mais tarde.",
+        contexto,
+        status.as_u16()
+    )
 }
 
 #[tauri::command]
@@ -2051,10 +2062,58 @@ pub async fn excluir_analise_modpack(
 
 #[cfg(test)]
 mod testes {
+    #[test]
+    fn oculta_html_de_gateway_e_preserva_mensagem_json() {
+        let mensagem = super::formatar_mensagem_erro_launcher(
+            reqwest::StatusCode::BAD_GATEWAY,
+            "<!DOCTYPE html><html>Detalhes privados do gateway</html>",
+            "Falha ao enviar o relato.",
+        );
+        assert!(mensagem.contains("HTTP 502"));
+        assert!(!mensagem.contains("html"));
+        assert!(!mensagem.contains("privados"));
+        let mensagem = super::formatar_mensagem_erro_launcher(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"erro":{"mensagem":"Tente mais tarde."}}"#,
+            "Falha ao enviar o relato.",
+        );
+        assert!(mensagem.contains("Tente mais tarde."));
+    }
     use super::{
         normalizar_api_base_url, validar_grupos_favoritos, validar_projeto_favorito,
-        PayloadSalvarPerfilSocialLauncherApi,
+        PayloadSalvarPerfilSocialLauncherApi, PerfilSocialLauncherApi,
+        RespostaSalvarPerfilSocialLauncherApi,
     };
+
+    #[test]
+    fn le_perfil_sem_discord_na_consulta_e_no_vinculo_minecraft() {
+        let perfil = serde_json::json!({
+            "perfilId": "perfil-teste",
+            "discordId": null,
+            "discordUsername": null,
+            "handle": "jogador",
+            "nomeSocial": "Jogador",
+            "contasMinecraftVinculadas": [{
+                "uuid": "0123456789abcdef0123456789abcdef",
+                "nome": "Jogador",
+                "vinculadoEm": "2026-11-17T00:00:00Z"
+            }],
+            "online": true,
+            "criadoEm": "2026-11-17T00:00:00Z",
+            "atualizadoEm": "2026-11-17T00:00:00Z"
+        });
+        let consulta: PerfilSocialLauncherApi = serde_json::from_value(perfil.clone()).unwrap();
+        let vinculo: RespostaSalvarPerfilSocialLauncherApi =
+            serde_json::from_value(serde_json::json!({ "sucesso": true, "perfil": perfil }))
+                .unwrap();
+
+        for perfil in [consulta, vinculo.perfil.unwrap()] {
+            let perfil = serde_json::to_value(perfil).unwrap();
+            assert_eq!(perfil["discordId"], serde_json::Value::Null);
+            assert_eq!(perfil["discordUsername"], serde_json::Value::Null);
+            assert_eq!(perfil["contasMinecraftVinculadas"][0]["nome"], "Jogador");
+        }
+    }
 
     #[test]
     fn favoritos_rejeitam_fontes_e_identificadores_invalidos_antes_do_http() {

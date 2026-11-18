@@ -1343,9 +1343,12 @@ export default function ProjetoDetalheModal({
     else if (erro) onFinalizarInstalacaoDireta?.(erro);
     else if (destinoConfirmado && !carregandoVersoes && versoesExibidas.length === 0) {
       onFinalizarInstalacaoDireta?.("Nenhuma versão compatível disponível para instalação.");
+    } else if (destinoConfirmado && versaoSelecionada && !arquivoVersaoSelecionada) {
+      onFinalizarInstalacaoDireta?.("Download indisponível pelo launcher para a versão selecionada.");
     }
   }, [somenteInstalacao, sucesso, erro, instalando, carregandoVersoes,
-    destinoConfirmado, versoesExibidas.length, onFinalizarInstalacaoDireta]);
+    destinoConfirmado, versoesExibidas.length, versaoSelecionada, arquivoVersaoSelecionada,
+    onFinalizarInstalacaoDireta]);
 
   if (somenteInstalacao) {
     if (destinoConfirmado) return null;

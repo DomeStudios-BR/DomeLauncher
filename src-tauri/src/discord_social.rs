@@ -161,8 +161,13 @@ pub async fn login_discord_social(
         .map_err(|e| format!("Falha ao autenticar com API social: {}", e))?;
 
     if !resposta.status().is_success() {
-        let texto = resposta.text().await.unwrap_or_default();
-        return Err(format!("API social retornou erro: {}", texto));
+        return Err(
+            crate::comandos::social_launcher::extrair_mensagem_erro_launcher(
+                resposta,
+                "Falha ao conectar o Discord.",
+            )
+            .await,
+        );
     }
 
     resposta

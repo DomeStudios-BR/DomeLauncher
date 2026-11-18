@@ -42,7 +42,7 @@ try {
             files: [{ url: 'https://example.com/antigo.jar', filename: 'antigo.jar' }] },
             { id: 'loader-incompativel', version_number: 'Outro loader', game_versions: ['1.21.1'], loaders: ['forge'],
                 files: [{ url: 'https://example.com/forge.jar', filename: 'forge.jar' }] },
-            { id: 'ultima', version_number: '4.0', game_versions: ['1.21.1'], loaders: ['fabric'],
+            { id: 'ultima', version_type: 'release', version_number: '4.0', game_versions: ['1.21.1'], loaders: ['fabric'],
             files: [{ url: 'https://example.com/pacote.jar', filename: 'pacote.jar' }] },
             ...[['Beta', '1.10'], ['Alfa', '1.2'], ['Textura', '2.0']].map(([nome, numero]) => ({
                 id: nome, version_number: numero, game_versions: ['1.21.1'], loaders: [],
@@ -58,6 +58,12 @@ try {
     await pagina.getByRole('button', { name: 'Alfa', exact: true }).waitFor();
     const nomes = () => pagina.locator('#lista-conteudo-instancia .group > .min-w-0 > button').allTextContents();
     assert.deepEqual(await nomes(), ['Alfa', 'Beta']);
+    const iconesMods = pagina.locator('#lista-conteudo-instancia .group img');
+    assert.equal(await iconesMods.count(), 2, 'Mods identificados preservam os ícones locais ausentes no cache.');
+    await pagina.waitForFunction(() => {
+        const imagens = [...document.querySelectorAll('#lista-conteudo-instancia .group img')];
+        return imagens.length === 2 && imagens.every((imagem) => imagem.complete && imagem.naturalWidth > 0);
+    });
     const leiturasConteudo = () => pagina.evaluate(() => window.chamadas.filter((item) =>
         item.comando === 'obter_conteudo_instalado_detalhado').map((item) => item.argumentos.contentType));
     await pagina.evaluate(() => { document.documentElement.dataset.pausarConteudo = 'resourcepacks'; });
@@ -158,18 +164,29 @@ try {
     for (const botao of [botaoVersao, botaoSemAtualizacao]) {
         const estilo = await botao.evaluate((elemento) => {
             const estilo = getComputedStyle(elemento);
-            const versao = elemento.nextElementSibling;
-            const icone = elemento.getBoundingClientRect();
-            const numero = versao.getBoundingClientRect();
-            return { borda: estilo.borderRightWidth,
-                bordaVersao: getComputedStyle(versao).borderLeftWidth,
-                espaco: numero.left - icone.right, alturaIcone: icone.height, alturaVersao: numero.height };
+            return { borda: estilo.borderRightColor, fundo: estilo.backgroundColor,
+                botoes: elemento.parentElement.querySelectorAll('button').length };
         });
-        assert.equal(estilo.borda, '1px', 'O ícone deve ter moldura própria.');
-        assert.equal(estilo.bordaVersao, '1px', 'A versão deve ter moldura própria.');
-        assert.ok(estilo.espaco > 0, 'As molduras devem ficar separadas.');
-        assert.equal(estilo.alturaIcone, estilo.alturaVersao, 'Os botões devem ter a mesma altura.');
+        assert.equal(estilo.borda, 'rgba(0, 0, 0, 0)');
+        assert.equal(estilo.fundo, 'rgba(0, 0, 0, 0)');
+        assert.equal(estilo.botoes, 1);
+        await botao.hover();
+        await pagina.waitForFunction((elemento) =>
+            getComputedStyle(elemento).borderRightColor !== 'rgba(0, 0, 0, 0)', await botao.elementHandle());
+        await pagina.mouse.move(0, 0);
     }
+
+    const tamanhoAnterior = pagina.viewportSize();
+    await pagina.setViewportSize({ width: 2000, height: 1100 });
+    const limites = await pagina.locator('[class*="max-w-[1600px]"]').evaluate((elemento) => {
+        const area = elemento.getBoundingClientRect();
+        const pai = elemento.parentElement.getBoundingClientRect();
+        return { largura: area.width, esquerda: area.left - pai.left, direita: pai.right - area.right };
+    });
+    assert.equal(limites.largura, 1600);
+    assert.ok(limites.esquerda > 0);
+    assert.ok(Math.abs(limites.esquerda - limites.direita) <= 1);
+    await pagina.setViewportSize(tamanhoAnterior);
     const corInicial = await botaoVersao.evaluate((botao) => getComputedStyle(botao).color);
     const corNeutra = await botaoSemAtualizacao.evaluate((botao) => getComputedStyle(botao).color);
     await pagina.evaluate(() => window.aplicarCorTeste('#EC4899'));
@@ -266,7 +283,7 @@ try {
         }
         const nome = tipo === 'mods' ? 'Beta' : tipo === 'resourcepacks' ? 'Textura' : 'Shader';
         const leiturasAntesDaImportacao = (await leiturasConteudo()).filter((categoria) => categoria === tipo).length;
-        await pagina.getByRole('button', { name: new RegExp(`^Changelog de ${nome}, versão`) }).click();
+        await pagina.getByRole('button', { name: new RegExp(`^Ver changelog de ${nome}, versão`) }).click();
         const regiaoNotas = pagina.getByRole('region', { name: new RegExp('^Changelog da versão') });
         await regiaoNotas.getByText('Final das notas', { exact: true }).waitFor();
         const atual = tipo === 'mods' ? '4.0' : tipo === 'resourcepacks' ? '2.0' : '3.0';
@@ -480,7 +497,7 @@ try {
     const conferirCatalogo = async () => {
         await buscaCatalogo.waitFor();
         assert.equal(await buscaCatalogo.inputValue(), 'Catálogo');
-        await pagina.getByRole('button', { name: 'Instância teste', exact: true }).waitFor();
+        await pagina.getByRole('button', { name: 'Conteúdo', exact: true }).waitFor();
         assert.equal(await pagina.getByRole('combobox', { name: 'Ordenar por', exact: true }).inputValue(), 'downloads');
         assert.equal(await pagina.getByRole('button', { name: 'Modrinth', exact: true }).count(), 1);
         assert.equal(await resumoCategorias.count(), 1);
@@ -511,7 +528,7 @@ try {
     await voltar.click();
     await conferirCatalogo();
     await pagina.getByRole('button', { name: 'Abrir segunda instância', exact: true }).click();
-    await pagina.getByRole('button', { name: 'Instância segunda', exact: true }).waitFor();
+    await pagina.locator('[data-instancia="segunda"]').getByRole('button', { name: 'Conteúdo', exact: true }).waitFor();
     await adicionar.click();
     await pagina.getByRole('button', { name: 'Shaders', exact: true }).click();
     await buscaCatalogo.fill('Outro filtro');
@@ -521,7 +538,7 @@ try {
     await voltar.click();
     await conferirCatalogo();
     await avancar.click();
-    await pagina.getByRole('button', { name: 'Instância segunda', exact: true }).waitFor();
+    await pagina.locator('[data-instancia="segunda"]').getByRole('button', { name: 'Conteúdo', exact: true }).waitFor();
     await adicionar.waitFor();
     await avancar.click();
     await buscaCatalogo.waitFor();

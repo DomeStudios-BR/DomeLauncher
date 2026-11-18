@@ -22,6 +22,7 @@ let opcoes = { renderDistance: "12", fov: "0", gamma: "0.5", fullscreen: "false"
 const criarItem = (nome: string, versao: string, ativo: boolean, extensao: string) => ({
     name: nome, fileName: `${nome}.${extensao}${ativo ? "" : ".disabled"}`, version: versao,
     author: "Dome", enabled: ativo, identificadores: [], dependencias: [],
+    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E",
 });
 const listas = {
     mods: [criarItem("Beta", "1.10", true, "jar"), criarItem("Alfa", "1.2", false, "jar")],
@@ -41,7 +42,7 @@ for (const [filtro, itens] of Object.entries(listas)) {
         name: item.name, author: item.author, projectId: item.name, versionId: filtro === "mods" ? item.name : undefined,
         source: new URLSearchParams(location.search).get("fonte")
             || (filtro === "shaders" ? "curseforge" : "modrinth"), projectType: tipo,
-        atualizadoEm: Date.now(), atualizacaoVerificadaEm: Date.now(),
+        atualizadoEm: Date.now(), atualizacaoVerificadaEm: Date.now(), somenteAtualizacoesEstaveis: true,
         updateAvailable: item.name !== "Alfa", latestVersion: "4.0",
     };
 }
@@ -297,7 +298,7 @@ function VerificacaoNavegacao() {
                 registrarSaida(); setInstanciaId("segunda"); setRestauracao(null); setAba("instancia");
             }}>Abrir segunda instância</button>
         </nav>
-        {aba !== "inicio" && <div className={aba === "projeto" ? "hidden" : "min-h-0 flex-1"}>
+        {aba !== "inicio" && <div data-instancia={instanciaId} className={aba === "projeto" ? "hidden" : "min-h-0 flex-1"}>
             <InstanceManager key={instanciaId} ref={controle} instanceId={instanciaId}
                 navegacaoAtiva={aba === "instancia"} navegacaoRestaurada={restauracao}
                 onRegistrarNavegacao={registrarSaida} onBack={() => {}}

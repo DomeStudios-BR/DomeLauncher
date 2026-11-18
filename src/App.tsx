@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "./lib/armazenamentoLocal";
 import { obterUrlCabecaMinecraft } from "./lib/avatarMinecraft";
 import { Activity, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -10,6 +11,7 @@ import {
   Loader2,
   LogIn,
   Play,
+  MoreVertical,
   Plus,
   Search,
   Settings,
@@ -26,6 +28,7 @@ import { autenticarComMicrosoft } from "./lib/autenticacaoMicrosoft";
 import { OnboardingLauncher } from "./components/OnboardingLauncher";
 import CreatingInstancesOverlay from "./components/CreatingInstancesOverlay";
 import IndicadorExclusoesInstancias from "./components/IndicadorExclusoesInstancias";
+import { ConfirmarTrocaInstanciaModal } from "./components/ConfirmarTrocaInstanciaModal";
 import { useLauncher, type Instance } from "./hooks/useLauncher";
 import { useBreakpointXl } from "./hooks/useBreakpointXl";
 import { useHistoricoNavegacao } from "./hooks/useHistoricoNavegacao";
@@ -235,9 +238,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [perfilVisualizadoId, setPerfilVisualizadoId] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null);
+  const [trocaPendente, definirTrocaPendente] = useState<{ emExecucao: Instance; iniciar: Instance } | null>(null);
+  const cancelarTroca = useCallback(() => definirTrocaPendente(null), []);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [relatoAberto, setRelatoAberto] = useState(false);
+  const [opcoesInstanciaAbertas, definirOpcoesInstanciaAbertas] = useState(false);
+  const barraInstanciaRef = useRef<HTMLElement>(null);
   const [managedInstanceId, setManagedInstanceId] = useState<string>("");
   const [user, setUser] = useState<MinecraftAccount | null>(null);
   const [mapaExecucao, setMapaExecucao] = useState<Record<string, boolean>>({});
@@ -594,7 +601,7 @@ export default function App() {
 
   useEffect(() => {
     if (ultimaInstanciaIniciada) {
-      localStorage.setItem(CHAVE_ULTIMA_INSTANCIA, ultimaInstanciaIniciada);
+      gravarArmazenamentoLocal(CHAVE_ULTIMA_INSTANCIA, ultimaInstanciaIniciada);
     } else {
       localStorage.removeItem(CHAVE_ULTIMA_INSTANCIA);
     }
@@ -628,7 +635,7 @@ export default function App() {
 
   const fecharNovidadesVersao = useCallback(() => {
     if (novidadesVersao) {
-      localStorage.setItem(CHAVE_ULTIMA_NOVIDADE_EXIBIDA, novidadesVersao.versao);
+      gravarArmazenamentoLocal(CHAVE_ULTIMA_NOVIDADE_EXIBIDA, novidadesVersao.versao);
       localStorage.removeItem(CHAVE_NOVIDADES_PENDENTES);
     }
     setNovidadesVersao(null);
@@ -663,7 +670,7 @@ export default function App() {
       conteudo: atualizacaoDisponivel.body?.trim() ||
         "Melhorias gerais e correções para deixar sua experiência mais estável.",
     };
-    localStorage.setItem(CHAVE_NOVIDADES_PENDENTES, JSON.stringify(novidadesPendentes));
+    gravarArmazenamentoLocal(CHAVE_NOVIDADES_PENDENTES, JSON.stringify(novidadesPendentes));
     let atualizacaoInstalada = false;
 
     try {
@@ -800,8 +807,38 @@ export default function App() {
 
     return instances.find((instancia) => mapaExecucao[instancia.id]) ?? null;
   }, [instances, mapaExecucao, selectedInstance, ultimaInstanciaIniciada]);
-  const instanciaBarra = instanciaAtiva ?? selectedInstance;
-  const instanciaBarraEmExecucao = Boolean(instanciaAtiva && instanciaBarra?.id === instanciaAtiva.id);
+  useEffect(() => {
+    definirOpcoesInstanciaAbertas(false);
+  }, [activeTab, managedInstanceId]);
+
+  useEffect(() => {
+    if (!opcoesInstanciaAbertas) return;
+    const fecharAoClicarFora = (evento: PointerEvent) => {
+      if (evento.target instanceof Node && !barraInstanciaRef.current?.contains(evento.target)) {
+        definirOpcoesInstanciaAbertas(false);
+      }
+    };
+    const fecharAoPressionar = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") {
+        definirOpcoesInstanciaAbertas(false);
+        barraInstanciaRef.current?.querySelector<HTMLButtonElement>('[aria-label="Op\u00e7\u00f5es da inst\u00e2ncia"]')?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", fecharAoClicarFora);
+    document.addEventListener("keydown", fecharAoPressionar);
+    return () => {
+      document.removeEventListener("pointerdown", fecharAoClicarFora);
+      document.removeEventListener("keydown", fecharAoPressionar);
+    };
+  }, [opcoesInstanciaAbertas]);
+
+  const instanciaBarra = activeTab === "instance-manager"
+    ? instances.find((instancia) => instancia.id === managedInstanceId) ?? null
+    : selectedInstance ?? instanciaAtiva;
+  const instanciaBarraEmExecucao = Boolean(instanciaBarra && mapaExecucao[instanciaBarra.id]);
+  const outraInstanciaEmExecucao = instanciaAtiva && instanciaAtiva.id !== instanciaBarra?.id
+    ? instanciaAtiva
+    : null;
 
   const instanciaGerenciada = useMemo(
     () => instances.find((instancia) => instancia.id === managedInstanceId) ?? null,
@@ -914,8 +951,8 @@ export default function App() {
     [launch, instances, atualizarPresenceDiscord, verificarInstanciasEmExecucao]
   );
 
-  const encerrarInstancia = useCallback(async (id: string) => {
-    if (instanciaSendoEncerrada) return;
+  const encerrarInstancia = useCallback(async (id: string): Promise<boolean> => {
+    if (instanciaSendoEncerrada) return false;
 
     setInstanciaSendoEncerrada(id);
     try {
@@ -923,10 +960,12 @@ export default function App() {
       setMapaExecucao((anterior) => ({ ...anterior, [id]: false }));
       await fetchInstances();
       await verificarInstanciasEmExecucao();
+      return true;
     } catch (erro) {
       console.error("Falha ao encerrar a instância:", erro);
       alert(`Não foi possível encerrar o Minecraft: ${erro}`);
       await verificarInstanciasEmExecucao();
+      return false;
     } finally {
       setInstanciaSendoEncerrada(null);
     }
@@ -1465,9 +1504,12 @@ export default function App() {
 
         <div
           className={cn(
-            "flex-1 overflow-y-auto scrollbar-hide",
+            "min-h-0 flex-1 scrollbar-hide",
+            activeTab === "settings" ? "overflow-y-hidden" : "overflow-y-auto",
             !ocultarTopbar && "launcher-painel-conteudo",
-            activeTab === "instance-manager" || activeTab === "profile" ? "" : "px-6 pb-24 pt-6"
+            activeTab === "instance-manager" ? "launcher-painel-instancia pb-28"
+              : activeTab === "settings" ? "px-6 py-6"
+                : activeTab === "profile" ? "" : "px-6 pb-24 pt-6"
           )}
         >
           <Suspense fallback={<EsqueletoAba />}>
@@ -1672,6 +1714,7 @@ export default function App() {
             {activeTab === "settings" && (
               <motion.div
                 key="settings"
+                className="h-full"
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
@@ -1744,7 +1787,7 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
                 className={cn(
-                  "h-full",
+                  "h-full bg-[#0d0d0e]",
                   activeTab === "project-detail" && "hidden"
                 )}
               >
@@ -1756,7 +1799,6 @@ export default function App() {
                   navegacaoRestaurada={navegacaoInstanciaRestaurada}
                   onRegistrarNavegacao={registrarSaida}
                   onBack={() => navegarParaAba("home")}
-                  onAbrirSocial={() => setSocialDrawerAberto(true)}
                   onAbrirProjeto={(projeto) => abrirProjeto("instance-manager", projeto)}
                   onInstanceUpdate={(novoId) => {
                     if (novoId) setManagedInstanceId(novoId);
@@ -1772,9 +1814,8 @@ export default function App() {
         <AnimatePresence>
           {instanciaBarra &&
             activeTab !== "meus-modpacks" &&
-            activeTab !== "instance-manager" &&
             activeTab !== "project-detail" && (
-            <motion.footer
+            <motion.footer ref={barraInstanciaRef}
               initial={{ y: 80, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 80, opacity: 0 }}
@@ -1784,22 +1825,37 @@ export default function App() {
                 ehTelaXl && chatSocialAberto && "pr-[384px]"
               )}
             >
-              <div className="mx-auto max-w-xl">
-                <div className="flex items-center gap-3 border border-white/15 bg-[#101010] p-2">
-                  <div className="ml-1 h-10 w-10 shrink-0 overflow-hidden border border-white/10">
-                    <img src={instanciaBarra.icon} alt="" className="h-full w-full object-cover" />
+              <div className="mx-auto max-w-[1600px]">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4
+                  border border-white/15 bg-[#101010] p-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="h-11 w-11 shrink-0 overflow-hidden border border-white/10">
+                      <img src={instanciaBarra.icon} alt="" className="h-full w-full object-cover" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold">{instanciaBarra.name}</p>
+                      <p className="truncate text-xs text-white/50">
+                        {instanciaBarra.loader_type || instanciaBarra.mc_type} {instanciaBarra.version}
+                      </p>
+                      {outraInstanciaEmExecucao && (
+                        <p className="pointer-events-auto mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px]">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                          <button type="button" onClick={() => setSelectedInstance(outraInstanciaEmExecucao)}
+                            className="truncate text-emerald-300 hover:underline">
+                            {outraInstanciaEmExecucao.name} em execução
+                          </button>
+                          <span className="text-white/30">·</span>
+                          <button type="button" disabled={Boolean(instanciaSendoEncerrada)}
+                            onClick={() => void encerrarInstancia(outraInstanciaEmExecucao.id)}
+                            className="shrink-0 text-red-300/80 underline hover:text-red-300 disabled:opacity-50">
+                            {instanciaSendoEncerrada === outraInstanciaEmExecucao.id ? "encerrando" : "encerrar"}
+                          </button>
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold">{instanciaBarra.name}</p>
-                    <p className="text-[10px] text-white/40">
-                      {instanciaBarra.loader_type || instanciaBarra.mc_type} •{" "}
-                      {instanciaBarra.version}
-                    </p>
-                  </div>
-
-                  <div className="h-8 w-px bg-white/15" />
-
-                  <button
+                  <button type="button"
+                    style={{ fontFamily: "MinecraftTen, Sora, sans-serif", fontSize: 20 }}
                     onClick={() => {
                       if (instanciaBarraEmExecucao) {
                         void encerrarInstancia(instanciaBarra.id);
@@ -1809,12 +1865,18 @@ export default function App() {
                         setIsLoginOpen(true);
                         return;
                       }
+                      if (outraInstanciaEmExecucao) {
+                        definirTrocaPendente({ emExecucao: outraInstanciaEmExecucao, iniciar: instanciaBarra });
+                        return;
+                      }
                       iniciarInstancia(instanciaBarra.id);
                     }}
                     disabled={instanciaSendoEncerrada === instanciaBarra.id}
                     title={instanciaBarraEmExecucao ? "Encerrar o Minecraft" : undefined}
                     className={cn(
-                      "group pointer-events-auto flex items-center gap-3 border px-5 py-2.5 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-60",
+                      "group pointer-events-auto flex min-h-12 min-w-36 items-center justify-center gap-3 border px-6 py-2",
+                      "text-xl tracking-wide transition-colors",
+                      "shadow-[inset_0_-4px_0_#0003,inset_0_2px_0_#fff2] disabled:cursor-wait disabled:opacity-60",
                       instanciaBarraEmExecucao
                         ? "cursor-pointer border-emerald-400/25 bg-emerald-400/10 text-emerald-300 hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300"
                         : user
@@ -1845,9 +1907,60 @@ export default function App() {
                             : "JOGAR"}
                     </span>
                   </button>
+                  <div className="pointer-events-auto relative justify-self-end">
+                    <button type="button" aria-label="Opções da instância"
+                      aria-expanded={opcoesInstanciaAbertas}
+                      onClick={() => definirOpcoesInstanciaAbertas(!opcoesInstanciaAbertas)}
+                      className="flex h-10 w-10 items-center justify-center border border-transparent
+                        text-white/60 hover:border-white/20 hover:text-white">
+                      <MoreVertical size={20} />
+                    </button>
+                    {opcoesInstanciaAbertas && (
+                      <div className="absolute bottom-full right-0 z-50 mb-3 w-56 border border-white/15
+                        bg-[#181818] p-2 text-sm shadow-xl" onClick={() => definirOpcoesInstanciaAbertas(false)}>
+                        {activeTab === "instance-manager" ? (
+                          <button type="button" onClick={() => gerenciadorInstanciaRef.current?.editar()}
+                            className="w-full px-3 py-2 text-left hover:bg-white/5">Editar instância</button>
+                        ) : (
+                          <button type="button" onClick={() => abrirGerenciadorInstancia(instanciaBarra)}
+                            className="w-full px-3 py-2 text-left hover:bg-white/5">Gerenciar instância</button>
+                        )}
+                        <button type="button" onClick={() => {
+                          void invoke("abrir_pasta_instancia", { instanceId: instanciaBarra.id })
+                            .catch(() => setErroInstalacaoDireta("N\u00e3o foi poss\u00edvel abrir a pasta da instância."));
+                        }} className="w-full px-3 py-2 text-left hover:bg-white/5">Abrir pasta</button>
+                        {activeTab === "instance-manager" && (
+                          <button type="button" onClick={() => gerenciadorInstanciaRef.current?.excluir()}
+                            className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-400/10">
+                            Excluir instância
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.footer>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {trocaPendente && (
+            <ConfirmarTrocaInstanciaModal
+              nomeEmExecucao={trocaPendente.emExecucao.name}
+              nomeParaIniciar={trocaPendente.iniciar.name}
+              onCancelar={cancelarTroca}
+              onIniciarJunto={() => {
+                definirTrocaPendente(null);
+                iniciarInstancia(trocaPendente.iniciar.id);
+              }}
+              onEncerrarEIniciar={() => {
+                definirTrocaPendente(null);
+                void encerrarInstancia(trocaPendente.emExecucao.id)
+                  .then((encerrada) => {
+                    if (encerrada) void iniciarInstancia(trocaPendente.iniciar.id);
+                  });
+              }}
+            />
           )}
         </AnimatePresence>
         <IndicadorExclusoesInstancias />

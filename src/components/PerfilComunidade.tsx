@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import { identificarCaptura, montarCapturasFavoritas, montarInstanciasFavoritas } from "../lib/personalizacaoPerfil";
 import type { CapturaPerfil } from "../lib/personalizacaoPerfil";
 import { escolherUuidAvatar, obterUrlCabecaMinecraft } from "../lib/avatarMinecraft";
@@ -82,11 +83,10 @@ function carregarCachePerfil(): CachePerfilComunidade | null {
 }
 
 function salvarCachePerfil(perfil: PerfilSocial, comentarios: ComentarioPerfil[]): void {
-  try {
-    localStorage.setItem(CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
-  } catch {
-    localStorage.removeItem(CHAVE_CACHE_PERFIL);
-  }
+  const salvo = gravarArmazenamentoLocal(
+    CHAVE_CACHE_PERFIL, JSON.stringify({ perfil, comentarios, salvoEm: Date.now() }));
+  if (salvo) return;
+  try { localStorage.removeItem(CHAVE_CACHE_PERFIL); } catch {}
 }
 
 function sanitizarBio(texto?: string | null): string {
@@ -103,12 +103,7 @@ function carregarPersonalizacao(): Partial<PersonalizacaoPerfil> {
 }
 
 function salvarPersonalizacaoLocal(personalizacao: PersonalizacaoPerfil): void {
-  try {
-    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(personalizacao));
-    return;
-  } catch {
-    localStorage.removeItem(CHAVE_PERSONALIZACAO);
-  }
+  if (gravarArmazenamentoLocal(CHAVE_PERSONALIZACAO, JSON.stringify(personalizacao))) return;
 
   const semMidiasIncorporadas = {
     ...personalizacao,
@@ -120,11 +115,7 @@ function salvarPersonalizacaoLocal(personalizacao: PersonalizacaoPerfil): void {
       : personalizacao.bannerPersonalizado,
   };
 
-  try {
-    localStorage.setItem(CHAVE_PERSONALIZACAO, JSON.stringify(semMidiasIncorporadas));
-  } catch {
-    // O perfil remoto já foi salvo; a indisponibilidade deste cache não deve invalidar a operação.
-  }
+  gravarArmazenamentoLocal(CHAVE_PERSONALIZACAO, JSON.stringify(semMidiasIncorporadas));
 }
 
 function formatarHoras(segundos = 0): string {

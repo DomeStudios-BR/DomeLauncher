@@ -1,4 +1,4 @@
-﻿import type { MouseEvent } from 'react';
+import type { MouseEvent } from 'react';
 import { motion } from 'framer-motion';
 import { Check, Download, Trash2 } from '../iconesPixelados';
 import { cn } from '../lib/utils';
@@ -40,7 +40,7 @@ export default function CardFavorito({
         }} onClick={() => { if (!arrasto.consumirCliqueArrasto()) onAbrir(item); }}
         onContextMenu={(evento) => onMenu(evento, item)} data-favorito-id={chaveFavorito(item)}
         data-grupo-id={grupoId} data-modo-visualizacao="grid"
-        className="group relative flex h-full cursor-grab flex-col rounded-xl border border-white/5 bg-white/3 p-4
+        className="group relative flex h-full cursor-grab flex-col border border-white/5 bg-white/3 p-4
             transition-colors hover:border-white/10 hover:bg-white/5 active:cursor-grabbing">
         <div className="flex gap-3">
             <img draggable={false} src={obterImagemProjeto(item.icon_url, item.type, item.id)} alt=""
@@ -57,7 +57,7 @@ export default function CardFavorito({
         <div className="mt-auto flex justify-end gap-2 pt-3">
             <button type="button" aria-label={`Remover ${item.title} dos favoritos`} onClick={(evento) => {
                 evento.stopPropagation(); onRemover(item);
-            }} className="shrink-0 rounded-xl bg-white/5 p-2 text-white/40 transition-colors
+            }} className="shrink-0 bg-white/5 p-2 text-white/40 transition-colors
                 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400">
                 <Trash2 size={16} />
             </button>
@@ -65,7 +65,7 @@ export default function CardFavorito({
                 onClick={(evento) => {
                 evento.stopPropagation(); onAbrir(item, true);
             }} className={cn(
-                'flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-black',
+                'flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-black',
                 'transition-all active:scale-95 disabled:cursor-default disabled:opacity-50',
                 'disabled:active:scale-100 focus-visible:outline focus-visible:outline-2',
                 'focus-visible:outline-emerald-400',

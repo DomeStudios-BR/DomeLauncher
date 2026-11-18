@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, Download, Loader2, Pencil, Trash2, Upload, X } from "../iconesPixelados";
@@ -41,13 +42,7 @@ const CHAVE_SKINS_SALVAS = "dome-skins-salvas";
 const CHAVE_MODO_SEGURO_SKINS = "dome-skins-modo-seguro";
 
 function salvarSkinsSalvas(skins: SkinSalva[]): boolean {
-  try {
-    localStorage.setItem(CHAVE_SKINS_SALVAS, JSON.stringify(skins));
-    return true;
-  } catch (erro) {
-    console.warn("Não foi possível persistir as skins salvas:", erro);
-    return false;
-  }
+  return gravarArmazenamentoLocal(CHAVE_SKINS_SALVAS, JSON.stringify(skins));
 }
 
 function modoSeguroSalvo(): boolean {
@@ -127,11 +122,7 @@ export function SkinManager({ user }: SkinManagerProps) {
   const [modoSeguro3d, setModoSeguro3d] = useState(modoSeguroSalvo);
 
   const ativarModoSeguro3d = useCallback(() => {
-    try {
-      localStorage.setItem(CHAVE_MODO_SEGURO_SKINS, "true");
-    } catch {
-      // O modo seguro continua válido nesta sessão mesmo sem persistência do WebView.
-    }
+    gravarArmazenamentoLocal(CHAVE_MODO_SEGURO_SKINS, "true");
     setModoSeguro3d(true);
   }, []);
 

@@ -40,6 +40,10 @@ fn marcador_fatal(linha: &str) -> bool {
         "Could not reserve enough space",
         "UnsupportedClassVersionError",
         "Mixin apply for mod",
+        "OutOfMemoryError",
+        "Could not create the Java Virtual Machine",
+        "GLFW error 65542",
+        "does not support OpenGL",
     ]
     .iter()
     .any(|marcador| linha.contains(marcador))
@@ -162,6 +166,14 @@ pub(super) fn identificar_origem(raiz: &Path, fontes: &[(String, String)]) -> Or
     }
     for (padrao, descricao) in [
         ("OutOfMemoryError", "memória insuficiente para o Java"),
+        (
+            "GLFW error 65542",
+            "driver gráfico sem suporte ao OpenGL necessário",
+        ),
+        (
+            "does not support OpenGL",
+            "driver gráfico sem suporte ao OpenGL necessário",
+        ),
         (
             "There is insufficient memory for the Java Runtime Environment to continue",
             "memória nativa insuficiente",

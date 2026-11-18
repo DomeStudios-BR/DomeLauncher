@@ -6,10 +6,15 @@ O botão Reportar problema abre um modal com título, descrição e prévia dos 
 nickname principal do Minecraft, versão do launcher, sistema operacional e arquitetura.
 O jogador pode conferir e desmarcar os logs antes de enviar. A coleta mantém somente os últimos 200 registros
 da interface na sessão atual, limitados a 24000 caracteres, em memória. Ela inclui console e erros JavaScript.
-Não lê credenciais locais, arquivos pessoais, stdout do backend Rust ou logs das instâncias Minecraft.
+Não lê credenciais locais, arquivos pessoais ou stdout do backend Rust.
 Os filtros ocultam valores de credenciais, emails e o nome pessoal em pastas de usuário.
 Preservam mensagens, URLs sem segredos, endereços de rede, arquivos e posições nas stack traces.
 Objetos de erro são serializados com limite, mantendo detalhes úteis e ocultando campos de credenciais.
+
+Com Incluir logs marcado, o jogador pode selecionar uma instância.
+`obter_logs_relato_instancia` lê os últimos 8.000 bytes de `dome-console.log` e `latest.log`,
+valida os caminhos na raiz da instância e executa a leitura fora da thread da janela.
+A interface sanitiza e mostra esses trechos antes do envio, reservando espaço para os registros do launcher.
 
 `preparar_relato_problema` retorna apenas dados públicos da sessão protegida e do sistema.
 `enviar_relato_problema` valida o relato e a identidade conferida no modal, renova o acesso se necessário e envia
@@ -39,6 +44,8 @@ A DomeAPI precisa de `DOME_GITHUB_RELATOS_TOKEN`, disponível somente no servido
 no repositório DomeStudios-BR/DomeLauncher. Sem essa variável, retorna HTTP 503. Cada perfil pode fazer até três
 tentativas por hora. Envios com a mesma referência compartilham o resultado por 24 horas no processo da API.
 A deduplicação e o limite são locais ao processo, não persistem após reinício e não coordenam múltiplas réplicas.
+Respostas HTTP de recusa do GitHub permitem outra tentativa com a mesma referência.
+Falhas de conexão e resultados incertos mantêm o resultado registrado para evitar duplicatas.
 Não há repetição automática da criação no GitHub. Em falhas sem confirmação, o jogador deve conferir as issues
 antes de abrir um novo relato. As tentativas de confirmação no mesmo modal conservam referência e conteúdo.
 
@@ -66,6 +73,10 @@ Contas Minecraft adicionais são vinculadas ao perfil Dome já autenticado por
 
 O Discord é uma integração opcional em Configurações. `POST /api/launcher/social/discord/link` exige uma sessão Dome
 e OAuth PKCE; um Discord já associado a outro perfil não é transferido ou mesclado automaticamente.
+O vínculo distingue recusa da autorização, falha de comunicação com o Discord e falha ao gravar o perfil.
+Quando o código OAuth é recusado, o jogador pode iniciar uma nova autorização em Configurações.
+O launcher aceita `discordId` e `discordUsername` nulos nas respostas de perfil, inclusive ao vincular uma conta
+Minecraft a um perfil Dome sem Discord.
 
 As Configurações oferecem dois fluxos de teste: reexibir somente o onboarding e esquecer todas as credenciais locais.
 O segundo encerra a presença social, remove `account.json`, `accounts.json` e `social-session.dat`, reinicia o
@@ -690,6 +701,12 @@ consulta filtrada. A listagem geral do CurseForge percorre as páginas até o to
 (limite de 10.000 arquivos), incluindo versões sem download; consultas filtradas de conteúdo mantêm até 50.
 Versões com Minecraft/loader compatíveis e sem URL de download mantêm a instalação bloqueada;
 ausência de URL não é incompatibilidade de Minecraft/loader. Falhas de consulta mostram o erro.
+Se a versão selecionada não tiver arquivo para download, a instalação direta pelos Favoritos termina com
+um aviso de indisponibilidade e libera o botão de instalação.
+Na biblioteca, Importar arquivo usa `importar_arquivo_biblioteca` para identificar pacotes Dome e CurseForge.
+Para CurseForge, usa o manifesto para preparar o Minecraft e o loader, copia conteúdo da raiz e de overrides
+e baixa os arquivos referenciados. Mundos do ZIP local entram na nova instância. A importação de outro launcher
+combina overrides, pasta do perfil e pasta do jogo, com prioridade para os arquivos da pasta do jogo.
 Na resolução de instalações individuais, em lote e na migração, arquivos sem `downloadUrl` também
 mantêm a compatibilidade. A seleção prioriza arquivos compatíveis com download disponível; se nenhum
 oferecer download, o erro identifica o projeto e orienta baixar pelo site do CurseForge e importar o arquivo.

@@ -1,3 +1,4 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
 import { lazy, Suspense, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Globe,
@@ -554,11 +555,7 @@ function SecaoVolteAJogar({
   )).slice(0, 6), [itensDisponiveis, itensOcultos]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("dome:volte-a-jogar:ocultos", JSON.stringify(itensOcultos));
-    } catch (erro) {
-      console.warn("Não foi possível salvar os cartões removidos de Volte a jogar:", erro);
-    }
+    gravarArmazenamentoLocal("dome:volte-a-jogar:ocultos", JSON.stringify(itensOcultos));
   }, [itensOcultos]);
 
   useEffect(() => {

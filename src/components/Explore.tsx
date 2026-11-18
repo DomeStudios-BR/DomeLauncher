@@ -827,12 +827,12 @@ export default function Explore({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Pesquisar modpacks, mods, textures, shaders..."
-            className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all"
+            className="w-full bg-white/5 border border-white/10 py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition-all"
           />
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center gap-4">
-          <div className="custom-scrollbar flex max-w-full overflow-x-auto rounded-xl border border-white/10 bg-white/5 p-1">
+          <div className="custom-scrollbar flex max-w-full overflow-x-auto border border-white/10 bg-white/5 p-1">
             {CONTENT_TYPES.map((type) => (
               <button
                 key={type.id}
@@ -846,7 +846,7 @@ export default function Explore({
                   }
                 }}
                 className={cn(
-                  "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all",
+                  "flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition-all",
                   contentType === type.id
                     ? "bg-emerald-500 text-black"
                     : "text-white/40 hover:text-white"
@@ -880,7 +880,7 @@ export default function Explore({
               type="button"
               onClick={() => setFiltrosAbertos((abertos) => !abertos)}
               className={cn(
-                "flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all",
+                "flex shrink-0 items-center gap-2 border px-3 py-2 text-xs font-bold transition-all",
                 filtrosAbertos || quantidadeFiltrosAtivos > 0
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                   : "border-white/10 bg-white/5 text-white/50 hover:text-white"
@@ -1296,7 +1296,7 @@ export default function Explore({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: index * 0.03 }}
-              className="group flex min-w-0 cursor-pointer flex-col gap-4 overflow-hidden rounded-3xl border border-white/5 bg-white/5 p-5 transition-all hover:border-white/20"
+              className="group flex min-w-0 cursor-pointer flex-col gap-4 overflow-hidden border border-white/5 bg-white/5 p-5 transition-all hover:border-white/20"
               onClick={() => abrirDetalheProjeto(item)}
               onMouseEnter={() =>
                 onAtualizarPresencaExplore?.({
@@ -1406,7 +1406,7 @@ export default function Explore({
                       if (instalando) return;
                       abrirDetalheProjeto(item, true);
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-50 disabled:cursor-default disabled:active:scale-100"
+                    className="px-4 py-2 text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-50 disabled:cursor-default disabled:active:scale-100"
                   >
                     <Download size={14} />
                     {instalando ? "Instalando..." : "Instalar"}

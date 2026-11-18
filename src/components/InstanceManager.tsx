@@ -1,9 +1,11 @@
+import { gravarArmazenamentoLocal } from "../lib/armazenamentoLocal";
+import { selecionarAtualizacaoEstavel } from "../lib/atualizacaoEstavel";
 import { lazy, Suspense, useState, useEffect, useLayoutEffect, useImperativeHandle, useRef, useCallback, useMemo, type Ref } from "react";
 import {
-  Play,
   Search,
   Plus,
   RefreshCw,
+  ArrowUpDown,
   Download,
   Trash2,
   MoreVertical,
@@ -18,17 +20,14 @@ import {
   ChevronLeft,
   Filter,
   X,
-  FolderOpen,
   FileText,
   Calendar,
   HardDrive,
   Pencil,
   Save,
-  Users,
   Heart,
 } from "../iconesPixelados";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn } from "../lib/utils";
 import { ICONE_DOME_LAUNCHER } from "../lib/imagemProjeto";
 import {
@@ -77,7 +76,6 @@ interface InstanceManagerProps {
   navegacaoRestaurada?: RestauracaoNavegacaoInstancia | null;
   onRegistrarNavegacao?: () => void;
   onBack: () => void;
-  onAbrirSocial?: () => void;
   onAbrirProjeto?: (projeto: ProjetoConteudo) => void;
   onInstanceUpdate?: (novoId?: string) => void;
 }
@@ -246,10 +244,6 @@ interface LogFile {
   modified: string;
 }
 
-interface ConfiguracoesGlobais {
-  close_on_launch?: boolean;
-}
-
 type ContentTab = "content" | "modpack" | "worlds" | "servers" | "configuration" | "logs";
 
 interface ModpackDaInstancia {
@@ -288,8 +282,11 @@ export interface EstadoNavegacaoInstancia {
     rolagem: number;
 }
 
+/** Permite ao App preservar a navegação e acionar edição ou exclusão pela barra inferior compartilhada. */
 export interface ControleNavegacaoInstancia {
     capturar: () => EstadoNavegacaoInstancia;
+    editar: () => void;
+    excluir: () => void;
 }
 
 export interface RestauracaoNavegacaoInstancia {
@@ -426,6 +423,7 @@ interface RegistroCacheConteudo {
   updateFileName?: string;
   updateDownloadUrl?: string;
   atualizacaoVerificadaEm?: number;
+  somenteAtualizacoesEstaveis?: boolean;
   versaoIdentificacao?: number;
   atualizadoEm: number;
 }
@@ -511,11 +509,7 @@ const lerCacheConteudoInstalado = (): EstruturaCacheConteudo => {
 };
 
 const salvarCacheConteudoInstalado = (cache: EstruturaCacheConteudo) => {
-  try {
-    localStorage.setItem(CHAVE_CACHE_CONTEUDO_INSTALADO, JSON.stringify(cache));
-  } catch {
-    // Ignorar erro de armazenamento
-  }
+  gravarArmazenamentoLocal(CHAVE_CACHE_CONTEUDO_INSTALADO, JSON.stringify(cache));
 };
 
 const obterRegistroCacheConteudo = (
@@ -623,7 +617,6 @@ export default function InstanceManager({
   navegacaoRestaurada,
   onRegistrarNavegacao,
   onBack,
-  onAbrirSocial,
   onAbrirProjeto,
   onInstanceUpdate,
 }: InstanceManagerProps) {
@@ -704,7 +697,6 @@ export default function InstanceManager({
   const [logs, setLogs] = useState<LogFile[]>([]);
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
   const [logContent, setLogContent] = useState("");
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [modalExclusaoAberto, setModalExclusaoAberto] = useState(false);
   const [updatingAll, setUpdatingAll] = useState(false);
   const [modoSelecaoLote, setModoSelecaoLote] = useState(false);
@@ -780,6 +772,8 @@ export default function InstanceManager({
   };
 
   useImperativeHandle(ref, () => ({
+    editar: () => editarNomeDiretamente(),
+    excluir: () => deleteInstance(),
     capturar: () => ({
       aba: activeTab, filtro: activeFilter, modo: viewMode, busca: searchQuery,
       fontes: { ...fontesBuscaSelecionadas }, ordenacao: ordenacaoBusca, categorias: categoriasBusca,
@@ -1038,7 +1032,7 @@ export default function InstanceManager({
           && identificacao.versionId === registroSalvo?.versionId) ? registroSalvo : null;
         const cacheIdentificado = Boolean(registro?.projectId);
         const atualizacaoCacheValida = Boolean(
-          registro?.atualizacaoVerificadaEm &&
+          registro?.somenteAtualizacoesEstaveis && registro.atualizacaoVerificadaEm &&
             Date.now() - registro.atualizacaoVerificadaEm <= TTL_CACHE_ATUALIZACAO_MS
         );
 
@@ -1053,7 +1047,7 @@ export default function InstanceManager({
           fileName,
           version: identificacao?.version || detalhe.version || extractVersion(fileName),
           author: (cacheIdentificado ? registro?.author : detalhe.author) || "Unknown",
-          icon: (cacheIdentificado ? registro?.icon : detalhe.icon) || registro?.icon,
+          icon: (cacheIdentificado ? registro?.icon : detalhe.icon) || detalhe.icon || registro?.icon,
           versionId: identificacao?.versionId || registro?.versionId,
           projectId: identificacao?.projectId || registro?.projectId,
           source: identificacao?.source || registro?.source,
@@ -1126,6 +1120,9 @@ export default function InstanceManager({
         definirRegistroCacheConteudo(cache, instanceId, "mod", item.fileName, {
           ...atualizado,
           projectType: "mod",
+          somenteAtualizacoesEstaveis: mesmaVersao
+            ? obterRegistroCacheConteudo(cache, instanceId, "mod", item.fileName)?.somenteAtualizacoesEstaveis
+            : undefined,
           atualizacaoVerificadaEm: mesmaVersao
             ? obterRegistroCacheConteudo(cache, instanceId, "mod", item.fileName)?.atualizacaoVerificadaEm
             : undefined,
@@ -1499,7 +1496,7 @@ export default function InstanceManager({
         item.fileName
       );
       const cacheAtualizacaoValido = Boolean(
-        registroCache?.atualizacaoVerificadaEm &&
+        registroCache?.somenteAtualizacoesEstaveis && registroCache.atualizacaoVerificadaEm &&
           Date.now() - registroCache.atualizacaoVerificadaEm <= TTL_CACHE_ATUALIZACAO_MS
       );
 
@@ -1528,6 +1525,7 @@ export default function InstanceManager({
           updateAvailable: false,
           updateFileName: undefined,
           updateDownloadUrl: undefined,
+          somenteAtualizacoesEstaveis: true,
           atualizacaoVerificadaEm: Date.now(),
         });
         cacheAlterado = true;
@@ -1551,7 +1549,8 @@ export default function InstanceManager({
           throw new Error(`Modrinth respondeu ${resposta.status}`);
         }
         const versoes = await resposta.json();
-        if (!Array.isArray(versoes) || versoes.length === 0) {
+        const versaoAlvo = selecionarAtualizacaoEstavel(versoes, item);
+        if (!versaoAlvo) {
           itensAtualizados[i] = {
             ...item,
             updateAvailable: false,
@@ -1570,13 +1569,13 @@ export default function InstanceManager({
             updateAvailable: false,
             updateFileName: undefined,
             updateDownloadUrl: undefined,
+            somenteAtualizacoesEstaveis: true,
             atualizacaoVerificadaEm: Date.now(),
           });
           cacheAlterado = true;
           continue;
         }
 
-        const versaoAlvo = versoes[0];
         const arquivoAlvo =
           versaoAlvo?.files?.find((f: any) => f?.primary) || versaoAlvo?.files?.[0];
         if (!arquivoAlvo?.filename || !arquivoAlvo?.url) continue;
@@ -1607,6 +1606,7 @@ export default function InstanceManager({
           updateAvailable: itensAtualizados[i].updateAvailable,
           updateFileName: itensAtualizados[i].updateFileName,
           updateDownloadUrl: itensAtualizados[i].updateDownloadUrl,
+          somenteAtualizacoesEstaveis: true,
           atualizacaoVerificadaEm: Date.now(),
         });
         cacheAlterado = true;
@@ -1961,6 +1961,7 @@ export default function InstanceManager({
       updateAvailable: false,
       updateFileName: undefined,
       updateDownloadUrl: undefined,
+      somenteAtualizacoesEstaveis: true,
       atualizacaoVerificadaEm: Date.now(),
     });
     salvarCacheConteudoInstalado(cacheConteudo);
@@ -2291,7 +2292,7 @@ export default function InstanceManager({
             `https://api.modrinth.com/v2/project/${item.projectId}/version?${params.toString()}`
           );
           const versoes = await resposta.json();
-          const versaoAlvo = Array.isArray(versoes) ? versoes[0] : null;
+          const versaoAlvo = selecionarAtualizacaoEstavel(versoes, item);
           const arquivoAlvo =
             versaoAlvo?.files?.find((f: any) => f?.primary) || versaoAlvo?.files?.[0];
           if (!arquivoAlvo?.url || !arquivoAlvo?.filename) {
@@ -2559,24 +2560,6 @@ export default function InstanceManager({
     }
   };
 
-  const launchInstance = async () => {
-    try {
-      await invoke("launch_instance", { id: instanceId });
-
-      try {
-        const configuracoes = await invoke<ConfiguracoesGlobais>("get_settings");
-        if (configuracoes?.close_on_launch) {
-          await getCurrentWindow().minimize();
-        }
-      } catch (erroConfig) {
-        console.warn("Falha ao aplicar close_on_launch:", erroConfig);
-      }
-    } catch (error) {
-      console.error("Erro ao iniciar:", error);
-      alert(`Erro: ${error}`);
-    }
-  };
-
   const saveInstanceSettings = async () => {
     if (!instanceDetails) return;
     const nomeAtualizado = editName.trim();
@@ -2670,18 +2653,6 @@ export default function InstanceManager({
     setIsEditing(false);
   };
 
-  const openInstanceFolder = async () => {
-    setShowMoreMenu(false);
-    if (!instanceDetails?.path) return;
-
-    try {
-      await invoke("abrir_pasta_instancia", { instanceId });
-    } catch (error) {
-      console.error("Erro ao abrir local da instância:", error);
-      alert("Não foi possível abrir o local da instância.");
-    }
-  };
-
   const abrirPastaConteudo = async (tipoConteudo: ContentFilter) => {
     try {
       await invoke("abrir_pasta_instancia", { instanceId, tipoConteudo });
@@ -2692,7 +2663,6 @@ export default function InstanceManager({
   };
 
   const deleteInstance = () => {
-    setShowMoreMenu(false);
     setModalExclusaoAberto(true);
   };
 
@@ -3004,161 +2974,7 @@ export default function InstanceManager({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0d0e]">
-      {/* Header */}
-      <div className="bg-[#121214] border-b border-white/5 px-6 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            {/* Ícone editável */}
-            <button
-              type="button"
-              onClick={editarIconeDiretamente}
-              aria-label="Editar ícone da instância"
-              title="Editar ícone"
-              className="relative group shrink-0 rounded-xl text-left"
-            >
-              <div className="w-14 h-14 rounded-xl bg-[#1a1a1c] border border-white/10 overflow-hidden flex items-center justify-center">
-                <img
-                  src={(isEditing ? editIcon : instanceDetails.icon) || ICONE_DOME_LAUNCHER}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                <Pencil size={16} className="text-white" />
-              </span>
-            </button>
-
-            <div className="min-w-0">
-              {isEditing ? (
-                <input
-                  ref={nomeInstanciaRef}
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(evento) => {
-                    if (evento.key === "Enter" && !saving) void saveInstanceSettings();
-                    if (evento.key === "Escape" && !saving) cancelEditingInstance();
-                  }}
-                  aria-label="Nome da instância"
-                  className="w-full max-w-sm rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-xl font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-              ) : (
-                <div className="flex min-w-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={editarNomeDiretamente}
-                    title="Editar nome"
-                    className="min-w-0 cursor-text text-left"
-                  >
-                    <h1 className="truncate text-xl font-bold text-white">{instanceDetails.name}</h1>
-                  </button>
-                  <button 
-                    onClick={editarNomeDiretamente}
-                    className="p-1 rounded hover:bg-white/10 text-white/30 hover:text-white transition-colors"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-white/50">
-                <span className="flex items-center gap-1">
-                  <Globe size={14} />
-                  {instanceDetails.loaderType || "Vanilla"} {instanceDetails.version}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock size={14} />
-                  {formatarTempoJogadoTotal(instanceDetails.tempoTotalJogadoSegundos)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Calendar size={14} />
-                  {formatarUltimoAcesso(instanceDetails.lastPlayed)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {onAbrirSocial && (
-              <button
-                onClick={onAbrirSocial}
-                aria-label="Abrir barra social"
-                className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors xl:hidden"
-              >
-                <Users size={18} className="text-white/60" />
-              </button>
-            )}
-            {isEditing ? (
-              <>
-                <button
-                  onClick={cancelEditingInstance}
-                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={saveInstanceSettings}
-                  disabled={saving}
-                  className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black px-4 py-2 rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                  Salvar
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={launchInstance}
-                  className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2.5 rounded-xl font-bold transition-all active:scale-95"
-                >
-                  <Play size={18} fill="currentColor" />
-                  Play
-                </button>
-                
-                {/* More Options Button */}
-                <div className="relative">
-                  <button 
-                    onClick={() => setShowMoreMenu(!showMoreMenu)}
-                    className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
-                  >
-                    <MoreVertical size={18} className="text-white/60" />
-                  </button>
-                  
-                  {showMoreMenu && (
-                    <div className="absolute right-0 top-full mt-2 w-56 bg-[#1a1a1c] border border-white/10 rounded-xl shadow-xl z-50">
-                      <div className="p-2">
-                        <button 
-                          onClick={() => { startEditingInstance(); setShowMoreMenu(false); }}
-                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-sm flex items-center gap-2"
-                        >
-                          <Pencil size={14} className="text-white/40" />
-                          Editar instância
-                        </button>
-                        <button 
-                          onClick={openInstanceFolder}
-                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-sm flex items-center gap-2"
-                        >
-                          <FolderOpen size={14} className="text-white/40" />
-                          Abrir local do arquivo
-                        </button>
-                        <div className="border-t border-white/5 my-1" />
-                        <button 
-                          onClick={deleteInstance}
-                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-500/10 text-red-400 text-sm flex items-center gap-2"
-                        >
-                          <Trash2 size={14} />
-                          Excluir instância
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
+    <div className="mx-auto flex h-full w-full max-w-[1600px] flex-col bg-[#0d0d0e]">
       {/* Tabs */}
       <div className="px-6 pt-4 pb-2 border-b border-white/5">
         <div className="flex gap-1">
@@ -3192,7 +3008,7 @@ export default function InstanceManager({
 
       {/* Content Area */}
       <div ref={importacaoLocal.areaRef} className="relative flex-1 overflow-hidden flex flex-col"
-        onClick={() => setShowMoreMenu(false)}>
+        >
         {(activeTab === "modpack" || origemInstanciaAberta === instanceId)
           && modpackDaInstancia && instanceDetails?.id === instanceId && (
           <div className={activeTab === "modpack" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
@@ -3717,7 +3533,7 @@ export default function InstanceManager({
                   <div>
                     <div
                       className={cn(
-                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_2rem]",
+                        "sticky top-0 z-10 grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_3.5rem_2rem]",
                         "items-center gap-x-4 border-b border-white/5",
                         "bg-[#0d0d0e] px-6 py-2 text-xs text-white/40"
                       )}
@@ -3775,7 +3591,7 @@ export default function InstanceManager({
                           });
                         }}
                         className={cn(
-                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_7.5rem_2rem]",
+                          "group grid grid-cols-[2rem_3rem_minmax(0,1fr)_3.5rem_3.5rem_2rem]",
                           "items-center gap-x-4 border-b border-white/5 px-6 py-3 hover:bg-white/2"
                         )}
                       >
@@ -3876,7 +3692,6 @@ export default function InstanceManager({
                         </div>
 
                         <div className="flex items-center justify-center">
-                          <div className="flex w-full max-w-[7rem] items-center gap-1.5 text-[11px] font-bold text-white/55">
                           <button
                             type="button"
                             onClick={() => abrirTrocaVersao(mod, activeFilter)}
@@ -3888,7 +3703,7 @@ export default function InstanceManager({
                               : "Trocar versão"}
                             className={cn(
                               "flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 overflow-hidden rounded border",
-                              "whitespace-nowrap border-white/10 bg-white/[0.035] px-1.5 enabled:hover:bg-white/[0.07]",
+                              "whitespace-nowrap border-transparent bg-transparent px-1.5 enabled:hover:border-white/20",
                               "text-[11px] font-bold transition-colors",
                               "disabled:cursor-not-allowed disabled:opacity-30",
                               mod.updateAvailable || mod.updating
@@ -3897,20 +3712,9 @@ export default function InstanceManager({
                             )}
                           >
                             {mod.updating ? <Loader2 size={11} className="shrink-0 animate-spin" />
-                              : <RefreshCw size={11} className="shrink-0" />}
+                              : <ArrowUpDown size={16} className="shrink-0 rotate-90" />}
                             {mod.updating && <span>{progressoPorItem[mod.fileName] ?? 0}%</span>}
                           </button>
-                          <button type="button" onClick={() => abrirTrocaVersao(mod, activeFilter, true)}
-                              disabled={!mod.projectId || !mod.source || mod.updating || updatingAll}
-                              aria-label={`Changelog de ${mod.name}, versão ${mod.version}`}
-                              title="Ver changelog desta versão"
-                              className={cn("h-7 min-w-0 flex-1 truncate rounded border border-white/10",
-                                  "bg-white/[0.035] px-2 tabular-nums enabled:hover:bg-white/[0.07] hover:underline",
-                                  "disabled:cursor-not-allowed disabled:opacity-30",
-                                  mod.updateAvailable && "text-[color:var(--cor-acento-300)]")}>
-                              {mod.version || "—"}
-                          </button>
-                          </div>
                         </div>
 
                         <div className="flex items-center justify-end gap-1 border-l border-white/5 pl-4">
@@ -4595,6 +4399,79 @@ export default function InstanceManager({
         }}
         onConfirmar={() => void instalarFilaSelecionada()}
       />
+      {isEditing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+          <section role="dialog" aria-modal="true" aria-label="Editar instância"
+            className="w-full max-w-xl border border-white/15 bg-[#121214] p-5">
+            <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={editarIconeDiretamente}
+              aria-label="Editar ícone da instância"
+              title="Editar ícone"
+              className="relative group shrink-0 rounded-xl text-left"
+            >
+              <div className="w-11 h-11 rounded-xl bg-[#1a1a1c] border border-white/10 overflow-hidden flex items-center justify-center">
+                <img
+                  src={(isEditing ? editIcon : instanceDetails.icon) || ICONE_DOME_LAUNCHER}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                <Pencil size={16} className="text-white" />
+              </span>
+            </button>
+              <div className="min-w-0 flex-1">
+                <input
+                  autoFocus
+                  ref={nomeInstanciaRef}
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(evento) => {
+                    if (evento.key === "Enter" && !saving) void saveInstanceSettings();
+                    if (evento.key === "Escape" && !saving) cancelEditingInstance();
+                  }}
+                  aria-label="Nome da instância"
+                  className="w-full max-w-sm rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-base font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/50">
+                <span className="flex items-center gap-1">
+                  <Globe size={14} />
+                  {instanceDetails.loaderType || "Vanilla"} {instanceDetails.version}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock size={14} />
+                  {formatarTempoJogadoTotal(instanceDetails.tempoTotalJogadoSegundos)}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Calendar size={14} />
+                  {formatarUltimoAcesso(instanceDetails.lastPlayed)}
+                </span>
+              </div>
+            </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+                <button
+                  onClick={cancelEditingInstance}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={saveInstanceSettings}
+                  disabled={saving}
+                  className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black px-4 py-2 rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  Salvar
+                </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

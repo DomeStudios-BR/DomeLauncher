@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, useRef, type MouseEvent } from 'react';
 import { Heart, Search, Download, Trash2, FolderPlus, Pencil, FolderOpen, Image, Sparkles } from '../iconesPixelados';
 import type { ProjetoConteudo } from './ProjetoDetalheModal';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -194,7 +194,7 @@ export default function Favorites({
 
     return <div className="space-y-5">
         <div className="flex items-center gap-3">
-            <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border
+            <div className="flex size-12 shrink-0 items-center justify-center border
                 border-pink-500/20 bg-pink-500/10">
                 <Heart size={24} className="text-pink-500" />
             </div>
@@ -210,13 +210,13 @@ export default function Favorites({
             <Search className="absolute left-4 top-3 text-white/30" size={18} />
             <input aria-label="Buscar favoritos" placeholder="Buscar nos favoritos" value={busca}
                 onChange={(evento) => setBusca(evento.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm" />
+                className="w-full border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm" />
         </div>
         <div className="flex flex-wrap items-center gap-3 border-b border-white/10 pb-3">
             <div role="group" aria-label="Tipo de conteúdo" className="flex flex-wrap gap-1">
                 {ABAS_TIPO.map(({ valor, nome, Icone }) => <button key={valor} type="button"
                     aria-pressed={tipo === valor} onClick={() => setTipo(valor)} className={cn(
-                        'flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors',
+                        'flex items-center gap-2 px-3 py-2 text-xs transition-colors',
                         tipo === valor ? 'bg-pink-500/10 text-pink-300' : 'text-white/50 hover:text-white',
                     )}><Icone size={15} aria-hidden="true" />{nome}</button>)}
             </div>
@@ -236,7 +236,7 @@ export default function Favorites({
             return <motion.div key={grupo.id} layout="position"
                 transition={{ layout: { duration: 0.16, ease: 'easeOut' } }}
                 onMouseEnter={() => entrarGrupoDestino(grupo.id)} data-grupo-favoritos data-grupo-id={grupo.id}
-                className={cn('rounded-xl border transition-colors', grupoDestino === grupo.id
+                className={cn('border transition-colors', grupoDestino === grupo.id
                     ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-transparent',
                     grupoArrastado === grupo.id ? 'opacity-45' : 'opacity-100')}>
                 <CabecalhoGrupo nome={grupo.nome} quantidade={itens.length} recolhido={grupo.recolhido}
@@ -253,7 +253,7 @@ export default function Favorites({
                     animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.15 }} className="overflow-hidden">
                     {!itens.length ? <div className={cn(
-                        'mx-1 mb-2 rounded-xl border border-dashed border-white/5 py-6',
+                        'mx-1 mb-2 border border-dashed border-white/5 py-6',
                         'text-center text-xs text-white/10',
                     )}>Arraste favoritos para este grupo</div>
                     : <div className="grid grid-cols-1 gap-4 px-1 pb-2 md:grid-cols-2 xl:grid-cols-3">

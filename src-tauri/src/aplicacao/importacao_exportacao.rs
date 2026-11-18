@@ -3,7 +3,7 @@ use super::*;
 use tauri::Emitter;
 
 const EVENTO_PROGRESSO_IMPORTACAO_INSTANCIA: &str = "importacao-instancia-progresso";
-const PASTAS_CONTEUDO_IMPORTADO: [&str; 12] = [
+const PASTAS_CONTEUDO_IMPORTADO: [&str; 13] = [
     "mods",
     "resourcepacks",
     "shaderpacks",
@@ -16,6 +16,7 @@ const PASTAS_CONTEUDO_IMPORTADO: [&str; 12] = [
     "xaeromap",
     "XaeroWaypoints",
     "servers",
+    "emotes",
 ];
 const ARQUIVOS_CONTEUDO_IMPORTADO: [&str; 5] = [
     "options.txt",
@@ -24,6 +25,17 @@ const ARQUIVOS_CONTEUDO_IMPORTADO: [&str; 5] = [
     "servers.dat",
     "usercache.json",
 ];
+
+pub(crate) fn conteudo_na_raiz_importavel(caminho: &str) -> bool {
+    let (primeiro, resto) = caminho.split_once('/').unwrap_or((caminho, ""));
+    PASTAS_CONTEUDO_IMPORTADO
+        .iter()
+        .any(|pasta| pasta.eq_ignore_ascii_case(primeiro))
+        || (resto.is_empty()
+            && ARQUIVOS_CONTEUDO_IMPORTADO
+                .iter()
+                .any(|arquivo| arquivo.eq_ignore_ascii_case(primeiro)))
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -617,20 +629,35 @@ pub(crate) fn listar_instancias_importaveis(
 fn preparar_arquivos_diretorio(
     origem: &std::path::Path,
     destino: &std::path::Path,
-) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, String> {
-    if !origem.exists() || !origem.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    std::fs::create_dir_all(destino).map_err(|e| format!("Erro ao criar pasta destino: {}", e))?;
-    let entradas =
-        std::fs::read_dir(origem).map_err(|e| format!("Erro ao ler pasta origem: {}", e))?;
+    falhas: &mut Vec<String>,
+) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
     let mut arquivos = Vec::new();
+    if !origem.is_dir() {
+        return arquivos;
+    }
+    if let Err(erro) = std::fs::create_dir_all(destino) {
+        falhas.push(format!("{}: {}", destino.display(), erro));
+        return arquivos;
+    }
+    let entradas = match std::fs::read_dir(origem) {
+        Ok(entradas) => entradas,
+        Err(erro) => {
+            falhas.push(format!("{}: {}", origem.display(), erro));
+            return arquivos;
+        }
+    };
 
-    for entrada in entradas.flatten() {
+    for entrada in entradas {
+        let Ok(entrada) = entrada else {
+            falhas.push(format!("{}: entrada ilegível", origem.display()));
+            continue;
+        };
         let tipo = match entrada.file_type() {
-            Ok(valor) => valor,
-            Err(_) => continue,
+            Ok(tipo) => tipo,
+            Err(erro) => {
+                falhas.push(format!("{}: {}", entrada.path().display(), erro));
+                continue;
+            }
         };
         if tipo.is_symlink() {
             continue;
@@ -639,18 +666,23 @@ fn preparar_arquivos_diretorio(
         let origem_item = entrada.path();
         let destino_item = destino.join(entrada.file_name());
         if tipo.is_dir() {
-            arquivos.extend(preparar_arquivos_diretorio(&origem_item, &destino_item)?);
+            arquivos.extend(preparar_arquivos_diretorio(
+                &origem_item,
+                &destino_item,
+                falhas,
+            ));
         } else if tipo.is_file() {
             arquivos.push((origem_item, destino_item));
         }
     }
 
-    Ok(arquivos)
+    arquivos
 }
 
 fn preparar_arquivos_instancia_importada(
     caminho_jogo_origem: &std::path::Path,
     pasta_instancia_destino: &std::path::Path,
+    falhas: &mut Vec<String>,
 ) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, String> {
     if !caminho_jogo_origem.exists() || !caminho_jogo_origem.is_dir() {
         return Err("Pasta do jogo da instância importada não encontrada.".to_string());
@@ -661,7 +693,8 @@ fn preparar_arquivos_instancia_importada(
         arquivos.extend(preparar_arquivos_diretorio(
             &caminho_jogo_origem.join(pasta),
             &pasta_instancia_destino.join(pasta),
-        )?);
+            falhas,
+        ));
     }
 
     for arquivo in ARQUIVOS_CONTEUDO_IMPORTADO {
@@ -726,20 +759,46 @@ fn emitir_progresso_importacao(
 }
 
 fn copiar_conteudo_instancia_importada(
+    caminho_perfil_origem: &std::path::Path,
     caminho_jogo_origem: &std::path::Path,
     pasta_instancia_destino: &std::path::Path,
     mut ao_progresso: impl FnMut(usize, usize),
 ) -> Result<usize, String> {
-    let arquivos =
-        preparar_arquivos_instancia_importada(caminho_jogo_origem, pasta_instancia_destino)?;
+    let mut arquivos = std::collections::BTreeMap::new();
+    let mut falhas = Vec::new();
+    let overrides = caminho_perfil_origem.join("overrides");
+    let origens = overrides
+        .is_dir()
+        .then_some(overrides.as_path())
+        .into_iter()
+        .chain([caminho_perfil_origem, caminho_jogo_origem]);
+    for origem in origens {
+        for (arquivo, destino) in
+            preparar_arquivos_instancia_importada(origem, pasta_instancia_destino, &mut falhas)?
+        {
+            arquivos.insert(destino, arquivo);
+        }
+        if origem == caminho_jogo_origem {
+            break;
+        }
+    }
     let total_arquivos = arquivos.len();
     ao_progresso(0, total_arquivos);
 
-    for (indice, (origem, destino)) in arquivos.into_iter().enumerate() {
-        copiar_arquivo(&origem, &destino)?;
+    for (indice, (destino, origem)) in arquivos.into_iter().enumerate() {
+        if let Err(erro) = copiar_arquivo(&origem, &destino) {
+            falhas.push(erro);
+        }
         ao_progresso(indice + 1, total_arquivos);
     }
 
+    if let Some(primeira) = falhas.first() {
+        return Err(format!(
+            "{} item(ns) não copiado(s). Primeiro: {}",
+            falhas.len(),
+            primeira
+        ));
+    }
     Ok(total_arquivos)
 }
 
@@ -1242,6 +1301,7 @@ pub(crate) async fn importar_instancias_externas(
                 let mensagem_copia = tauri::async_runtime::spawn_blocking(move || {
                     let mut ultima_porcentagem = None;
                     let total = copiar_conteudo_instancia_importada(
+                        &origem_metadados,
                         &caminho_jogo,
                         &caminho_destino,
                         |arquivos_copiados, total_arquivos| {
@@ -1261,13 +1321,13 @@ pub(crate) async fn importar_instancias_externas(
                                 total_arquivos,
                             );
                         },
-                    )?;
+                    );
                     if let Some(info) = modpack_importado.or_else(|| {
                         crate::comandos::modpacks::identificar_modpack_externo(&origem_metadados)
                     }) {
                         crate::comandos::modpacks::salvar_info_em_pasta(&caminho_destino, info)?;
                     }
-                    Ok::<_, String>(total)
+                    total
                 })
                 .await
                 .map_err(|e| format!("Falha interna ao copiar a instância importada: {}", e))?;
@@ -1276,10 +1336,10 @@ pub(crate) async fn importar_instancias_externas(
                         id_externo: instancia.id_externo.clone(),
                         launcher: instancia.launcher.clone(),
                         nome_origem: instancia.nome.clone(),
-                        sucesso: true,
+                        sucesso: false,
                         instancia_id: Some(instancia_criada.id.clone()),
                         mensagem: format!(
-                            "Instância importada, mas houve falha ao copiar parte dos arquivos: {}",
+                            "A cópia dos arquivos da instância ficou incompleta: {}",
                             erro_copia
                         ),
                     },
@@ -1551,14 +1611,6 @@ pub(crate) async fn exportar_instancia(
     exportar_instancia_interno(&state, &instance_id, destino.as_deref(), true)
 }
 
-#[tauri::command]
-pub(crate) async fn importar_instancia_arquivo(
-    caminho_arquivo: String,
-    state: State<'_, LauncherState>,
-) -> Result<ResultadoImportacaoArquivo, String> {
-    importar_instancia_em_estado(caminho_arquivo, &state).await
-}
-
 pub(crate) async fn importar_instancia_em_estado(
     caminho_arquivo: String,
     state: &LauncherState,
@@ -1791,22 +1843,26 @@ mod testes_progresso_importacao {
             uuid::Uuid::new_v4()
         ));
         let origem = pasta_teste.join("origem");
+        let jogo = origem.join(".minecraft");
         let destino = pasta_teste.join("destino");
         std::fs::create_dir_all(origem.join("mods")).unwrap();
-        std::fs::create_dir_all(origem.join("saves").join("mundo")).unwrap();
+        std::fs::create_dir_all(jogo.join("saves").join("mundo")).unwrap();
+        std::fs::create_dir_all(origem.join("overrides/resourcepacks")).unwrap();
         std::fs::create_dir_all(origem.join("config").join("vazio")).unwrap();
         std::fs::write(origem.join("mods").join("exemplo.jar"), b"mod").unwrap();
-        std::fs::write(
-            origem.join("saves").join("mundo").join("level.dat"),
-            b"mundo",
-        )
-        .unwrap();
+        std::fs::write(jogo.join("saves").join("mundo").join("level.dat"), b"mundo").unwrap();
         std::fs::write(origem.join("options.txt"), b"opcoes").unwrap();
         std::fs::write(origem.join("latest.log"), b"ignorado").unwrap();
+        std::fs::write(
+            origem.join("overrides/resourcepacks/exemplo.zip"),
+            b"textura",
+        )
+        .unwrap();
 
         let mut atualizacoes = Vec::new();
         let total = copiar_conteudo_instancia_importada(
             &origem,
+            &jogo,
             &destino,
             |arquivos_copiados, total_arquivos| {
                 atualizacoes.push((arquivos_copiados, total_arquivos));
@@ -1823,14 +1879,16 @@ mod testes_progresso_importacao {
         let opcoes_copiadas = destino.join("options.txt").is_file();
         let pasta_vazia_copiada = destino.join("config").join("vazio").is_dir();
         let arquivo_ignorado = destino.join("latest.log").exists();
+        let textura_copiada = destino.join("resourcepacks/exemplo.zip").is_file();
         std::fs::remove_dir_all(&pasta_teste).unwrap();
 
-        assert_eq!(total, 3);
-        assert_eq!(atualizacoes, vec![(0, 3), (1, 3), (2, 3), (3, 3)]);
+        assert_eq!(total, 4);
+        assert_eq!(atualizacoes, vec![(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]);
         assert!(mod_copiado);
         assert!(mundo_copiado);
         assert!(opcoes_copiadas);
         assert!(pasta_vazia_copiada);
         assert!(!arquivo_ignorado);
+        assert!(textura_copiada);
     }
 }

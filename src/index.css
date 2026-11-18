@@ -243,14 +243,16 @@ svg {
   z-index: 8;
 }
 
+.launcher-painel-conteudo.launcher-painel-instancia {
+  background-color: #0d0d0e;
+}
+
 .launcher-painel-conteudo {
   position: relative;
   margin-left: 10px;
   background-color: #171717;
   border: 0;
-  border-top-left-radius: 41px;
-  border-top-right-radius: 0;
-  border-bottom-left-radius: 0;
+  border-radius: 0;
   box-shadow: none;
   overflow-x: hidden;
 }
