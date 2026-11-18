@@ -119,6 +119,7 @@ const LIMITE_VERSOES_FILTRO = 80;
 const LIMITE_CATEGORIAS_FILTRO = 10;
 const FONTE_PRIORITARIA: Source = "modrinth";
 const FONTES: Source[] = ["dome", "modrinth", "curseforge"];
+const ORDEM_INTERCALACAO: Source[] = ["modrinth", "curseforge", "dome"];
 const FONTES_INICIAIS: FontesFiltro = {
   modrinth: false,
   curseforge: false,
@@ -226,9 +227,7 @@ const mesclarResultados = (
   });
 
   const resultados = grupos.map(criarResultadoMesclado);
-  if (ordenacao === "relevancia") {
-    resultados.sort((a, b) => Number(b.source === "dome") - Number(a.source === "dome"));
-  } else if (ordenacao === "downloads") {
+  if (ordenacao === "downloads") {
     resultados.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
   }
   return resultados;
@@ -461,10 +460,9 @@ export default function Explore({
       throw new Error(motivos.join(" | ") || "Não foi possível consultar os catálogos.");
     }
 
-    const paginas = sucessos.map(({ fonte, resultados }) => ({
-      fonte,
-      resultados: resultados.slice(0, LIMITE_RESULTADOS_POR_PAGINA),
-    }));
+    const paginas = sucessos
+      .map(({ fonte, resultados }) => ({ fonte, resultados: resultados.slice(0, LIMITE_RESULTADOS_POR_PAGINA) }))
+      .sort((a, b) => ORDEM_INTERCALACAO.indexOf(a.fonte) - ORDEM_INTERCALACAO.indexOf(b.fonte));
     const maiorPagina = Math.max(...paginas.map(({ resultados }) => resultados.length));
     const resultadosIntercalados = Array.from({ length: maiorPagina }).flatMap((_, indice) =>
       paginas.flatMap(({ resultados }) => resultados[indice] ? [resultados[indice]] : [])
